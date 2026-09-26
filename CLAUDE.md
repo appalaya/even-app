@@ -63,7 +63,7 @@ When the user says "parking lot:" followed by a thought — note it, don't act o
 - `packages/core` has **zero** React Native or Expo imports and must run under Vitest in Node. The reducer, balances, simplification, validation, and crypto live there. Screens are thin.
 - Every decrypted event passes schema validation before the reducer sees it. Invalid events are skipped and counted, never thrown. A change that can make one bad event crash the app is a security bug.
 - Money is integer minor units (per the currency's ISO 4217 exponent) everywhere below the formatting layer. Splits are stored resolved. `core/money.ts` is the only converter.
-- No decrypted content on disk except each event's `ts` and the group name. SQLite holds envelopes; bodies are decrypted on open and held in memory. Any other plaintext cache on disk is a privacy bug.
+- No decrypted content on disk except each event's `ts`, the group name and currency (both already plaintext in the invite), and a per-server bearer token while a server-copy delete is pending. SQLite holds envelopes; bodies are decrypted on open and held in memory. Any other plaintext cache on disk is a privacy bug.
 - Per-server auth tokens and group ids: never store a server group id as the group's identity; the `localId` is. Re-encrypt when the server changes.
 - Additive changes to the event body ride on the current `sv` and old clients strip what they don't know. Breaking changes bump `sv` and add a reducer case for the old version. Old events are never migrated in place.
 - Anything that touches key derivation, encryption, or what goes outside the ciphertext is checked against `../even-server/THREAT-MODEL.md` first.
