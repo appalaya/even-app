@@ -4,7 +4,8 @@
  * This module is the only place that converts between minor units and display (design.md, "Minor units, not
  * cents"). Everything below the formatting layer is an integer number of minor units. formatMinor shows the
  * currency's narrow symbol by default ("$36.00" for CAD, not "CA$36.00"), because the UI labels the currency code
- * once per screen; `display` asks for Intl's full symbol, the ISO code, or no symbol at all.
+ * once per screen; `display` asks for Intl's full symbol, the ISO code, or no symbol at all. On an engine whose Intl
+ * ignores or rejects `currencyDisplay: 'narrowSymbol'` (Hermes on iOS), the narrow symbol comes from NARROW_SYMBOLS.
  *
  * Splits (design.md, "Rounding"): splitWeighted is the UI's Equal mode, with an optional per-member multiplier and
  * extra amount (Splitwise's shares and adjustments); splitEqual is its all-ones case; splitByBasisPoints is Percent.
@@ -89,19 +90,51 @@ export interface FormatMinorOptions {
 
 const DISPLAYS: ReadonlySet<string> = new Set<CurrencyDisplay>(['narrowSymbol', 'symbol', 'code', 'none']);
 
+/**
+ * The narrow symbol per currency, for engines without a working `currencyDisplay: 'narrowSymbol'`: Hermes on iOS
+ * ignores it and shows CAD in en-US as "CA$36.00"; engines predating ES2020 reject it. Same symbol in every locale.
+ * A currency not listed (CHF, SEK, NOK, DKK, PLN, CZK, HUF, …) keeps Intl's own symbol.
+ */
+const NARROW_SYMBOLS: Readonly<Record<string, string>> = Object.freeze({
+  CAD: '$', USD: '$', AUD: '$', NZD: '$', MXN: '$', HKD: '$', SGD: '$', TWD: '$', ARS: '$', CLP: '$', COP: '$',
+  GBP: '£', EUR: '€', JPY: '¥', CNY: '¥', KRW: '₩', INR: '₹', ILS: '₪', VND: '₫', PHP: '₱', NGN: '₦', UAH: '₴',
+  THB: '฿', RUB: '₽', TRY: '₺', BRL: 'R$', ZAR: 'R',
+});
+
+/** Whether Intl honours 'narrowSymbol'; detected once, on first use. */
+let narrowSymbolSupport: boolean | undefined;
+
+function supportsNarrowSymbol(): boolean {
+  if (narrowSymbolSupport === undefined) {
+    try {
+      const nf = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'CAD', currencyDisplay: 'narrowSymbol' });
+      narrowSymbolSupport = nf.format(1) === '$1.00';
+    } catch {
+      narrowSymbolSupport = false; // a RangeError from an engine that rejects the option
+    }
+  }
+  return narrowSymbolSupport;
+}
+
 const formatters = new Map<string, Intl.NumberFormat>();
+const intlSymbols = new Map<string, string | undefined>();
+const tightLocales = new Map<string, boolean>();
+
+/**
+ * Test hook: `true` or `false` forces Intl's own narrowSymbol or the NARROW_SYMBOLS fallback; `undefined` detects
+ * again on next use. Clears the formatter caches. Not for app code.
+ */
+export function __setNarrowSymbolSupport(supported: boolean | undefined): void {
+  narrowSymbolSupport = supported;
+  formatters.clear();
+  intlSymbols.clear();
+  tightLocales.clear();
+}
 
 function createFormatter(currency: string, exp: number, locale: string | undefined, display: CurrencyDisplay): Intl.NumberFormat {
   const digits = { minimumFractionDigits: exp, maximumFractionDigits: exp };
   if (display === 'none') return new Intl.NumberFormat(locale, { style: 'decimal', ...digits });
-  try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: display, ...digits });
-  } catch (err) {
-    // Engines predating ES2020's 'narrowSymbol' reject it with a RangeError; the full symbol is the nearest thing.
-    // A malformed locale throws again here, from the retry.
-    if (display !== 'narrowSymbol' || !(err instanceof RangeError)) throw err;
-    return new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: 'symbol', ...digits });
-  }
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: display, ...digits });
 }
 
 function formatterFor(currency: string, exp: number, locale: string | undefined, display: CurrencyDisplay): Intl.NumberFormat {
@@ -114,6 +147,113 @@ function formatterFor(currency: string, exp: number, locale: string | undefined,
   return nf;
 }
 
+const BIDI_MARKS = /[\u200e\u200f\u061c]/g;
+const EDGE_SPACE = /^[\s\u200e\u200f\u061c]+|[\s\u200e\u200f\u061c]+$/g;
+/** The table's currency signs (Unicode Sc). Spelled out: Hermes's regex support for \p{…} is not something to rely on. */
+const CURRENCY_SIGN = /[$£€¥₩₹₪₫₱₦₴฿₽₺]/;
+
+/** The text on either side of `bare` (1 formatted without a currency) within `withSymbol` (1 formatted with one). */
+function aroundNumber(withSymbol: string, bare: string): { before: string; after: string } | undefined {
+  const at = withSymbol.indexOf(bare);
+  return at < 0 ? undefined : { before: withSymbol.slice(0, at), after: withSymbol.slice(at + bare.length) };
+}
+
+/**
+ * The text of Intl's full symbol for `currency` in `locale` ("CA$" in en-US), found by formatting 1 with and without
+ * it: for engines whose formatToParts does not split out a `currency` part. Undefined if the two do not line up.
+ */
+function intlSymbolText(currency: string, exp: number, locale: string | undefined): string | undefined {
+  const key = `${locale ?? ''}|${currency}`;
+  if (intlSymbols.has(key)) return intlSymbols.get(key);
+  const sides = aroundNumber(formatterFor(currency, exp, locale, 'symbol').format(1), formatterFor(currency, exp, locale, 'none').format(1));
+  const before = sides?.before.replace(EDGE_SPACE, '') ?? '';
+  const after = sides?.after.replace(EDGE_SPACE, '') ?? '';
+  const symbol = before !== '' ? before : after !== '' ? after : undefined;
+  intlSymbols.set(key, symbol);
+  return symbol;
+}
+
+/**
+ * Currencies to probe a locale's symbol spacing with: first those shown as a sign almost everywhere ("€", "US$", "£"),
+ * then the rest of the table, since some locales show only their own currency as a sign (en-AU "$", es-MX "$").
+ */
+const SPACING_PROBES: readonly string[] = [...new Set(['EUR', 'USD', 'GBP', ...Object.keys(NARROW_SYMBOLS)])];
+
+/**
+ * The text between `probe`'s symbol and the number when `locale` formats 1 with it, or undefined unless that symbol
+ * meets the number with a currency sign (Intl adds no space of its own there, so the gap is the locale's pattern).
+ */
+function signGap(probe: string, locale: string | undefined): string | undefined {
+  const exp = exponentOf(probe);
+  const sides = aroundNumber(formatterFor(probe, exp, locale, 'symbol').format(1), formatterFor(probe, exp, locale, 'none').format(1));
+  if (sides === undefined) return undefined;
+  const before = sides.before.replace(BIDI_MARKS, '');
+  const after = sides.after.replace(BIDI_MARKS, '');
+  if (before.trim() !== '') {
+    const symbol = before.trimEnd();
+    return CURRENCY_SIGN.test(symbol.slice(-1)) ? before.slice(symbol.length) : undefined;
+  }
+  const symbol = after.trimStart();
+  return CURRENCY_SIGN.test(symbol.slice(0, 1)) ? after.slice(0, after.length - symbol.length) : undefined;
+}
+
+/**
+ * Whether `locale` sets a currency sign right against the number ("€1.00" in en-US; not "1,00 €" in de-DE or
+ * "€ 1,00" in nl-NL). Intl adds a space between a symbol ending in a letter and the digits ("ARS 36.00"); in a tight
+ * locale a narrow sign drops it ("$36.00"). Not tight when no probe shows a sign (the space is then kept).
+ */
+function isTightLocale(locale: string | undefined): boolean {
+  const key = locale ?? '';
+  let tight = tightLocales.get(key);
+  if (tight === undefined) {
+    tight = false;
+    for (const probe of SPACING_PROBES) {
+      const gap = signGap(probe, locale);
+      if (gap !== undefined) {
+        tight = gap === '';
+        break;
+      }
+    }
+    tightLocales.set(key, tight);
+  }
+  return tight;
+}
+
+/** What formatMinor needs to put a narrow symbol where Intl put its full one. */
+interface NarrowSwap {
+  narrow: string;
+  currency: string;
+  exp: number;
+  locale: string | undefined;
+}
+
+/** `before` + narrow symbol + `after`, without Intl's letter-to-digit space when the narrow symbol ends in a sign. */
+function placeNarrow(before: string, after: string, swap: NarrowSwap): string {
+  const prefix = after.trim() !== ''; // the number follows the symbol
+  const edge = prefix ? swap.narrow.slice(-1) : swap.narrow.slice(0, 1);
+  if (CURRENCY_SIGN.test(edge) && isTightLocale(swap.locale)) {
+    return prefix ? `${before}${swap.narrow}${after.replace(/^\s+/, '')}` : `${before.replace(/\s+$/, '')}${swap.narrow}${after}`;
+  }
+  return `${before}${swap.narrow}${after}`;
+}
+
+/**
+ * Joins full-symbol `parts` with the `currency` part replaced by the narrow symbol. Parts without one (Hermes on iOS
+ * returns the whole string as a single literal) get Intl's symbol text swapped instead.
+ */
+function joinNarrow(parts: readonly Intl.NumberFormatPart[], swap: NarrowSwap): string {
+  const join = (ps: readonly Intl.NumberFormatPart[]): string => ps.map((p) => p.value).join('');
+  const at = parts.findIndex((p) => p.type === 'currency');
+  return at < 0 ? swapSymbol(join(parts), swap) : placeNarrow(join(parts.slice(0, at)), join(parts.slice(at + 1)), swap);
+}
+
+/** Swaps Intl's symbol text in `text` for the narrow symbol; `text` unchanged if the symbol cannot be found. */
+function swapSymbol(text: string, swap: NarrowSwap): string {
+  const symbol = intlSymbolText(swap.currency, swap.exp, swap.locale);
+  const at = symbol === undefined ? -1 : text.indexOf(symbol);
+  return symbol === undefined || at < 0 ? text : placeNarrow(text.slice(0, at), text.slice(at + symbol.length), swap);
+}
+
 /** Below this magnitude an amount has at most 15 significant digits, which survive a decimal → binary64 → decimal trip. */
 const EXACT_VIA_NUMBER = 1_000_000_000_000_000n;
 
@@ -122,6 +262,12 @@ const EXACT_VIA_NUMBER = 1_000_000_000_000_000n;
  *
  * `options.display` (default `'narrowSymbol'`) picks how the currency shows; see CurrencyDisplay. The exponent,
  * grouping, sign and exactness below are the same in every mode.
+ *
+ * Narrow symbol without Intl's help: if the engine's `'narrowSymbol'` does not turn 1 CAD in en-US into exactly
+ * "$1.00" (checked once), formatMinor formats with `'symbol'` and replaces the `currency` part from `formatToParts`
+ * with the NARROW_SYMBOLS entry (dropping the space Intl puts after a letter symbol where the locale sets signs
+ * tight: "ARS 36.00" → "$36.00"), or keeps Intl's symbol for a currency the table does not list. Every path below
+ * goes through the same replacement, so exactness is unchanged.
  *
  * Exactness: the decimal is built from the integer with BigInt and string ops — no floating division.
  * - |amount| < 10^15 (every amount within LIMITS, and any realistic balance): the decimal string has ≤ 15
@@ -140,15 +286,22 @@ export function formatMinor(amount: number, currency: string, locale?: string, o
   const exp = exponentOf(currency);
   const display = options?.display ?? 'narrowSymbol';
   if (!DISPLAYS.has(display)) throw new RangeError(`formatMinor: unknown display ${String(display)}`);
-  const nf = formatterFor(currency, exp, locale, display);
-  if (exp === 0) return nf.format(amount === 0 ? 0 : amount); // normalise -0
+  const fallback = display === 'narrowSymbol' && !supportsNarrowSymbol();
+  const nf = formatterFor(currency, exp, locale, fallback ? 'symbol' : display);
+  const narrow = fallback && hasOwn(NARROW_SYMBOLS, currency) ? NARROW_SYMBOLS[currency] : undefined;
+  const swap: NarrowSwap | undefined = narrow === undefined ? undefined : { narrow, currency, exp, locale };
+  const format = (value: number): string => {
+    if (swap === undefined) return nf.format(value);
+    return typeof nf.formatToParts === 'function' ? joinNarrow(nf.formatToParts(value), swap) : swapSymbol(nf.format(value), swap);
+  };
+  if (exp === 0) return format(amount === 0 ? 0 : amount); // normalise -0
 
   const negative = amount < 0;
   const abs = BigInt(negative ? -amount : amount);
   const scale = 10n ** BigInt(exp);
   const major = abs / scale;
   const minorDigits = (abs % scale).toString().padStart(exp, '0');
-  const viaNumber = (): string => nf.format(Number(`${negative ? '-' : ''}${major.toString()}.${minorDigits}`));
+  const viaNumber = (): string => format(Number(`${negative ? '-' : ''}${major.toString()}.${minorDigits}`));
 
   if (abs < EXACT_VIA_NUMBER) return viaNumber();
 
@@ -161,7 +314,8 @@ export function formatMinor(amount: number, currency: string, locale?: string, o
   if (wholeFractions !== 1 || fraction.length !== 1 || fractionDigits === undefined || !whole.some((p) => p.type === 'integer')) {
     return viaNumber(); // an engine whose formatToParts does not split the number properly
   }
-  return whole.map((p) => (p.type === 'fraction' ? fractionDigits : p.value)).join('');
+  const spliced = whole.map((p) => (p.type === 'fraction' ? { ...p, value: fractionDigits } : p));
+  return swap === undefined ? spliced.map((p) => p.value).join('') : joinNarrow(spliced, swap);
 }
 
 /**

@@ -23,7 +23,7 @@ describe('categories', () => {
     await expect(refineCategory('Fairmont')).resolves.toBeNull();
   });
 
-  it('keystrokes re-infer only while the source is keyword', () => {
+  it('keystrokes re-infer until the user taps', () => {
     let chip = initialChip('');
     expect(chip).toEqual({ category: 'other', source: 'keyword' });
     chip = chipAfterTitle(chip, 'Dinner');
@@ -33,9 +33,10 @@ describe('categories', () => {
     expect(chipAfterTitle(chip, 'Uber')).toBe(chip);
   });
 
-  it('a model reply applies only for the exact title asked about, and only while the source is keyword', () => {
+  it('a model reply applies only for the exact title asked about, and never over a tap', () => {
     const chip = chipAfterTitle(initialChip(''), 'Fairmont Banff');
     expect(shouldRefine(chip, 'Fairmont Banff')).toBe(true);
+    expect(shouldRefine(chip, '   ')).toBe(false);
     const applied = chipAfterReply(chip, 'Fairmont Banff', {
       askedTitle: 'Fairmont Banff',
       category: 'lodging',
@@ -61,9 +62,46 @@ describe('categories', () => {
     expect(
       chipAfterReply(chip, 'Fairmont Banff', { askedTitle: 'Fairmont Banff', category: null }),
     ).toBe(chip);
-    // After a model answer, keystrokes no longer re-infer and later replies are dropped (source is not keyword).
-    expect(chipAfterTitle(applied, 'Fairmont')).toBe(applied);
-    expect(shouldRefine(applied, 'Fairmont')).toBe(false);
+  });
+
+  it('a later model reply refines an earlier one', () => {
+    const first = chipAfterReply(chipAfterTitle(initialChip(''), 'Sunshine'), 'Sunshine', {
+      askedTitle: 'Sunshine',
+      category: 'lodging',
+    });
+    expect(first).toEqual({ category: 'lodging', source: 'model' });
+    expect(shouldRefine(first, 'Sunshine')).toBe(true);
+    const refined = chipAfterReply(first, 'Sunshine', {
+      askedTitle: 'Sunshine',
+      category: 'activities',
+    });
+    expect(refined).toEqual({ category: 'activities', source: 'model' });
+    // The same answer again changes nothing.
+    expect(
+      chipAfterReply(refined, 'Sunshine', { askedTitle: 'Sunshine', category: 'activities' }),
+    ).toBe(refined);
+    // A stale model reply is still dropped.
+    expect(
+      chipAfterReply(refined, 'Sunshine lift', { askedTitle: 'Sunshine', category: 'lodging' }),
+    ).toBe(refined);
+  });
+
+  it('a keystroke after a model answer re-infers from the table, as a keyword chip', () => {
+    const model = chipAfterReply(initialChip('Nourish'), 'Nourish', {
+      askedTitle: 'Nourish',
+      category: 'food',
+    });
+    expect(model).toEqual({ category: 'food', source: 'model' });
+    expect(chipAfterTitle(model, 'Nourish parking')).toEqual({
+      category: 'parking',
+      source: 'keyword',
+    });
+    // Even when the table agrees with the model, the chip is a keyword guess again.
+    expect(chipAfterTitle(model, 'Nourish dinner')).toEqual({
+      category: 'food',
+      source: 'keyword',
+    });
+    expect(shouldRefine(model, 'Nourish')).toBe(true);
   });
 
   it('an edited expense starts from its saved category as a user choice', () => {

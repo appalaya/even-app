@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fc from 'fast-check';
 import { LIMITS } from './constants.js';
 import {
+  __setNarrowSymbolSupport,
   CURRENCY_EXPONENTS,
   exponentOf,
   formatMinor,
@@ -176,21 +177,33 @@ describe('formatMinor', () => {
     for (const options of bad) expect(() => formatMinor(100, 'USD', 'en-US', options)).toThrow(RangeError);
   });
 
-  it('falls back to the full symbol on an engine without narrowSymbol', () => {
+  it('detects an engine that rejects or ignores narrowSymbol, and swaps in the narrow symbol itself', () => {
     const holder = Intl as unknown as { NumberFormat: typeof Intl.NumberFormat };
     const Original = holder.NumberFormat;
-    const Strict = function (locale?: string, opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
-      if (opts?.currencyDisplay === 'narrowSymbol') throw new RangeError('narrowSymbol is not supported');
-      return new Original(locale, opts);
-    } as unknown as typeof Intl.NumberFormat;
-    holder.NumberFormat = Strict;
+    const engines: Array<(opts?: Intl.NumberFormatOptions) => Intl.NumberFormatOptions | undefined> = [
+      (opts) => {
+        if (opts?.currencyDisplay === 'narrowSymbol') throw new RangeError('narrowSymbol is not supported');
+        return opts;
+      },
+      // Hermes on iOS: accepts the option and shows the full symbol ("CA$1.00").
+      (opts) => (opts?.currencyDisplay === 'narrowSymbol' ? { ...opts, currencyDisplay: 'symbol' } : opts),
+    ];
     try {
-      // A locale / currency pair no other test formats, so the formatter cache holds nothing for it yet.
-      expect(norm(formatMinor(150, 'NZD', 'en-AU'))).toBe(norm(refFormat(150, 'NZD', 'en-AU', 'symbol')));
-      expect(() => formatMinor(150, 'NZD', 'not a locale!')).toThrow(RangeError);
+      for (const engine of engines) {
+        holder.NumberFormat = function (locale?: string, opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
+          return new Original(locale, engine(opts));
+        } as unknown as typeof Intl.NumberFormat;
+        __setNarrowSymbolSupport(undefined); // detect again, against this engine
+        expect(norm(formatMinor(3600, 'CAD', 'en-US'))).toBe('$36.00');
+        expect(norm(formatMinor(150, 'NZD', 'en-AU'))).toBe('$1.50');
+        expect(norm(formatMinor(150, 'CHF', 'en-US'))).toBe('CHF 1.50');
+        expect(() => formatMinor(150, 'NZD', 'not a locale!')).toThrow(RangeError);
+      }
     } finally {
       holder.NumberFormat = Original;
+      __setNarrowSymbolSupport(undefined);
     }
+    expect(formatMinor(3600, 'CAD', 'en-US')).toBe('$36.00'); // Node's own narrowSymbol again
   });
 
   it('uses the ISO exponent even where CLDR disagrees', () => {
@@ -275,6 +288,120 @@ describe('formatMinor', () => {
     expect(formatMinor(123456, 'CAD', undefined, { display: 'none' })).toBe(new Intl.NumberFormat(undefined, {
       minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).format(1234.56));
+  });
+});
+
+describe('formatMinor without Intl narrowSymbol (the fallback table)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __setNarrowSymbolSupport(undefined);
+  });
+
+  const EXPECTED: Record<string, Array<[number, string, string]>> = {
+    'en-US': [
+      [3600, 'CAD', '$36.00'],
+      [3600, 'USD', '$36.00'],
+      [3600, 'EUR', '€36.00'],
+      [3600, 'JPY', '¥3,600'],
+      [3600, 'BRL', 'R$36.00'],
+      [3600, 'CHF', 'CHF 36.00'],
+      [-3600, 'CAD', '-$36.00'],
+    ],
+    'de-DE': [
+      [3600, 'CAD', '36,00 $'],
+      [3600, 'USD', '36,00 $'],
+      [3600, 'EUR', '36,00 €'],
+      [3600, 'JPY', '3.600 ¥'],
+      [3600, 'BRL', '36,00 R$'],
+      [3600, 'CHF', '36,00 CHF'],
+      [-3600, 'CAD', '-36,00 $'],
+    ],
+  };
+
+  it.each([true, false])('CAD / USD / EUR / JPY / BRL / CHF in en-US and de-DE (native narrowSymbol: %s)', (supported) => {
+    __setNarrowSymbolSupport(supported);
+    for (const [locale, cases] of Object.entries(EXPECTED)) {
+      const got = cases.map(([amount, cur]) => norm(formatMinor(amount, cur, locale)));
+      expect([locale, got]).toEqual([locale, cases.map(([, , out]) => out)]);
+      const explicit = cases.map(([amount, cur]) => norm(formatMinor(amount, cur, locale, { display: 'narrowSymbol' })));
+      expect(explicit).toEqual(got);
+    }
+  });
+
+  it('leaves the other display modes alone', () => {
+    __setNarrowSymbolSupport(false);
+    expect(formatMinor(150, 'CAD', 'en-US', { display: 'symbol' })).toBe('CA$1.50');
+    expect(norm(formatMinor(150, 'CAD', 'en-US', { display: 'code' }))).toBe('CAD 1.50');
+    expect(formatMinor(150, 'CAD', 'en-US', { display: 'none' })).toBe('1.50');
+  });
+
+  it('is exact at 10^12 minor units and on the large-amount path, up to MAX_SAFE_INTEGER', () => {
+    __setNarrowSymbolSupport(false);
+    expect(formatMinor(1_000_000_000_000, 'CAD', 'en-US')).toBe('$10,000,000,000.00');
+    expect(norm(formatMinor(1_000_000_000_000, 'CAD', 'de-DE'))).toBe('10.000.000.000,00 $');
+    expect(formatMinor(-1_000_000_000_000, 'BRL', 'en-US')).toBe('-R$10,000,000,000.00');
+    expect(formatMinor(Number.MAX_SAFE_INTEGER, 'CAD', 'en-US')).toBe('$90,071,992,547,409.91');
+    expect(formatMinor(-Number.MAX_SAFE_INTEGER, 'CAD', 'en-US')).toBe('-$90,071,992,547,409.91');
+    expect(norm(formatMinor(Number.MAX_SAFE_INTEGER, 'CAD', 'de-DE'))).toBe('90.071.992.547.409,91 $');
+    expect(formatMinor(Number.MAX_SAFE_INTEGER, 'JPY', 'en-US')).toBe('¥9,007,199,254,740,991');
+  });
+
+  it('swaps the symbol text when formatToParts returns one literal (Hermes on iOS) or is missing', () => {
+    __setNarrowSymbolSupport(false);
+    const proto = Intl.NumberFormat.prototype;
+    vi.spyOn(proto, 'formatToParts').mockImplementation(function (this: Intl.NumberFormat, n?: number | bigint) {
+      return [{ type: 'literal', value: this.format(Number(n)) }];
+    });
+    expect(formatMinor(3600, 'CAD', 'en-US')).toBe('$36.00');
+    expect(norm(formatMinor(3600, 'CAD', 'de-DE'))).toBe('36,00 $');
+    expect(formatMinor(-3600, 'BRL', 'en-US')).toBe('-R$36.00');
+    expect(norm(formatMinor(3600, 'CHF', 'de-DE'))).toBe('36,00 CHF');
+    expect(formatMinor(1_000_000_000_000, 'CAD', 'en-US')).toBe('$10,000,000,000.00');
+    vi.restoreAllMocks();
+
+    const holder = proto as unknown as { formatToParts: unknown };
+    const original = holder.formatToParts;
+    holder.formatToParts = undefined;
+    try {
+      expect(formatMinor(3600, 'CAD', 'en-US')).toBe('$36.00');
+      expect(norm(formatMinor(3600, 'EUR', 'de-DE'))).toBe('36,00 €');
+      expect(formatMinor(1_000_000_000_000_000, 'CAD', 'en-US')).toBe('$10,000,000,000,000.00');
+    } finally {
+      holder.formatToParts = original;
+    }
+  });
+
+  it('drops Intl’s letter-symbol space only where the locale sets signs tight', () => {
+    __setNarrowSymbolSupport(false);
+    expect(norm(formatMinor(150, 'NZD', 'en-AU'))).toBe('$1.50'); // Intl: "NZD 1.50"
+    expect(norm(formatMinor(-3600, 'ARS', 'en-US'))).toBe('-$36.00'); // Intl: "-ARS 36.00"
+    expect(norm(formatMinor(3600, 'EUR', 'es-MX'))).toBe('€36.00'); // Intl: "EUR 36.00"
+    expect(norm(formatMinor(3600, 'ARS', 'nl-NL'))).toBe('$ 36,00'); // the locale's own space stays
+    expect(norm(formatMinor(3600, 'ARS', 'de-DE'))).toBe('36,00 $');
+    expect(norm(formatMinor(3600, 'ZAR', 'en-US'))).toBe('R 36.00'); // a letter keeps Intl's space
+  });
+
+  it('matches Intl’s own narrowSymbol for these currencies and locales, for any safe integer, with or without parts (property)', () => {
+    const currencies = ['USD', 'CAD', 'JPY', 'KWD', 'EUR', 'BRL', 'CHF', 'GBP', 'NZD', 'ARS', 'ZAR', 'THB', 'INR'];
+    const locales = ['en-US', 'en-CA', 'en-AU', 'de-DE', 'nl-NL', 'fr-FR', 'es-MX'];
+    const amounts = fc.oneof(fc.integer({ min: -LIMITS.amountMax, max: LIMITS.amountMax }), fc.maxSafeInteger(), fc.integer({ min: -1000, max: 1000 }));
+    for (const singleLiteral of [false, true]) {
+      __setNarrowSymbolSupport(false);
+      if (singleLiteral) {
+        vi.spyOn(Intl.NumberFormat.prototype, 'formatToParts').mockImplementation(function (this: Intl.NumberFormat, n?: number | bigint) {
+          return [{ type: 'literal', value: this.format(Number(n)) }];
+        });
+      }
+      fc.assert(
+        fc.property(amounts, fc.constantFrom(...currencies), fc.constantFrom(...locales), (amount, currency, locale) => {
+          // A single literal loses the exact splice above 10^15, as with no formatToParts at all.
+          if (singleLiteral && Math.abs(amount) >= 1e15) return;
+          expect(formatMinor(amount, currency, locale)).toBe(refFormat(amount, currency, locale, 'narrowSymbol'));
+        }),
+        { numRuns: 500 },
+      );
+      vi.restoreAllMocks();
+    }
   });
 });
 

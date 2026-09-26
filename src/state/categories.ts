@@ -6,13 +6,16 @@
  *
  * The chip holds `{ category, source }` with `source ∈ keyword | model | user`:
  * - A user tap sets `source = user`, cancels any in-flight model request, and drops any reply that arrives
- *   afterwards. Later title edits do not re-infer (`chipAfterTap`).
- * - Keyword inference runs on a keystroke only while `source = keyword` (`chipAfterTitle`).
- * - When the user pauses typing (500 ms), and only while `source = keyword`, the UI asks the model
- *   (`refineCategory`) and remembers the exact title it asked about (`shouldRefine`).
- * - A reply is applied only if that title still matches the field and `source` is still `keyword`; otherwise it is
- *   discarded (`chipAfterReply`). An applied reply sets `source = model`; the swap animates and shows "suggested"
- *   for a moment, so a change the user did not make is never invisible (UI).
+ *   afterwards. Later title edits do not re-infer (`chipAfterTap`). `user` is sticky until the sheet is dismissed.
+ * - While `source` is `keyword` or `model`, every keystroke runs keyword inference, applied immediately with
+ *   `source = keyword` (`chipAfterTitle`).
+ * - When the user pauses typing (500 ms), and while `source` is not `user`, the UI asks the model (`refineCategory`)
+ *   and remembers the exact title it asked about (`shouldRefine`).
+ * - A reply is applied only if that title still matches the field and `source` is not `user`; otherwise it is
+ *   discarded (`chipAfterReply`). An applied reply sets `source = model`, so a model result can be refined by a
+ *   later model result but never overwrite a tap. The swap animates (UI).
+ * - Every inferred chip (`keyword` or `model`) wears the "suggested" tag until the user taps, so a choice the user
+ *   did not make is never invisible (UI).
  * - Tapping Save freezes the chip: the event carries whatever it shows, never a later guess (UI).
  * Replies and taps are both handled on the JavaScript thread in arrival order, so a tap is never lost.
  *
@@ -51,11 +54,13 @@ export function initialChip(title: string, saved?: Category): CategoryChip {
     : { category: saved, source: 'user' };
 }
 
-/** A keystroke: keyword inference runs only while the chip's source is `keyword`. */
+/** A keystroke: unless the user chose, keyword inference runs and its guess replaces a keyword or model chip. */
 export function chipAfterTitle(chip: CategoryChip, title: string): CategoryChip {
-  if (chip.source !== 'keyword') return chip;
+  if (chip.source === 'user') return chip;
   const category = inferCategory(title);
-  return category === chip.category ? chip : { category, source: 'keyword' };
+  return category === chip.category && chip.source === 'keyword'
+    ? chip
+    : { category, source: 'keyword' };
 }
 
 /** A tap on the chip: the user's choice wins from now on. */
@@ -63,14 +68,15 @@ export function chipAfterTap(chip: CategoryChip, category: Category): CategoryCh
   return chip.source === 'user' && chip.category === category ? chip : { category, source: 'user' };
 }
 
-/** Whether a pause in typing should ask the model about `title`. */
+/** Whether a pause in typing should ask the model about `title`: yes unless the user chose. */
 export function shouldRefine(chip: CategoryChip, title: string): boolean {
-  return chip.source === 'keyword' && title.trim() !== '';
+  return chip.source !== 'user' && title.trim() !== '';
 }
 
 /**
- * A model reply for `askedTitle`: applied only if the field still shows that exact title and the source is still
- * `keyword`; otherwise the chip is returned unchanged (the reply is dropped).
+ * A model reply for `askedTitle`: applied only if the field still shows that exact title and the source is not
+ * `user` (so a later model reply refines an earlier one); otherwise the chip is returned unchanged (the reply is
+ * dropped).
  */
 export function chipAfterReply(
   chip: CategoryChip,
@@ -78,6 +84,8 @@ export function chipAfterReply(
   reply: { askedTitle: string; category: Category | null },
 ): CategoryChip {
   if (reply.category === null) return chip;
-  if (chip.source !== 'keyword' || reply.askedTitle !== currentTitle) return chip;
-  return { category: reply.category, source: 'model' };
+  if (chip.source === 'user' || reply.askedTitle !== currentTitle) return chip;
+  return chip.source === 'model' && chip.category === reply.category
+    ? chip
+    : { category: reply.category, source: 'model' };
 }
