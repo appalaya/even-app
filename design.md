@@ -788,7 +788,11 @@ own push follows), then in one transaction opens every readable envelope
 under the old group id, seals it again for the new one with the same id and
 body and a fresh nonce, drops the unreadable rows, calls `setServer`, and
 clears any debt to delete the copy on the new server; then it pushes the
-whole log there. Writing `group.moved` first is the caller's job. The write
+whole log there. Every re-encryption in this section is byte-exact: core's
+`resealEnvelope` opens an envelope to its plaintext bytes and seals those same
+bytes, never parsing the body, so an `unsupported_body` event (a newer `sv`,
+integers past 2^53, any formatting) crosses bit for bit. Writing `group.moved`
+first is the caller's job. The write
 path seals for the `server_url` it reads in the same transaction as its
 insert, so no write can land sealed for the old group id. Other members see
 the latest `group.moved` and are offered "Follow to <host>", which performs the same switch. A member

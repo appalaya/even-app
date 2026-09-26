@@ -37,7 +37,16 @@ export function deriveServer(secret: Uint8Array, origin: string): { authToken: U
     throw new InvalidServerUrlError(`origin is not canonical: expected ${JSON.stringify(canonicalOrigin(origin))}`);
   }
   const authToken = derive(secret, PROTOCOL.hkdfInfoAuthPrefix + origin);
-  return { authToken, groupId: b64urlEncode(sha256(authToken)) };
+  return { authToken, groupId: groupIdForToken(authToken) };
+}
+
+/**
+ * PROTOCOL.md §2: groupId = b64url(SHA-256(authToken)), 43 characters. The group id from the token alone, for a caller
+ * that kept the token but not the secret (a pending delete). Throws RangeError unless the token is 32 bytes.
+ */
+export function groupIdForToken(authToken: Uint8Array): string {
+  if (!(authToken instanceof Uint8Array) || authToken.length !== 32) throw new RangeError('auth token must be 32 bytes');
+  return b64urlEncode(sha256(authToken));
 }
 
 // ---------- canonicalOrigin ----------

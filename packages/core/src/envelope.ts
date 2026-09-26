@@ -93,6 +93,35 @@ function checkKey(key: Uint8Array): void {
   if (!(key instanceof Uint8Array) || key.length !== 32) throw new RangeError('encryption key must be 32 bytes');
 }
 
+/** Pads `plain` and encrypts it with XChaCha20-Poly1305 under `key` for `groupId` and `id`, with a fresh random nonce. */
+function sealBytes(key: Uint8Array, groupId: string, id: string, plain: Uint8Array): Envelope {
+  const padded = pad(plain);
+  const v = PROTOCOL.version;
+  const nonce = randomBytes(LIMITS.nonceLength);
+  const ciphertext = xchacha20poly1305(key, nonce, aadFor(groupId, v, id)).encrypt(padded);
+  return { id, v, n: b64urlEncode(nonce), c: b64urlEncode(ciphertext) };
+}
+
+/**
+ * Checks the structure, decrypts and unpads: the exact plaintext bytes, not decoded or parsed. Throws EnvelopeError
+ * `malformed`, `unsupported_envelope` or `undecryptable` (AEAD or padding), in that order.
+ */
+function openBytes(key: Uint8Array, groupId: string, envelope: Envelope): Uint8Array {
+  const shape = envelopeShape(envelope);
+  if (!shape.ok) throw new EnvelopeError('malformed', 'not a structurally valid envelope');
+  if (shape.v !== PROTOCOL.version) {
+    throw new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`);
+  }
+  let padded: Uint8Array;
+  try {
+    const cipher = xchacha20poly1305(key, b64urlDecode(envelope.n), aadFor(groupId, shape.v, envelope.id));
+    padded = cipher.decrypt(b64urlDecode(envelope.c));
+  } catch {
+    throw new EnvelopeError('undecryptable', 'authentication failed');
+  }
+  return unpad(padded);
+}
+
 /** Encrypts JSON(body) with XChaCha20-Poly1305 under `key` for `groupId`. A fresh random nonce every call. */
 export function seal(args: { key: Uint8Array; groupId: string; body: Event; id?: string }): Envelope {
   checkKey(args.key);
@@ -100,11 +129,7 @@ export function seal(args: { key: Uint8Array; groupId: string; body: Event; id?:
   if (!isId(id)) throw new EnvelopeError('malformed', 'envelope id must be 22 base64url characters');
   const json = JSON.stringify(args.body);
   if (typeof json !== 'string') throw new EnvelopeError('malformed', 'event body is not JSON-serialisable');
-  const padded = pad(utf8Encode(json));
-  const v = PROTOCOL.version;
-  const nonce = randomBytes(LIMITS.nonceLength);
-  const ciphertext = xchacha20poly1305(args.key, nonce, aadFor(args.groupId, v, id)).encrypt(padded);
-  return { id, v, n: b64urlEncode(nonce), c: b64urlEncode(ciphertext) };
+  return sealBytes(args.key, args.groupId, id, utf8Encode(json));
 }
 
 /**
@@ -114,20 +139,7 @@ export function seal(args: { key: Uint8Array; groupId: string; body: Event; id?:
  */
 export function open(args: { key: Uint8Array; groupId: string; envelope: Envelope }): unknown {
   checkKey(args.key);
-  const shape = envelopeShape(args.envelope);
-  if (!shape.ok) throw new EnvelopeError('malformed', 'not a structurally valid envelope');
-  if (shape.v !== PROTOCOL.version) {
-    throw new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`);
-  }
-  const envelope = args.envelope;
-  let padded: Uint8Array;
-  try {
-    const cipher = xchacha20poly1305(args.key, b64urlDecode(envelope.n), aadFor(args.groupId, shape.v, envelope.id));
-    padded = cipher.decrypt(b64urlDecode(envelope.c));
-  } catch {
-    throw new EnvelopeError('undecryptable', 'authentication failed');
-  }
-  const plain = unpad(padded);
+  const plain = openBytes(args.key, args.groupId, args.envelope);
   let text: string;
   try {
     text = utf8Decode(plain);
@@ -139,4 +151,25 @@ export function open(args: { key: Uint8Array; groupId: string; envelope: Envelop
   } catch {
     throw new EnvelopeError('undecryptable', 'body is not valid JSON');
   }
+}
+
+/**
+ * Re-encrypts an envelope for another key and/or group id (moving to another server, rotating): opens it under
+ * (`key`, `groupId`) to its exact plaintext bytes and seals those same bytes under (`newKey`, `newGroupId`) with a fresh
+ * nonce, keeping the envelope's `id` and `v`. Byte-exact: the body is never decoded or parsed, so one this client
+ * cannot read (a newer `sv` or `type`, integers beyond 2^53, any formatting) crosses bit for bit. Throws RangeError
+ * for a key that is not 32 bytes, and EnvelopeError `malformed`, `unsupported_envelope` or `undecryptable` as `open`
+ * does, except that it does not check that the body is UTF-8 JSON.
+ */
+export function resealEnvelope(args: {
+  key: Uint8Array;
+  groupId: string;
+  newKey: Uint8Array;
+  newGroupId: string;
+  envelope: Envelope;
+}): Envelope {
+  checkKey(args.key);
+  checkKey(args.newKey);
+  const plain = openBytes(args.key, args.groupId, args.envelope);
+  return sealBytes(args.newKey, args.newGroupId, args.envelope.id, plain);
 }

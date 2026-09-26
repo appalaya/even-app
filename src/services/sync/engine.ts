@@ -36,18 +36,18 @@ import {
   deriveServer,
   envelopeShape,
   EVENT_TYPES,
+  groupIdForToken,
   isId,
   LIMITS,
   open,
   parseEvent,
   PROTOCOL,
   reduce,
-  seal,
+  resealEnvelope,
   type Envelope,
   type Event,
   type LogEntry,
 } from '@even/core';
-import { sha256 } from '@noble/hashes/sha2.js';
 
 import type { Secrets } from '../secrets/types';
 import type {
@@ -141,14 +141,6 @@ export interface SyncEngineHandle extends SyncEngine {
 }
 
 // ---------- Small pure helpers ----------
-
-/**
- * PROTOCOL.md §2: `groupId = base64url(SHA-256(authToken))`. What a pending delete needs after the secret is gone.
- * (Core derives the group id only together with the token, from the secret; see the report on a core helper.)
- */
-export function groupIdForToken(authToken: Uint8Array): string {
-  return b64urlEncode(sha256(authToken));
-}
 
 /** An error for a log line: its name and message only, never a `cause` chain or an attached object. */
 export function describeError(error: unknown): string {
@@ -1048,11 +1040,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       // sealed for the old group id.
       dropped = await store.transaction(async (tx) => {
         const { byStatus } = await tx.countByStatus(localId);
+        // Byte-exact: bodies are never parsed, so an unsupported one crosses unchanged.
         const reencrypted: ReadableEnvelope[] = (await tx.listReadable(localId)).map(
-          ({ id, envelope }) => {
-            const body = open({ key, groupId: from, envelope }) as Event;
-            return { id, envelope: seal({ key, groupId: to, body, id }) };
-          },
+          ({ id, envelope }) => ({
+            id,
+            envelope: resealEnvelope({ key, groupId: from, newKey: key, newGroupId: to, envelope }),
+          }),
         );
         await tx.setServer(localId, origin, reencrypted);
         // A debt to delete the copy on the server this group now syncs through would wipe it.

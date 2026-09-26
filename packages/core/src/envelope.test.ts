@@ -3,7 +3,7 @@ import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './constants.js';
 import { b64urlDecode, b64urlEncode, utf8Encode } from './encoding.js';
-import { aadFor, EnvelopeError, envelopeShape, envelopeStoredSize, isEnvelope, open, pad, seal, unpad } from './envelope.js';
+import { aadFor, EnvelopeError, envelopeShape, envelopeStoredSize, isEnvelope, open, pad, resealEnvelope, seal, unpad } from './envelope.js';
 import type { EnvelopeErrorCode } from './envelope.js';
 import { newId, randomBytes } from './ids.js';
 import { deriveLocal, deriveServer } from './keys.js';
@@ -303,6 +303,123 @@ describe('open', () => {
   it('prefers malformed over unsupported_envelope when both apply (as the server does)', () => {
     const env = seal({ key: KEY, groupId: GROUP, body: BODY });
     expectCode(() => open({ key: KEY, groupId: GROUP, envelope: { ...env, v: 2, id: 'short' } as unknown as Envelope }), 'malformed');
+  });
+});
+
+describe('resealEnvelope', () => {
+  const NEW_KEY = deriveLocal(Uint8Array.from({ length: 32 }, (_, i) => 255 - i)).encryptionKey;
+  const NEW_GROUP = deriveServer(SECRET, 'https://home.example.net:8443/even').groupId;
+
+  /** Decrypts and unpads by hand: the plaintext bytes exactly as sealed, with no decoding or parsing. */
+  function plaintextOf(key: Uint8Array, groupId: string, env: Envelope): Uint8Array {
+    const cipher = xchacha20poly1305(key, b64urlDecode(env.n), aadFor(groupId, env.v, env.id));
+    return unpad(cipher.decrypt(b64urlDecode(env.c)));
+  }
+
+  /**
+   * An unsupported body a JSON round trip would change: odd whitespace, a key order and spacing JSON.stringify would
+   * not produce, 2^60 and 2^60 + 1 as integer literals (the second is not a double), an exponent, -0, and an escape.
+   */
+  const ODD_TEXT =
+    '{ "sv" : 2,\n\t"type":"poll.added" ,  "big": 1152921504606846976, "bigger":1152921504606846977,\r\n' +
+    '  "exp": 1.0e3, "neg": -0, "s": "\\u00e9 é"   }\n';
+  const ODD_BYTES = utf8Encode(ODD_TEXT);
+
+  it('is byte-exact: the new envelope holds the same plaintext bytes, whitespace and big integers included', () => {
+    expect(JSON.stringify(JSON.parse(ODD_TEXT))).not.toBe(ODD_TEXT); // a JSON round trip would lose it
+    const original = sealRaw(pad(ODD_BYTES));
+
+    const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: original });
+
+    const bytes = plaintextOf(NEW_KEY, NEW_GROUP, resealed);
+    expect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toBe(ODD_TEXT);
+    expect(Array.from(bytes)).toEqual(Array.from(ODD_BYTES));
+    expect(isEnvelope(resealed)).toBe(true);
+    expect(Object.keys(resealed)).toEqual(['id', 'v', 'n', 'c']);
+    expect(resealed.id).toBe(original.id);
+    expect(resealed.v).toBe(original.v);
+    expect(resealed.n).not.toBe(original.n);
+    expect(b64urlDecode(resealed.c)).toHaveLength(b64urlDecode(original.c).length);
+    // open under the new keys accepts it (and parses as open always does).
+    expect(open({ key: NEW_KEY, groupId: NEW_GROUP, envelope: resealed })).toMatchObject({ sv: 2, type: 'poll.added' });
+  });
+
+  it('re-encrypts for a new group id only (a move), a new key only, or both', () => {
+    const original = sealRaw(pad(ODD_BYTES));
+    for (const [newKey, newGroupId] of [[KEY, NEW_GROUP], [NEW_KEY, GROUP], [NEW_KEY, NEW_GROUP]] as const) {
+      const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey, newGroupId, envelope: original });
+      expect(Array.from(plaintextOf(newKey, newGroupId, resealed))).toEqual(Array.from(ODD_BYTES));
+      expect(resealed.id).toBe(original.id);
+    }
+  });
+
+  it('the resealed envelope no longer opens under the old key and group id', () => {
+    const original = seal({ key: KEY, groupId: GROUP, body: BODY });
+    const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: original });
+    expectCode(() => open({ key: KEY, groupId: GROUP, envelope: resealed }), 'undecryptable');
+    expectCode(() => open({ key: KEY, groupId: NEW_GROUP, envelope: resealed }), 'undecryptable');
+    expectCode(() => open({ key: NEW_KEY, groupId: GROUP, envelope: resealed }), 'undecryptable');
+    expect(open({ key: NEW_KEY, groupId: NEW_GROUP, envelope: resealed })).toEqual(BODY);
+  });
+
+  it('reseals to the same key and group id with a fresh nonce', () => {
+    const original = sealRaw(pad(ODD_BYTES));
+    const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: KEY, newGroupId: GROUP, envelope: original });
+    expect(resealed.id).toBe(original.id);
+    expect(resealed.n).not.toBe(original.n);
+    expect(resealed.c).not.toBe(original.c);
+    expect(Array.from(plaintextOf(KEY, GROUP, resealed))).toEqual(Array.from(ODD_BYTES));
+  });
+
+  it('carries any authentic plaintext over unread, even bytes open would reject as not UTF-8 JSON', () => {
+    for (const plain of [Uint8Array.of(0x22, 0xff, 0x22), utf8Encode('{not json'), new Uint8Array(0)]) {
+      const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: sealRaw(pad(plain)) });
+      expect(Array.from(plaintextOf(NEW_KEY, NEW_GROUP, resealed))).toEqual(Array.from(plain));
+    }
+  });
+
+  it('re-pads to the 256-byte size class, whatever the incoming alignment', () => {
+    const unaligned = sealRaw(Uint8Array.of(...utf8Encode('{"a":1}'), 0x80)); // 24-byte ciphertext
+    const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: unaligned });
+    expect(b64urlDecode(resealed.c)).toHaveLength(256);
+    expect(open({ key: NEW_KEY, groupId: NEW_GROUP, envelope: resealed })).toEqual({ a: 1 });
+  });
+
+  it('keeps arbitrary plaintext bytes exactly (property)', () => {
+    fc.assert(
+      fc.property(fc.uint8Array({ maxLength: 2000 }), (plain) => {
+        const resealed = resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: sealRaw(pad(plain)) });
+        expect(Array.from(plaintextOf(NEW_KEY, NEW_GROUP, resealed))).toEqual(Array.from(plain));
+      }),
+      { numRuns: 100 },
+    );
+  });
+
+  it('throws malformed for structurally invalid input, before decrypting', () => {
+    const env = seal({ key: KEY, groupId: GROUP, body: BODY });
+    const bad: unknown[] = [null, undefined, 'x', [], {}, { ...env, extra: 1 }, { ...env, v: '1' }, { ...env, v: 0 }, { ...env, id: 'x' }, { ...env, c: '' }];
+    for (const envelope of bad) {
+      expectCode(
+        () => resealEnvelope({ key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: envelope as Envelope }),
+        'malformed',
+      );
+    }
+  });
+
+  it('throws unsupported_envelope for another version and undecryptable for the wrong key, group id, or tampering', () => {
+    const env = seal({ key: KEY, groupId: GROUP, body: BODY });
+    const args = { key: KEY, groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP };
+    expectCode(() => resealEnvelope({ ...args, envelope: { ...env, v: 2 } as unknown as Envelope }), 'unsupported_envelope');
+    expectCode(() => resealEnvelope({ ...args, key: NEW_KEY, envelope: env }), 'undecryptable');
+    expectCode(() => resealEnvelope({ ...args, groupId: NEW_GROUP, envelope: env }), 'undecryptable');
+    expectCode(() => resealEnvelope({ ...args, envelope: { ...env, c: flipChar(env.c, 10) } }), 'undecryptable');
+    expectCode(() => resealEnvelope({ ...args, envelope: sealRaw(new Uint8Array(240)) }), 'undecryptable'); // no pad marker
+  });
+
+  it('refuses a current or new key that is not 32 bytes', () => {
+    const env = seal({ key: KEY, groupId: GROUP, body: BODY });
+    expect(() => resealEnvelope({ key: new Uint8Array(16), groupId: GROUP, newKey: NEW_KEY, newGroupId: NEW_GROUP, envelope: env })).toThrow(RangeError);
+    expect(() => resealEnvelope({ key: KEY, groupId: GROUP, newKey: new Uint8Array(31), newGroupId: NEW_GROUP, envelope: env })).toThrow(RangeError);
   });
 });
 

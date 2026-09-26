@@ -3,8 +3,8 @@
  * (sqliteStore.ts over node:sqlite), through the same instrumented wrapper (testing/testStore.ts), so the two
  * cannot drift apart on anything the engine relies on.
  */
-import { b64urlEncode, newId, open, parseEvent } from '@even/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { b64urlEncode, groupIdForToken, newId, open, parseEvent, type Envelope } from '@even/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GroupLifecycle } from '../storage/types';
 import { FakeClock, settle } from '../testing/fakeClock';
@@ -23,7 +23,6 @@ import { openTestStore, STORE_KINDS, type StoreKind, type TestStore } from '../t
 import {
   createSyncEngine,
   decideEpoch,
-  groupIdForToken,
   isUnsupportedBody,
   MAX_JUNK_TEXT_LENGTH,
   UNKNOWN_EPOCH,
@@ -129,6 +128,26 @@ const foreground = { trigger: 'foreground' } as const;
 const refresh = { trigger: 'pull_to_refresh' } as const;
 const OLD = 'https://old.test';
 const NEW = 'https://new.test';
+
+/**
+ * The exact plaintext text of an envelope: what `open` decodes from the bytes and hands to `JSON.parse`, before
+ * any parsing can change it. Fails if `open` stops calling `JSON.parse` exactly once.
+ */
+function plaintextOf(key: Uint8Array, groupId: string, envelope: Envelope): string {
+  const parse = vi.spyOn(JSON, 'parse');
+  try {
+    open({ key, groupId, envelope });
+    expect(parse).toHaveBeenCalledTimes(1);
+    return parse.mock.calls[0]?.[0] as string;
+  } finally {
+    parse.mockRestore();
+  }
+}
+
+/** `JSON.rawJSON` (Node 21+, not yet in TypeScript's lib): `JSON.stringify` emits `text` as it is. */
+function rawJson(text: string): unknown {
+  return (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(text);
+}
 
 /** Gives the group a copy on another server, like the one a move away from it leaves behind. */
 async function copyOn(h: Harness, url: string): Promise<{ other: FakeServer; keys: GroupKeys }> {
@@ -1352,6 +1371,44 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect((await b.store.dump(h.keys.localId)).map((r) => r.id).sort()).toEqual(
         rows.map((r) => r.id).sort(),
       );
+    });
+
+    it('re-encrypts an unsupported body byte for byte, integer literals past 2^53 included', async () => {
+      const h = await setup();
+      await writeMany(h, 1);
+      // A newer client's event (sv 2) holding 2^60 and 2^60 + 1 as literals. The second is not a double, so
+      // opening, parsing, and sealing it again would change the body.
+      const future = {
+        ...h.ev.expense('Future'),
+        sv: 2,
+        big: rawJson('1152921504606846976'),
+        bigger: rawJson('1152921504606846977'),
+      };
+      const sealed = sealFor(h.keys, future);
+      const text = plaintextOf(h.keys.key, h.keys.groupId, sealed);
+      expect(text).toContain('"big":1152921504606846976,"bigger":1152921504606846977');
+      h.server.injectRaw(h.keys.groupId, sealed);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const rowOf = async () =>
+        (await h.store.dump(h.keys.localId)).find((r) => r.id === sealed.id);
+      expect(await rowOf()).toMatchObject({ status: 'unsupported_body' });
+      const next = h.addServer(NEW);
+      const moved = groupKeys(NEW, h.keys.secret);
+
+      expect(await h.engine.moveServer(h.keys.localId, NEW)).toMatchObject({
+        outcome: 'moved',
+        dropped: 0,
+        sync: { outcome: 'synced', pushed: 2 },
+      });
+
+      const row = await rowOf();
+      expect(row).toMatchObject({ status: 'unsupported_body', acked: true });
+      const envelope = JSON.parse(row?.envelope ?? '') as Envelope;
+      expect(envelope).toMatchObject({ id: sealed.id, v: 1 });
+      expect(envelope.n).not.toBe(sealed.n);
+      expect(plaintextOf(h.keys.key, moved.groupId, envelope)).toBe(text);
+      const pushed = next.stored(moved.groupId).find((e) => e.id === sealed.id);
+      expect(pushed).toMatchObject(envelope);
     });
 
     it('moves a blocked group and makes it active again', async () => {

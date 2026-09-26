@@ -1,7 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
+import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { b64urlDecode, b64urlEncode } from './encoding.js';
-import { canonicalOrigin, deriveLocal, deriveServer, InvalidServerUrlError, newSecret } from './keys.js';
+import { canonicalOrigin, deriveLocal, deriveServer, groupIdForToken, InvalidServerUrlError, newSecret } from './keys.js';
 
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
@@ -116,6 +117,37 @@ describe('deriveServer', () => {
 
   it('rejects secrets that are not 32 bytes', () => {
     expect(() => deriveServer(new Uint8Array(16), DEFAULT)).toThrow(RangeError);
+  });
+});
+
+describe('groupIdForToken', () => {
+  it.each([DEFAULT, HOME] as const)('matches the independent known-answer vector for %s', (origin) => {
+    expect(groupIdForToken(b64urlDecode(VECTORS[origin].authToken))).toBe(VECTORS[origin].groupId);
+  });
+
+  it('equals deriveServer(...).groupId for random secrets and origins (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.uint8Array({ minLength: 32, maxLength: 32 }),
+        fc.constantFrom(DEFAULT, HOME, 'https://home.example.net', 'https://192.0.2.1:8080/a/b', 'https://x.test'),
+        (secret, origin) => {
+          const { authToken, groupId } = deriveServer(secret, origin);
+          const fromToken = groupIdForToken(authToken);
+          expect(fromToken).toBe(groupId);
+          expect(fromToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        },
+      ),
+      { numRuns: 200 },
+    );
+  });
+
+  it('throws RangeError unless the token is 32 bytes', () => {
+    for (const length of [0, 16, 31, 33, 64]) {
+      expect(() => groupIdForToken(new Uint8Array(length))).toThrow(RangeError);
+    }
+    expect(() => groupIdForToken('x'.repeat(32) as unknown as Uint8Array)).toThrow(RangeError);
+    expect(() => groupIdForToken(Array.from({ length: 32 }, () => 0) as unknown as Uint8Array)).toThrow(RangeError);
+    expect(() => groupIdForToken(new Uint8Array(32))).not.toThrow();
   });
 });
 
