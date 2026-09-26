@@ -11,16 +11,16 @@ export const CATEGORY_EMOJI: Readonly<Record<Category, string>> = Object.freeze(
   coffee: '☕',
   lodging: '🏨',
   flights: '✈️',
-  transit: '🚕',
+  transit: '🚆',
   fuel: '⛽',
   parking: '🅿️',
   rental: '🚗',
   activities: '🎟️',
   shopping: '🛍️',
-  fees: '🧾',
+  fees: '🪙',
   health: '💊',
   gifts: '🎁',
-  other: '📌',
+  other: '🧾',
 });
 
 export const CATEGORY_LABEL: Readonly<Record<Category, string>> = Object.freeze({

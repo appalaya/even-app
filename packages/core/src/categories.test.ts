@@ -20,8 +20,8 @@ describe('CATEGORY_EMOJI / CATEGORY_LABEL', () => {
   it('uses exactly the design.md emoji, variation selectors included', () => {
     const expected: Record<Category, string> = {
       food: '1f37d fe0f', groceries: '1f6d2', drinks: '1f37b', coffee: '2615',
-      lodging: '1f3e8', flights: '2708 fe0f', transit: '1f695', fuel: '26fd', parking: '1f17f fe0f', rental: '1f697',
-      activities: '1f39f fe0f', shopping: '1f6cd fe0f', fees: '1f9fe', health: '1f48a', gifts: '1f381', other: '1f4cc',
+      lodging: '1f3e8', flights: '2708 fe0f', transit: '1f686', fuel: '26fd', parking: '1f17f fe0f', rental: '1f697',
+      activities: '1f39f fe0f', shopping: '1f6cd fe0f', fees: '1fa99', health: '1f48a', gifts: '1f381', other: '1f9fe',
     };
     for (const c of CATEGORIES) expect(codePoints(CATEGORY_EMOJI[c])).toBe(expected[c]);
   });

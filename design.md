@@ -226,11 +226,11 @@ rewrites history, and the reducer never needs to know how a split was chosen.
 |---|---|---|---|
 | food | 🍽️ | activities | 🎟️ |
 | groceries | 🛒 | shopping | 🛍️ |
-| drinks | 🍻 | fees | 🧾 |
+| drinks | 🍻 | fees | 🪙 |
 | coffee | ☕ | health | 💊 |
 | lodging | 🏨 | gifts | 🎁 |
-| flights | ✈️ | other | 📌 |
-| transit | 🚕 | | |
+| flights | ✈️ | other | 🧾 |
+| transit | 🚆 | | |
 | fuel | ⛽ | | |
 | parking | 🅿️ | | |
 | rental | 🚗 | | |
@@ -650,7 +650,7 @@ Not a transport; two functions.
 
 ## Rotation, moving, closing
 
-**Rotate invite** (settings → "New invite"). Removes access for anyone holding
+**Rotate invite** (settings → "Regenerate invite link", with a confirmation sheet saying everyone will need the new link and that the old one stops working). Removes access for anyone holding
 the old invite.
 
 1. Sync the current group one last time, so nothing pushed by others in the
@@ -731,12 +731,9 @@ action.
   notification ("3 new in Banff 2026").
 - iOS runs background tasks at its discretion, often only when the phone is
   idle or charging, and never after the user force-quits the app. Android has
-  a 15-minute floor. The settings label reads "Background updates (best effort)"
-  with one sentence saying the phone decides when. This is verified on a real
+  a 15-minute floor. The Notifications row in App settings carries the sentence "Your phone decides when Even can check for updates in the background." This is verified on a real
   device before the claim goes into store copy.
-- Notification permission is requested contextually, the first time the user
-  opens a group that has more than one member, with one sentence explaining
-  what it is for.
+- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member, with one sentence explaining what it is for.
 
 ## Invites
 
@@ -820,7 +817,7 @@ src/app/
 │   ├── expense.tsx          → Add / edit expense (presented as a sheet)
 │   ├── [expenseId].tsx      → Expense detail
 │   ├── settle.tsx           → Record a payment (sheet)
-│   └── settings.tsx         → Invite, members, server + usage + move, background updates, exports, new invite, leave
+│   └── settings.tsx         → Invite, members, server + usage + move, background updates, exports, regenerate invite link, leave
 └── +not-found.tsx
 ```
 
@@ -861,8 +858,7 @@ is a sheet or a settings sub-page.
 - **Settings**: invite (always visible, with the one-sentence warning),
   members (rename, emoji, archive, unarchive; shows which have joined), your
   default name and emoji, server (host, operator, limits,
-  retention, usage meter, move, delete old copy after a move), background
-  updates toggle, export CSV, group file export, new invite, archive group,
+  retention, usage meter, move, delete old copy after a move), export CSV, group file export, new invite, archive group,
   leave (with the optional server-copy delete).
 
 ## Elegance constraints
