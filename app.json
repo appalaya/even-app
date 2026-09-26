@@ -65,7 +65,15 @@
         }
       ],
       "expo-sharing",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "27.0"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

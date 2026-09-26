@@ -8,6 +8,12 @@
  * - Row types are camelCase mirrors of the snake_case columns; the column is named on each field.
  * - SQLite booleans (0/1) surface as `boolean`.
  * - Every method is async and safe to call from a background task.
+ *
+ * Errors (implementation: sqliteStore.ts): deliberate failures are `StoreError`s (errors.ts) with a `code`.
+ * Every argument is validated before any SQL runs (ids are 22 base64url chars, local ids 43, server URLs
+ * canonical), so malformed input rejects with `invalid_argument` and changes nothing. Methods that update a
+ * group row, and `insertEvents`, reject with `group_not_found` when the row is missing (for example Leave ran
+ * mid-sync), which also rolls back the surrounding `transaction`.
  */
 import type { Envelope } from '@even/core';
 
@@ -150,8 +156,9 @@ export type PrefKey =
 // ---------- The store ----------
 
 export interface PendingDeletes {
-  /** Records a debt; a duplicate (localId, serverUrl) is a no-op. */
+  /** Records a debt; a duplicate (localId, serverUrl) is a no-op. Needs no `groups` row: debts outlive Leave. */
   add(entry: PendingDeleteRow): Promise<void>;
+  /** In the order the debts were recorded. */
   list(): Promise<PendingDeleteRow[]>;
   /** Clears a debt after the DELETE succeeded (204). Missing rows are a no-op. */
   remove(entry: PendingDeleteRow): Promise<void>;
@@ -169,6 +176,10 @@ export interface Store {
    * Runs `fn` in one exclusive SQLite transaction, committing if it resolves and rolling back if it throws.
    * `fn` must use the `tx` store it is given, never the outer one. Used for "commit each page and the
    * cursor update together" and for multi-step rewrites.
+   *
+   * Other callers' statements wait until the transaction ends (they never join it). Calling the outer store
+   * from inside `fn` therefore waits on itself and fails with `lock_timeout`. Calling `tx.transaction` nests
+   * as a savepoint in the same transaction: a nested failure undoes only the nested writes and rethrows.
    */
   transaction<T>(fn: (tx: Store) => Promise<T>): Promise<T>;
 
@@ -187,6 +198,10 @@ export interface Store {
    * deletes `undecryptable` and `unsupported_envelope` rows; then sets `acked = 0`, `seq = null`,
    * `push_state = 'pending'` on every remaining row. Throws, changing nothing, if a readable row has no
    * entry in `reencrypted`. The caller does the crypto; storage only swaps text.
+   *
+   * Also throws `incomplete_reencryption`, changing nothing, if `reencrypted` names an id that is not a readable
+   * row of this group, and `invalid_argument` for a duplicate id or an envelope that is not v1 or whose `id`
+   * differs from the entry's.
    */
   setServer(
     localId: string,
@@ -213,6 +228,18 @@ export interface Store {
    * incoming row is acked (a pulled page), the existing row gets `acked = 1` and the incoming `seq`; its
    * envelope, status, ts, and origin are never replaced. An unacked incoming duplicate changes nothing.
    * Local writes: `origin 'local'`, `acked false`. Pulls: `origin 'remote'`, `acked true`, with `seq`.
+   *
+   * Details: rows apply in order, so a duplicate id later in the same call behaves like a duplicate of the
+   * earlier row. A `seq` is never lowered (the larger one is kept) and a null incoming `seq` keeps the stored
+   * one. `acked` in the result counts rows whose `acked` or `seq` actually changed. All or nothing: one
+   * invalid row rejects the whole call. Structural rules per row, checked before any write:
+   * - `envelope` is JSON text of at most 16,384 characters (`MAX_ENVELOPE_TEXT_LENGTH`); oversized junk
+   *   from a server must be replaced or truncated by the caller before it is stored as `undecryptable`.
+   * - statuses `ok`, `invalid`, `unsupported_body`: a strict v1 envelope (`isEnvelope`: exactly id, v, n, c,
+   *   so strip the pull response's `seq`) whose `id` is the row id.
+   * - `unsupported_envelope`: well-formed per `envelopeShape` with `v ≠ 1`, same id.
+   * - `undecryptable`: any JSON; if it is a well-formed envelope, same id.
+   * - `ok` rows have a `ts`.
    */
   insertEvents(localId: string, rows: readonly NewEventRow[]): Promise<InsertEventsResult>;
   /**
@@ -220,13 +247,15 @@ export interface Store {
    * then `id`. The push batch.
    */
   outbox(localId: string, limit: number): Promise<OutboxRow[]>;
-  /** Sets `acked = 1` on these ids (a push answered `200`: every envelope in the batch). */
+  /** Sets `acked = 1` on these ids (a push answered `200`: every envelope in the batch). Unknown ids are ignored. */
   ack(localId: string, ids: readonly string[]): Promise<void>;
   /** Sets `push_state = 'rejected'` on these ids (`invalid_envelope` at `index`). */
   markRejected(localId: string, ids: readonly string[]): Promise<void>;
   /**
    * Sets `acked = 0` and `seq = null` on every event of the group, so the whole log is re-pushed: the epoch
    * rule and group-file import. With `clearRejected`, also `push_state = 'pending'`.
+   * Without it, rejected rows stay rejected: the server refused them as structurally invalid, and a new epoch
+   * or an import does not make them valid; a server move (`setServer`) re-queues them with fresh envelopes.
    */
   resetAcked(localId: string, options?: { clearRejected?: boolean }): Promise<void>;
   /** Every event of the group, any status, ordered by `ts` (null last) then `id`. Group file, usage meter. */

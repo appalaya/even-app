@@ -12,13 +12,15 @@
     "android": "expo run:android",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "npm test -w @even/core",
+    "test": "npm test -w @even/core && npm run test:app",
+    "test:app": "vitest run",
     "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@even/core": "*",
     "expo": "~58.0.0-preview.7",
     "expo-background-task": "~58.0.7",
+    "expo-build-properties": "~58.0.7",
     "expo-constants": "~58.0.7",
     "expo-crypto": "~58.0.2",
     "expo-document-picker": "~58.0.1",
@@ -42,13 +44,16 @@
     "react-native-worklets": "0.13.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.3",
     "@types/react": "~19.3.0",
     "eslint": "^9.39.5",
     "eslint-config-expo": "~58.0.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
+    "fast-check": "^4.10.2",
     "prettier": "^3.9.9",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.2"
   },
   "overrides": {
     "react-native-reanimated": {
