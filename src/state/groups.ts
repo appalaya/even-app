@@ -402,7 +402,7 @@ export class GroupService {
     const entries = this.buildEvents(now, [], drafts, memberId);
     const rows = this.sealRows(entries, key, deriveServer(secret, serverUrl).groupId);
 
-    await this.secrets.setSecret(localId, secret);
+    await this.secrets.setSecret(localId, secret, serverUrl);
     try {
       await this.store.transaction(async (tx) => {
         await tx.upsertGroup({
@@ -489,7 +489,8 @@ export class GroupService {
       }
       // A re-shared invite is also the recovery path for a row whose secret is missing (an Android restore).
       const hadSecret = (await this.secrets.getSecret(localId)) !== null;
-      await this.secrets.setSecret(localId, secret);
+      // The row's server, not the invite's: a different one is a move the caller confirms first.
+      await this.secrets.setSecret(localId, secret, existing.serverUrl);
       if (existing.serverUrl !== invite.s) {
         return { kind: 'move', localId, fromServer: existing.serverUrl, toServer: invite.s };
       }
@@ -500,7 +501,7 @@ export class GroupService {
       return { kind: 'already', localId };
     }
 
-    await this.secrets.setSecret(localId, secret);
+    await this.secrets.setSecret(localId, secret, invite.s);
     await this.store.upsertGroup({
       localId,
       serverUrl: invite.s,
@@ -934,12 +935,15 @@ export class GroupService {
       // 2. A new secret: new local id, new key.
       const secret = newSecret();
       const { localId: newLocalId, encryptionKey: newKey } = deriveLocal(secret);
-      await this.secrets.setSecret(newLocalId, secret);
+      const plannedServer = server ?? derived.row.serverUrl;
+      let newServer = plannedServer;
+      await this.secrets.setSecret(newLocalId, secret, plannedServer);
       try {
         await this.store.transaction(async (tx) => {
           const row = await tx.getGroup(localId);
           if (row === null) throw new StateError('not_found', 'no such group');
           const serverUrl = server ?? row.serverUrl;
+          newServer = serverUrl;
           const oldGroupId = deriveServer(oldSecret, row.serverUrl).groupId;
           const newGroupId = deriveServer(secret, serverUrl).groupId;
 
@@ -1015,6 +1019,8 @@ export class GroupService {
         await this.secrets.deleteSecret(newLocalId).catch(() => undefined);
         throw error;
       }
+      // The old group moved while this ran (the new group follows the row, not the snapshot).
+      if (newServer !== plannedServer) await this.recordServer(newLocalId, newServer);
       this.groupState.invalidate(localId);
       this.groupState.invalidate(newLocalId);
       this.groupState.groupsChanged();
@@ -1048,9 +1054,29 @@ export class GroupService {
     });
   }
 
-  /** Runs `processLifecycle` for every group that is not hidden (app start: resumes a pending closure). */
+  /**
+   * App start: brings the keychain index's server URLs in line with the `groups` rows (an entry from the first
+   * index format has none; a crash between a move and its index update leaves the old one), then runs
+   * `processLifecycle` for every group that is not hidden (resumes a pending closure).
+   */
   async reconcile(): Promise<void> {
-    for (const row of await this.store.listGroups()) {
+    const rows = await this.store.listGroups();
+    try {
+      const indexed = new Map(
+        (await this.secrets.listGroups()).map((entry) => [entry.localId, entry.serverUrl]),
+      );
+      for (const row of rows) {
+        if (indexed.has(row.localId) && indexed.get(row.localId) !== row.serverUrl) {
+          await this.secrets.setServerUrl(row.localId, row.serverUrl);
+        }
+      }
+    } catch (error) {
+      this.log(
+        'state: keychain index update failed',
+        error instanceof Error ? error.message : error,
+      );
+    }
+    for (const row of rows) {
       if (row.state === 'hidden') continue;
       try {
         await this.processLifecycle(row.localId);
@@ -1058,6 +1084,54 @@ export class GroupService {
         this.log('state: lifecycle check failed', error instanceof Error ? error.message : error);
       }
     }
+  }
+
+  /**
+   * Reinstall recovery (design.md "Keys"): the iOS keychain outlives an uninstall, so the `even.groups` index can
+   * name groups this store does not hold. For each index entry with a server URL, a readable secret and no `groups`
+   * row, creates the row (`active`, cursor 0, no epoch, nothing cached, no member claimed) so the next sync pulls
+   * the whole log. Entries without a URL (the first index format) or without their secret are skipped. Returns the
+   * number of rows created. The app offers this on first launch when the store is empty but the index is not.
+   */
+  async recoverGroupsFromSecrets(): Promise<number> {
+    let recovered = 0;
+    for (const { localId, serverUrl } of await this.secrets.listGroups()) {
+      if (serverUrl === null || (await this.store.getGroup(localId)) !== null) continue;
+      let origin: string;
+      let secret: Uint8Array | null;
+      try {
+        origin = canonicalOrigin(serverUrl);
+        secret = await this.secrets.getSecret(localId);
+      } catch (error) {
+        this.log('state: cannot recover a group', error instanceof Error ? error.message : error);
+        continue;
+      }
+      if (secret === null || deriveLocal(secret).localId !== localId) continue;
+      const created = await this.store.transaction(async (tx) => {
+        if ((await tx.getGroup(localId)) !== null) return false;
+        await tx.upsertGroup({
+          localId,
+          serverUrl: origin,
+          epoch: null,
+          cursor: 0,
+          myMemberId: null,
+          nameCache: null,
+          currencyCache: null,
+          createdAt: this.now(),
+          lastSyncedAt: null,
+          lastSyncError: null,
+          state: 'active',
+          epochResetsThisCycle: 0,
+        });
+        return true;
+      });
+      if (created) {
+        recovered += 1;
+        this.groupState.invalidate(localId);
+      }
+    }
+    if (recovered > 0) this.groupState.groupsChanged();
+    return recovered;
   }
 
   /**
@@ -1205,6 +1279,7 @@ export class GroupService {
       if (!acked) return { localId, outcome: 'failed', error: 'not_acknowledged', fromServer };
     }
     const result = await this.engine.moveServer(localId, origin);
+    if (result.outcome === 'moved') await this.recordServer(localId, result.serverUrl);
     this.groupState.invalidate(localId);
     this.groupState.groupsChanged();
     return { ...result, fromServer };
@@ -1215,6 +1290,7 @@ export class GroupService {
     const derived = await this.requireDerived(localId);
     if (derived.moveOffer === null) throw new StateError('not_found', 'no move to follow');
     const result = await this.engine.moveServer(localId, derived.moveOffer);
+    if (result.outcome === 'moved') await this.recordServer(localId, result.serverUrl);
     this.groupState.invalidate(localId);
     this.groupState.groupsChanged();
     return { ...result, fromServer: derived.row.serverUrl };
@@ -1284,6 +1360,21 @@ export class GroupService {
   }
 
   // ===== Internals =====
+
+  /**
+   * Records a group's server in the keychain index after its row changed server. The row is the truth, so a failed
+   * keychain write is logged, not thrown; `reconcile` repairs the entry on the next launch.
+   */
+  private async recordServer(localId: string, serverUrl: string): Promise<void> {
+    try {
+      await this.secrets.setServerUrl(localId, serverUrl);
+    } catch (error) {
+      this.log(
+        'state: keychain index update failed',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
 
   private requireFiles(): FileIO {
     if (this.files === null) throw new StateError('not_found', 'file sharing is not available');

@@ -133,6 +133,24 @@ export function formatMinor(amount: number, currency: string, locale?: string): 
   return whole.map((p) => (p.type === 'fraction' ? fractionDigits : p.value)).join('');
 }
 
+/**
+ * Minor units as a plain decimal string with the currency's ISO exponent: `(123456, 'USD') → "1234.56"`,
+ * `(5, 'JPY') → "5"`, `(1234, 'KWD') → "1.234"`, `(-5, 'USD') → "-0.05"`. No symbol, no grouping, no locale: for
+ * machine-readable output (CSV) and editable amount fields, where formatMinor is for display.
+ *
+ * Exact for any safe integer, so for every amount within LIMITS: BigInt and string ops, no floating division.
+ * Zero (and -0) has no sign. Throws RangeError on a non-safe-integer amount or unknown currency.
+ */
+export function minorToDecimal(amount: number, currency: string): string {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`minorToDecimal: amount must be a safe integer, got ${amount}`);
+  const exp = exponentOf(currency);
+  const sign = amount < 0 ? '-' : '';
+  const digits = BigInt(amount < 0 ? -amount : amount).toString();
+  if (exp === 0) return `${sign}${digits}`;
+  const padded = digits.padStart(exp + 1, '0');
+  return `${sign}${padded.slice(0, -exp)}.${padded.slice(-exp)}`;
+}
+
 // ---------- Splits ----------
 
 /** FNV-1a, 32-bit, over UTF-16 code units (identical to byte-wise FNV-1a for ASCII seeds such as expense ids). */

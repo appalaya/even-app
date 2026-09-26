@@ -5,10 +5,22 @@
  * All operations on one instance run one at a time: the `even.groups` index is read-modify-write, and two
  * interleaved `setSecret` calls would otherwise each write an index missing the other's id. Keep one instance
  * per process (secureStore.ts exports it).
+ *
+ * The index is a JSON array of `{ localId, serverUrl }` (types.ts). The first format was a bare array of local ids;
+ * such an index (or a mix) is read as pairs with `serverUrl: null`, and the next write stores the new format.
  */
-import { b64urlDecode, b64urlEncode, deriveLocal, isB64url, isId, LIMITS, newId } from '@even/core';
+import {
+  b64urlDecode,
+  b64urlEncode,
+  canonicalOrigin,
+  deriveLocal,
+  isB64url,
+  isId,
+  LIMITS,
+  newId,
+} from '@even/core';
 
-import type { SecretStoreKey, Secrets } from './types';
+import type { IndexedGroup, SecretStoreKey, Secrets } from './types';
 
 /** The minimal async key-value surface this module needs. Keys are always `SecretStoreKey`s. */
 export interface SecretKeyValue {
@@ -41,7 +53,36 @@ function checkLocalId(localId: unknown): string {
   return localId;
 }
 
-function parseIndex(text: string | null): string[] {
+/** The server URL as `groups.server_url` holds it: already canonical (PROTOCOL.md §8.1). */
+function checkServerUrl(serverUrl: unknown): string {
+  let canonical: string | null = null;
+  if (typeof serverUrl === 'string') {
+    try {
+      canonical = canonicalOrigin(serverUrl);
+    } catch {
+      canonical = null;
+    }
+  }
+  if (canonical === null || canonical !== serverUrl) {
+    throw new SecretsError('serverUrl must be a canonical https server URL');
+  }
+  return canonical;
+}
+
+const isLocalId = (value: unknown): value is string =>
+  typeof value === 'string' && isB64url(value, LOCAL_ID_LENGTH);
+
+/** One index entry: a bare local id (the first format, no URL) or a `{ localId, serverUrl }` pair. */
+function parseEntry(entry: unknown): IndexedGroup | null {
+  if (isLocalId(entry)) return { localId: entry, serverUrl: null };
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+  const { localId, serverUrl } = entry as Record<string, unknown>;
+  if (!isLocalId(localId)) return null;
+  if (serverUrl !== null && typeof serverUrl !== 'string') return null;
+  return { localId, serverUrl };
+}
+
+function parseIndex(text: string | null): IndexedGroup[] {
   if (text === null) return [];
   let parsed: unknown;
   try {
@@ -49,13 +90,13 @@ function parseIndex(text: string | null): string[] {
   } catch {
     parsed = undefined;
   }
-  if (
-    !Array.isArray(parsed) ||
-    !parsed.every((id) => typeof id === 'string' && isB64url(id, LOCAL_ID_LENGTH))
-  ) {
-    throw new SecretsError(`${GROUPS_INDEX_KEY} is not a JSON array of local ids`);
+  const entries = Array.isArray(parsed) ? parsed.map(parseEntry) : null;
+  if (entries === null || entries.some((entry) => entry === null)) {
+    throw new SecretsError(
+      `${GROUPS_INDEX_KEY} is not a JSON array of { localId, serverUrl } (or of local ids)`,
+    );
   }
-  return parsed as string[];
+  return entries as IndexedGroup[];
 }
 
 export function createSecrets(kv: SecretKeyValue): Secrets {
@@ -66,7 +107,13 @@ export function createSecrets(kv: SecretKeyValue): Secrets {
     return result;
   }
 
-  const readIndex = async (): Promise<string[]> => parseIndex(await kv.getItem(GROUPS_INDEX_KEY));
+  const readIndex = async (): Promise<IndexedGroup[]> =>
+    parseIndex(await kv.getItem(GROUPS_INDEX_KEY));
+  const writeIndex = (index: readonly IndexedGroup[]): Promise<void> =>
+    kv.setItem(
+      GROUPS_INDEX_KEY,
+      JSON.stringify(index.map(({ localId, serverUrl }) => ({ localId, serverUrl }))),
+    );
 
   return {
     async getSecret(localId) {
@@ -83,11 +130,12 @@ export function createSecrets(kv: SecretKeyValue): Secrets {
       });
     },
 
-    async setSecret(localId, secret) {
+    async setSecret(localId, secret, serverUrl) {
       checkLocalId(localId);
       if (!(secret instanceof Uint8Array) || secret.length !== LIMITS.secretLength) {
         throw new SecretsError(`secret must be ${LIMITS.secretLength} bytes`);
       }
+      checkServerUrl(serverUrl);
       // Storing a secret under the wrong id would lose the group; one HKDF is cheap insurance.
       if (deriveLocal(secret).localId !== localId) {
         throw new SecretsError('localId does not match deriveLocal(secret)');
@@ -97,9 +145,22 @@ export function createSecrets(kv: SecretKeyValue): Secrets {
         // Secret first, index second, so the index never names a missing secret.
         await kv.setItem(secretKey(localId), text);
         const index = await readIndex();
-        if (!index.includes(localId)) {
-          await kv.setItem(GROUPS_INDEX_KEY, JSON.stringify([...index, localId]));
+        const entry = index.find((e) => e.localId === localId);
+        if (entry === undefined) await writeIndex([...index, { localId, serverUrl }]);
+        else if (entry.serverUrl !== serverUrl) {
+          await writeIndex(index.map((e) => (e.localId === localId ? { localId, serverUrl } : e)));
         }
+      });
+    },
+
+    async setServerUrl(localId, serverUrl) {
+      checkLocalId(localId);
+      checkServerUrl(serverUrl);
+      return serial(async () => {
+        const index = await readIndex();
+        const entry = index.find((e) => e.localId === localId);
+        if (entry === undefined || entry.serverUrl === serverUrl) return;
+        await writeIndex(index.map((e) => (e.localId === localId ? { localId, serverUrl } : e)));
       });
     },
 
@@ -108,14 +169,18 @@ export function createSecrets(kv: SecretKeyValue): Secrets {
       return serial(async () => {
         // Index first, secret second: a crash in between leaves an unlisted secret, never a listed missing one.
         const index = await readIndex();
-        if (index.includes(localId)) {
-          await kv.setItem(GROUPS_INDEX_KEY, JSON.stringify(index.filter((id) => id !== localId)));
+        if (index.some((e) => e.localId === localId)) {
+          await writeIndex(index.filter((e) => e.localId !== localId));
         }
         await kv.deleteItem(secretKey(localId));
       });
     },
 
     listLocalIds() {
+      return serial(async () => (await readIndex()).map((e) => e.localId));
+    },
+
+    listGroups() {
       return serial(readIndex);
     },
 

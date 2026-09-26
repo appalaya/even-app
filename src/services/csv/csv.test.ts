@@ -1,4 +1,4 @@
-import { emptyState, newId, reduce, type Event, type LogEntry } from '@even/core';
+import { emptyState, minorToDecimal, newId, reduce, type Event, type LogEntry } from '@even/core';
 import { describe, expect, it } from 'vitest';
 
 import { createMemoryFileIO } from '../groupFile/memoryFileIO';
@@ -9,7 +9,6 @@ import {
   groupCsv,
   groupCsvRows,
   guardFormula,
-  minorToDecimal,
   toCsv,
 } from './csv';
 
@@ -40,7 +39,7 @@ describe('CSV safety and format', () => {
     expect(text).toBe(`${CSV_BOM}a,b\r\n1,2\r\n`);
   });
 
-  it('converts minor units exactly with the ISO exponent', () => {
+  it('converts minor units exactly with the ISO exponent (core minorToDecimal)', () => {
     expect(minorToDecimal(1234, 'USD')).toBe('12.34');
     expect(minorToDecimal(5, 'USD')).toBe('0.05');
     expect(minorToDecimal(0, 'EUR')).toBe('0.00');

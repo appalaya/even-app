@@ -7,6 +7,7 @@ import {
   formatMinor,
   isCurrency,
   isValidSplit,
+  minorToDecimal,
   splitByBasisPoints,
   splitEqual,
   splitSum,
@@ -193,6 +194,64 @@ describe('formatMinor', () => {
     expect(formatMinor(123456, 'USD')).toBe(new Intl.NumberFormat(undefined, {
       style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).format(1234.56));
+  });
+});
+
+describe('minorToDecimal', () => {
+  it.each([
+    [123456, 'USD', '1234.56'],
+    [5, 'USD', '0.05'],
+    [-5, 'USD', '-0.05'],
+    [-123456, 'USD', '-1234.56'],
+    [0, 'EUR', '0.00'],
+    [-0, 'EUR', '0.00'],
+    [5, 'JPY', '5'],
+    [-1234, 'JPY', '-1234'],
+    [0, 'JPY', '0'],
+    [-0, 'JPY', '0'],
+    [1234, 'KWD', '1.234'],
+    [1, 'KWD', '0.001'],
+    [-1, 'KWD', '-0.001'],
+    [12345, 'CLF', '1.2345'],
+    [1000, 'IQD', '1.000'],
+    [1000, 'LBP', '10.00'],
+  ])('(%i, %s) → %s', (amount, currency, out) => {
+    expect(minorToDecimal(amount, currency)).toBe(out);
+  });
+
+  it('is exact at LIMITS.amountMax and up to MAX_SAFE_INTEGER, with no grouping or locale', () => {
+    const max = BigInt(LIMITS.amountMax);
+    expect(minorToDecimal(LIMITS.amountMax, 'USD')).toBe(`${max / 100n}.${(max % 100n).toString().padStart(2, '0')}`);
+    expect(minorToDecimal(1_000_000_000_000, 'USD')).toBe('10000000000.00');
+    expect(minorToDecimal(Number.MAX_SAFE_INTEGER, 'USD')).toBe('90071992547409.91');
+    expect(minorToDecimal(-Number.MAX_SAFE_INTEGER, 'KWD')).toBe('-9007199254740.991');
+    expect(minorToDecimal(Number.MAX_SAFE_INTEGER, 'JPY')).toBe('9007199254740991');
+  });
+
+  it('round-trips to the same integer with exactly the exponent’s fraction digits (property)', () => {
+    const currencies = ['USD', 'JPY', 'KWD', 'CLF', 'EUR', 'BHD', 'VND'];
+    fc.assert(
+      fc.property(
+        fc.oneof(fc.integer({ min: -LIMITS.amountMax, max: LIMITS.amountMax }), fc.maxSafeInteger(), fc.integer({ min: -1000, max: 1000 })),
+        fc.constantFrom(...currencies),
+        (amount, currency) => {
+          const out = minorToDecimal(amount, currency);
+          const exp = exponentOf(currency);
+          expect(out).toMatch(exp === 0 ? /^-?(0|[1-9][0-9]*)$/ : new RegExp(`^-?(0|[1-9][0-9]*)\\.[0-9]{${exp}}$`));
+          expect(BigInt(out.replace('.', ''))).toBe(BigInt(amount));
+          if (amount === 0) expect(out.startsWith('-')).toBe(false);
+        },
+      ),
+      { numRuns: 500 },
+    );
+  });
+
+  it('throws RangeError on a non-safe-integer amount or unknown currency', () => {
+    expect(() => minorToDecimal(1.5, 'USD')).toThrow(RangeError);
+    expect(() => minorToDecimal(Number.NaN, 'USD')).toThrow(RangeError);
+    expect(() => minorToDecimal(2 ** 53, 'USD')).toThrow(RangeError);
+    expect(() => minorToDecimal(100, 'usd')).toThrow(RangeError);
+    expect(() => minorToDecimal(1, 'XXX')).toThrow(RangeError);
   });
 });
 

@@ -9,8 +9,11 @@ import {
   SecretsError,
   type SecretKeyValue,
 } from './createSecrets';
-import { createMemorySecrets, MemoryKeyValue } from './memorySecrets';
+import { createMemorySecrets, MemoryKeyValue, rawIndex } from './memorySecrets';
 import type { SecretStoreKey } from './types';
+
+const SERVER = 'https://sync.test';
+const OTHER = 'https://other.test';
 
 function newGroup() {
   const secret = newSecret();
@@ -51,14 +54,15 @@ class SlowKeyValue implements SecretKeyValue {
 }
 
 describe('group secrets', () => {
-  it('stores the secret as base64url and indexes the local id', async () => {
+  it('stores the secret as base64url and indexes the local id with its server URL', async () => {
     const secrets = createMemorySecrets();
     const { secret, localId } = newGroup();
-    await secrets.setSecret(localId, secret);
+    await secrets.setSecret(localId, secret, SERVER);
     expect(secrets.kv.items.get(`even.secret.${localId}`)).toBe(b64urlEncode(secret));
-    expect(JSON.parse(secrets.kv.items.get('even.groups')!)).toEqual([localId]);
+    expect(rawIndex(secrets.kv)).toEqual([{ localId, serverUrl: SERVER }]);
     expect(await secrets.getSecret(localId)).toEqual(secret);
     expect(await secrets.listLocalIds()).toEqual([localId]);
+    expect(await secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
   });
 
   it('returns null for a group without a secret', async () => {
@@ -71,18 +75,24 @@ describe('group secrets', () => {
     const secrets = createMemorySecrets();
     const a = newGroup();
     const b = newGroup();
-    await secrets.setSecret(a.localId, a.secret);
-    await secrets.setSecret(b.localId, b.secret);
-    await secrets.setSecret(a.localId, a.secret);
+    await secrets.setSecret(a.localId, a.secret, SERVER);
+    await secrets.setSecret(b.localId, b.secret, SERVER);
+    await secrets.setSecret(a.localId, a.secret, SERVER);
     expect(await secrets.listLocalIds()).toEqual([a.localId, b.localId]);
+    // Overwriting with another server updates the entry in place.
+    await secrets.setSecret(a.localId, a.secret, OTHER);
+    expect(await secrets.listGroups()).toEqual([
+      { localId: a.localId, serverUrl: OTHER },
+      { localId: b.localId, serverUrl: SERVER },
+    ]);
   });
 
   it('deletes the secret and its index entry; missing is a no-op', async () => {
     const secrets = createMemorySecrets();
     const a = newGroup();
     const b = newGroup();
-    await secrets.setSecret(a.localId, a.secret);
-    await secrets.setSecret(b.localId, b.secret);
+    await secrets.setSecret(a.localId, a.secret, SERVER);
+    await secrets.setSecret(b.localId, b.secret, SERVER);
     await secrets.deleteSecret(a.localId);
     expect(await secrets.getSecret(a.localId)).toBeNull();
     expect(await secrets.listLocalIds()).toEqual([b.localId]);
@@ -95,7 +105,7 @@ describe('group secrets', () => {
     const kv = new SlowKeyValue();
     const secrets = createSecrets(kv);
     const { secret, localId } = newGroup();
-    await secrets.setSecret(localId, secret);
+    await secrets.setSecret(localId, secret, SERVER);
     expect(kv.log.filter((l) => l.startsWith('set') || l.startsWith('delete'))).toEqual([
       `set ${secretKey(localId)}`,
       `set ${GROUPS_INDEX_KEY}`,
@@ -113,10 +123,12 @@ describe('group secrets', () => {
     const secrets = createSecrets(kv);
     const { secret, localId } = newGroup();
     kv.failNext = secretKey(localId);
-    await expect(secrets.setSecret(localId, secret)).rejects.toThrow('keychain write failed');
+    await expect(secrets.setSecret(localId, secret, SERVER)).rejects.toThrow(
+      'keychain write failed',
+    );
     expect(await secrets.listLocalIds()).toEqual([]);
     // The queue keeps working after a failure.
-    await secrets.setSecret(localId, secret);
+    await secrets.setSecret(localId, secret, SERVER);
     expect(await secrets.listLocalIds()).toEqual([localId]);
   });
 
@@ -124,11 +136,11 @@ describe('group secrets', () => {
     const kv = new SlowKeyValue();
     const secrets = createSecrets(kv);
     const groups = Array.from({ length: 12 }, newGroup);
-    await Promise.all(groups.map((grp) => secrets.setSecret(grp.localId, grp.secret)));
+    await Promise.all(groups.map((grp) => secrets.setSecret(grp.localId, grp.secret, SERVER)));
     expect((await secrets.listLocalIds()).sort()).toEqual(groups.map((grp) => grp.localId).sort());
     await Promise.all([
       ...groups.slice(0, 6).map((grp) => secrets.deleteSecret(grp.localId)),
-      secrets.setSecret(groups[0]!.localId, groups[0]!.secret),
+      secrets.setSecret(groups[0]!.localId, groups[0]!.secret, SERVER),
     ]);
     expect((await secrets.listLocalIds()).sort()).toEqual(
       [groups[0]!, ...groups.slice(6)].map((grp) => grp.localId).sort(),
@@ -139,13 +151,13 @@ describe('group secrets', () => {
     const secrets = createMemorySecrets();
     const { secret, localId } = newGroup();
     const other = newGroup();
-    await expect(secrets.setSecret(localId, secret.slice(0, 31))).rejects.toBeInstanceOf(
+    await expect(secrets.setSecret(localId, secret.slice(0, 31), SERVER)).rejects.toBeInstanceOf(
       SecretsError,
     );
-    await expect(secrets.setSecret(localId, Array.from(secret) as never)).rejects.toBeInstanceOf(
-      SecretsError,
-    );
-    await expect(secrets.setSecret(other.localId, secret)).rejects.toThrow(/deriveLocal/);
+    await expect(
+      secrets.setSecret(localId, Array.from(secret) as never, SERVER),
+    ).rejects.toBeInstanceOf(SecretsError);
+    await expect(secrets.setSecret(other.localId, secret, SERVER)).rejects.toThrow(/deriveLocal/);
     for (const bad of [
       '',
       'short',
@@ -153,7 +165,7 @@ describe('group secrets', () => {
       `${localId.slice(0, 42)}=`,
       '../even.device'.padEnd(43, 'a'),
     ]) {
-      await expect(secrets.setSecret(bad, secret)).rejects.toBeInstanceOf(SecretsError);
+      await expect(secrets.setSecret(bad, secret, SERVER)).rejects.toBeInstanceOf(SecretsError);
       await expect(secrets.getSecret(bad)).rejects.toBeInstanceOf(SecretsError);
       await expect(secrets.deleteSecret(bad)).rejects.toBeInstanceOf(SecretsError);
     }
@@ -163,12 +175,147 @@ describe('group secrets', () => {
   it('refuses a corrupt stored secret or index instead of guessing', async () => {
     const secrets = createMemorySecrets();
     const { secret, localId } = newGroup();
-    await secrets.setSecret(localId, secret);
+    await secrets.setSecret(localId, secret, SERVER);
     secrets.kv.items.set(secretKey(localId), 'too-short');
     await expect(secrets.getSecret(localId)).rejects.toBeInstanceOf(SecretsError);
-    secrets.kv.items.set(GROUPS_INDEX_KEY, '{"not":"an array"}');
-    await expect(secrets.listLocalIds()).rejects.toBeInstanceOf(SecretsError);
-    await expect(secrets.setSecret(localId, secret)).rejects.toBeInstanceOf(SecretsError);
+    for (const corrupt of [
+      '{"not":"an array"}',
+      'not json',
+      '[1]',
+      '["short"]',
+      JSON.stringify([{ localId: 'short', serverUrl: SERVER }]),
+      JSON.stringify([{ localId, serverUrl: 42 }]),
+      JSON.stringify([{ serverUrl: SERVER }]),
+      JSON.stringify([[localId, SERVER]]),
+    ]) {
+      secrets.kv.items.set(GROUPS_INDEX_KEY, corrupt);
+      await expect(secrets.listLocalIds()).rejects.toBeInstanceOf(SecretsError);
+      await expect(secrets.listGroups()).rejects.toBeInstanceOf(SecretsError);
+      await expect(secrets.setSecret(localId, secret, SERVER)).rejects.toBeInstanceOf(SecretsError);
+      await expect(secrets.setServerUrl(localId, SERVER)).rejects.toBeInstanceOf(SecretsError);
+    }
+  });
+
+  it('refuses a server URL that is not canonical https, before writing anything', async () => {
+    const secrets = createMemorySecrets();
+    const { secret, localId } = newGroup();
+    for (const bad of [
+      '',
+      'http://sync.test',
+      'HTTPS://Sync.test',
+      'https://sync.test/',
+      ' https://sync.test',
+      'nope',
+      null,
+      42,
+    ]) {
+      await expect(secrets.setSecret(localId, secret, bad as string)).rejects.toBeInstanceOf(
+        SecretsError,
+      );
+    }
+    expect(secrets.kv.items.size).toBe(0);
+    await secrets.setSecret(localId, secret, SERVER);
+    await expect(secrets.setServerUrl(localId, 'http://other.test')).rejects.toBeInstanceOf(
+      SecretsError,
+    );
+    await expect(secrets.setServerUrl('short', OTHER)).rejects.toBeInstanceOf(SecretsError);
+    expect(await secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
+  });
+});
+
+describe('the index carries each group’s server URL', () => {
+  it('setServerUrl records a move; an unindexed id is a no-op; the secret is untouched', async () => {
+    const secrets = createMemorySecrets();
+    const a = newGroup();
+    const b = newGroup();
+    await secrets.setSecret(a.localId, a.secret, SERVER);
+    await secrets.setSecret(b.localId, b.secret, SERVER);
+    const before = secrets.kv.items.get(secretKey(a.localId));
+    await secrets.setServerUrl(a.localId, OTHER);
+    expect(await secrets.listGroups()).toEqual([
+      { localId: a.localId, serverUrl: OTHER },
+      { localId: b.localId, serverUrl: SERVER },
+    ]);
+    expect(secrets.kv.items.get(secretKey(a.localId))).toBe(before);
+    const stranger = newGroup();
+    await secrets.setServerUrl(stranger.localId, OTHER);
+    expect(await secrets.listLocalIds()).toEqual([a.localId, b.localId]);
+  });
+
+  it('setServerUrl writes nothing when the URL is unchanged', async () => {
+    const kv = new SlowKeyValue();
+    const secrets = createSecrets(kv);
+    const { secret, localId } = newGroup();
+    await secrets.setSecret(localId, secret, SERVER);
+    kv.log.length = 0;
+    await secrets.setServerUrl(localId, SERVER);
+    await secrets.setSecret(localId, secret, SERVER);
+    expect(kv.log.filter((l) => l === `set ${GROUPS_INDEX_KEY}`)).toEqual([]);
+  });
+
+  it('reads an old-format index (bare local ids) as pairs without a URL, and rewrites it on the next write', async () => {
+    const kv = new MemoryKeyValue();
+    const a = newGroup();
+    const b = newGroup();
+    const c = newGroup();
+    kv.items.set(secretKey(a.localId), b64urlEncode(a.secret));
+    kv.items.set(secretKey(b.localId), b64urlEncode(b.secret));
+    kv.items.set(GROUPS_INDEX_KEY, JSON.stringify([a.localId, b.localId]));
+    const secrets = createMemorySecrets(kv);
+
+    expect(await secrets.listLocalIds()).toEqual([a.localId, b.localId]);
+    expect(await secrets.listGroups()).toEqual([
+      { localId: a.localId, serverUrl: null },
+      { localId: b.localId, serverUrl: null },
+    ]);
+    expect(await secrets.getSecret(a.localId)).toEqual(a.secret);
+    // Reading does not write.
+    expect(rawIndex(kv)).toEqual([a.localId, b.localId]);
+
+    await secrets.setServerUrl(b.localId, OTHER);
+    expect(rawIndex(kv)).toEqual([
+      { localId: a.localId, serverUrl: null },
+      { localId: b.localId, serverUrl: OTHER },
+    ]);
+    await secrets.setSecret(c.localId, c.secret, SERVER);
+    await secrets.deleteSecret(a.localId);
+    expect(await secrets.listGroups()).toEqual([
+      { localId: b.localId, serverUrl: OTHER },
+      { localId: c.localId, serverUrl: SERVER },
+    ]);
+  });
+
+  it('reads a mixed index and ignores unknown fields on an entry', async () => {
+    const kv = new MemoryKeyValue();
+    const a = newGroup();
+    const b = newGroup();
+    kv.items.set(
+      GROUPS_INDEX_KEY,
+      JSON.stringify([a.localId, { localId: b.localId, serverUrl: SERVER, later: true }]),
+    );
+    const secrets = createMemorySecrets(kv);
+    expect(await secrets.listGroups()).toEqual([
+      { localId: a.localId, serverUrl: null },
+      { localId: b.localId, serverUrl: SERVER },
+    ]);
+    await secrets.setSecret(a.localId, a.secret, OTHER);
+    expect(rawIndex(kv)).toEqual([
+      { localId: a.localId, serverUrl: OTHER },
+      { localId: b.localId, serverUrl: SERVER },
+    ]);
+  });
+
+  it('keeps every URL when setSecret and setServerUrl run concurrently', async () => {
+    const kv = new SlowKeyValue();
+    const secrets = createSecrets(kv);
+    const groups = Array.from({ length: 8 }, newGroup);
+    await Promise.all(groups.map((grp) => secrets.setSecret(grp.localId, grp.secret, SERVER)));
+    await Promise.all(groups.slice(0, 4).map((grp) => secrets.setServerUrl(grp.localId, OTHER)));
+    const byId = new Map((await secrets.listGroups()).map((e) => [e.localId, e.serverUrl]));
+    expect(groups.map((grp) => byId.get(grp.localId))).toEqual([
+      ...Array.from({ length: 4 }, () => OTHER),
+      ...Array.from({ length: 4 }, () => SERVER),
+    ]);
   });
 });
 

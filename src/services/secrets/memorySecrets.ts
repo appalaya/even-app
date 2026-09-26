@@ -1,8 +1,10 @@
 /**
  * In-memory `Secrets` for tests and for the sync engine's fakes: the same logic as the app (createSecrets.ts)
- * over a Map, so the index and device-id behaviour match secure store exactly.
+ * over a Map, so the index (its `{ localId, serverUrl }` pairs and the migration of a first-format index of bare
+ * local ids) and the device-id behaviour match secure store exactly. `kv.items` holds the raw strings, so a test
+ * can seed an old-format index or inspect what was written.
  */
-import { createSecrets, type SecretKeyValue } from './createSecrets';
+import { createSecrets, GROUPS_INDEX_KEY, type SecretKeyValue } from './createSecrets';
 import type { SecretStoreKey, Secrets } from './types';
 
 /** Keys accepted by expo-secure-store; the memory store refuses others so tests catch bad keys too. */
@@ -36,6 +38,12 @@ export class MemoryKeyValue implements SecretKeyValue {
 
 export interface MemorySecrets extends Secrets {
   readonly kv: MemoryKeyValue;
+}
+
+/** The raw `even.groups` value, parsed (null when absent): what secure store would hold, for assertions. */
+export function rawIndex(kv: MemoryKeyValue): unknown {
+  const text = kv.items.get(GROUPS_INDEX_KEY);
+  return text === undefined ? null : (JSON.parse(text) as unknown);
 }
 
 export function createMemorySecrets(kv: MemoryKeyValue = new MemoryKeyValue()): MemorySecrets {

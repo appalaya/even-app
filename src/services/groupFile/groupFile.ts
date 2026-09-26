@@ -385,7 +385,7 @@ export async function importGroupFile(
         : 'active';
   } else finalState = existing.state;
 
-  await deps.secrets.setSecret(localId, secret);
+  await deps.secrets.setSecret(localId, secret, targetServer);
   const result = await deps.store.transaction(async (tx) => {
     if (existing === null) {
       await tx.upsertGroup({

@@ -124,7 +124,10 @@ canonicalOrigin(url: string): string        // protocol §8.1; throws on http://
 Secure store also holds an index, `even.groups`, listing the local ids that
 have a secret, because secure store cannot enumerate keys. On iOS the keychain
 is backed up and survives uninstall, so a restore or reinstall can list the
-index, recover each secret, and re-pull the logs. On Android the keystore
+index, recover each secret, and re-pull the logs. Each index entry carries the
+group's server URL beside its local id (the URL is not secret), which is what
+rebuilding the `groups` row needs, and the app offers this recovery on first
+launch when the store is empty but the index is not. On Android the keystore
 wrapping key is not restorable, so a restored Android phone has ciphertext
 without keys; recovery there is a re-shared invite or the group file. The
 privacy page states both.

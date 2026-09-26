@@ -41,6 +41,11 @@ export interface World {
   device(name?: string): Promise<Device>;
   /** The same device after an app restart: new services over the same store and secrets. */
   restart(d: Device): Promise<Device>;
+  /**
+   * The same iPhone after an uninstall and reinstall: the keychain (secrets, index, device id) survives, the app's
+   * files do not, so new services over a new empty store (same kind) and the same secrets.
+   */
+  reinstall(d: Device): Promise<Device>;
   close(): Promise<void>;
 }
 
@@ -104,12 +109,20 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
     return open(d.name, d.store, d.secrets, d.files);
   }
 
+  async function reinstall(d: Device): Promise<Device> {
+    d.services.dispose();
+    devices.splice(devices.indexOf(d), 1);
+    await d.store.close();
+    return open(d.name, await openTestStore(kind), d.secrets, createMemoryFileIO());
+  }
+
   return {
     kind,
     clock,
     server,
     device,
     restart,
+    reinstall,
     async close() {
       for (const d of devices) d.services.dispose();
       await Promise.all([...new Set(devices.map((d) => d.store))].map((store) => store.close()));

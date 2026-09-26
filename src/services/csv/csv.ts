@@ -8,11 +8,12 @@
  *   not execute another member's title. (Tab and CR, which some spreadsheets also treat as formula starts, are
  *   guarded the same way.)
  * - Amounts are plain decimals in the group currency ("12.34", "1500" for JPY), converted exactly from minor units
- *   with the ISO 4217 exponent; no symbol and no grouping, so a spreadsheet reads them as numbers.
+ *   by the core's minorToDecimal (ISO 4217 exponent); no symbol and no grouping, so a spreadsheet reads them as
+ *   numbers.
  *
  * The file is decrypted content: `FileIO.share` writes it to a temporary file and deletes it when the sheet closes.
  */
-import { CATEGORY_LABEL, exponentOf, type GroupState } from '@even/core';
+import { CATEGORY_LABEL, minorToDecimal, type GroupState } from '@even/core';
 
 import { fileBaseName } from '../groupFile/groupFile';
 import type { FileIO } from '../groupFile/fileIO';
@@ -38,20 +39,6 @@ export function csvCell(value: string): string {
 /** Rows to CSV text: BOM, fields joined by commas, lines ended with CRLF. */
 export function toCsv(rows: readonly (readonly string[])[]): string {
   return CSV_BOM + rows.map((row) => row.map(csvCell).join(',') + '\r\n').join('');
-}
-
-/**
- * Minor units as a plain decimal string with the currency's ISO exponent ("-12.05", "1500"). Exact for any safe
- * integer (BigInt and string operations, no floating point). Throws RangeError for an unknown currency.
- */
-export function minorToDecimal(amount: number, currency: string): string {
-  if (!Number.isSafeInteger(amount)) throw new RangeError('amount must be a safe integer');
-  const exp = exponentOf(currency);
-  const negative = amount < 0;
-  const digits = BigInt(negative ? -amount : amount).toString();
-  if (exp === 0) return `${negative ? '-' : ''}${digits}`;
-  const padded = digits.padStart(exp + 1, '0');
-  return `${negative ? '-' : ''}${padded.slice(0, -exp)}.${padded.slice(-exp)}`;
 }
 
 function amountText(amount: number, currency: string): string {

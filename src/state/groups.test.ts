@@ -172,6 +172,7 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         currencyCache: 'CAD',
       });
       expect(await a.secrets.listLocalIds()).toEqual([localId]);
+      expect(await a.secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
       const d = await derived(a, localId);
       expect(d.me?.name).toBe('Maya');
       expect([...d.state.members.values()].map((m) => m.name)).toEqual(['Maya', 'Nathan', 'Priya']);
@@ -216,6 +217,9 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       const a = await w.device('A');
       const { localId } = await g(a).createGroup({ name: 'Trip', currency: 'JPY', myName: 'Ken' });
       expect((await a.store.getGroup(localId))?.serverUrl).toBe(PROTOCOL.defaultServer);
+      expect(await a.secrets.listGroups()).toEqual([
+        { localId, serverUrl: PROTOCOL.defaultServer },
+      ]);
     });
 
     it("refuses to write when the phone's clock is outside the valid range", async () => {
@@ -345,6 +349,7 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       const w = await setup(kind);
       const { a, b, localId } = await twoDevices(w);
       const { code } = await g(a).inviteFor(localId);
+      expect(await b.secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
       expect(await g(b).joinInvite(code)).toEqual({ kind: 'already', localId });
 
       const secret = await secretOn(a, localId);
@@ -355,6 +360,8 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         fromServer: SERVER,
         toServer: OTHER_SERVER,
       });
+      // Not moved yet: the index keeps the row's server.
+      expect(await b.secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
       // The caller confirms, then moves without announcing (the old server may be dead).
       const result = await g(b).acceptInviteMove(localId, OTHER_SERVER);
       expect(result).toMatchObject({
@@ -363,6 +370,7 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         fromServer: SERVER,
       });
       expect((await b.store.getGroup(localId))?.serverUrl).toBe(OTHER_SERVER);
+      expect(await b.secrets.listGroups()).toEqual([{ localId, serverUrl: OTHER_SERVER }]);
       expect(serverIds(w, secret, OTHER_SERVER).sort()).toEqual(
         (await b.store.dump(localId)).map((r) => r.id).sort(),
       );
@@ -1012,6 +1020,7 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         fromServer: SERVER,
       });
       expect((await a.store.getGroup(localId))?.serverUrl).toBe(OTHER_SERVER);
+      expect(await a.secrets.listGroups()).toEqual([{ localId, serverUrl: OTHER_SERVER }]);
       const onA = (await a.store.dump(localId)).map((r) => r.id);
       expect(serverIds(w, secret, OTHER_SERVER).sort()).toEqual([...onA].sort());
       // The announcement reached the old server before the switch.
@@ -1022,8 +1031,10 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       expectSynced(await sync(b, localId));
       const offered = await derived(b, localId);
       expect(offered.moveOffer).toBe(OTHER_SERVER);
+      expect(await b.secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
       const followed = await g(b).followMove(localId);
       expect(followed).toMatchObject({ outcome: 'moved', serverUrl: OTHER_SERVER });
+      expect(await b.secrets.listGroups()).toEqual([{ localId, serverUrl: OTHER_SERVER }]);
       expect((await derived(b, localId)).moveOffer).toBeNull();
       await rejectsWith(g(b).followMove(localId), 'not_found');
 
@@ -1068,6 +1079,7 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         fromServer: SERVER,
       });
       expect((await a.store.getGroup(localId))?.serverUrl).toBe(SERVER);
+      expect(await a.secrets.listGroups()).toEqual([{ localId, serverUrl: SERVER }]);
     });
 
     it('a blocked group moves without announcing and becomes active', async () => {
@@ -1081,6 +1093,127 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         serverUrl: OTHER_SERVER,
       });
       expect((await bodies(a, localId)).some((r) => r.event.type === 'group.moved')).toBe(false);
+    });
+  });
+
+  describe('keychain index and reinstall recovery', () => {
+    /** Rewrites a device's index entry for `localId` in the first format (a bare local id, no URL). */
+    async function oldFormatEntry(d: Device, localId: string): Promise<void> {
+      const index = await d.secrets.listGroups();
+      d.secrets.kv.items.set(
+        'even.groups',
+        JSON.stringify(index.map((e) => (e.localId === localId ? e.localId : e))),
+      );
+    }
+
+    it('after a reinstall, recovers every indexed group and the next sync pulls its log', async () => {
+      const w = await setup(kind);
+      const { a, b, localId, maya, nathan } = await twoDevices(w);
+      await g(a).addExpense(localId, {
+        title: 'Groceries',
+        amount: 4200,
+        paidBy: maya,
+        date: '2026-02-01',
+        category: 'groceries',
+        split: { mode: 'equal', members: [maya, nathan] },
+      });
+      expectSynced(await sync(a, localId));
+      const { localId: other } = await g(a).createGroup({
+        name: 'Elsewhere',
+        currency: 'EUR',
+        myName: 'Maya',
+        serverUrl: OTHER_SERVER,
+      });
+      expectSynced(await sync(a, other));
+      expect((await g(b).joinInvite((await g(a).inviteFor(other)).code)).kind).toBe('joined');
+
+      const b2 = await w.reinstall(b);
+      expect(await b2.store.listGroups()).toEqual([]);
+      expect(b2.services.deviceId).toBe(b.services.deviceId);
+      expect(await b2.secrets.listGroups()).toEqual([
+        { localId, serverUrl: SERVER },
+        { localId: other, serverUrl: OTHER_SERVER },
+      ]);
+
+      expect(await g(b2).recoverGroupsFromSecrets()).toBe(2);
+      for (const [id, serverUrl] of [
+        [localId, SERVER],
+        [other, OTHER_SERVER],
+      ] as const) {
+        expect(await b2.store.getGroup(id)).toMatchObject({
+          serverUrl,
+          state: 'active',
+          cursor: 0,
+          epoch: null,
+          myMemberId: null,
+          lastSyncedAt: null,
+        });
+      }
+      expect(await g(b2).recoverGroupsFromSecrets()).toBe(0);
+
+      expectSynced(await sync(b2, localId));
+      expectSynced(await sync(b2, other));
+      const onA = await derived(a, localId);
+      const recovered = await derived(b2, localId);
+      expect(recovered.name).toBe('Banff 2026');
+      expect(recovered.needsClaim).toBe(true);
+      expect([...recovered.state.members.values()].map((m) => m.name)).toEqual(
+        [...onA.state.members.values()].map((m) => m.name),
+      );
+      expect([...recovered.state.expenses.values()].map((e) => e.title)).toEqual(['Groceries']);
+      expect((await derived(b2, other)).name).toBe('Elsewhere');
+    });
+
+    it('creates rows only for missing groups, and skips entries without a URL or a secret', async () => {
+      const w = await setup(kind);
+      const a = await w.device('A');
+      const base = { currency: 'EUR', myName: 'Maya', serverUrl: SERVER };
+      const { localId: kept } = await g(a).createGroup({ ...base, name: 'Kept' });
+      const { localId: missing } = await g(a).createGroup({ ...base, name: 'Missing' });
+      const { localId: noUrl } = await g(a).createGroup({ ...base, name: 'No URL' });
+      const { localId: noSecret } = await g(a).createGroup({ ...base, name: 'No secret' });
+      for (const id of [kept, missing, noUrl, noSecret]) expectSynced(await sync(a, id));
+      const code = (await g(a).inviteFor(kept)).code;
+      await oldFormatEntry(a, noUrl);
+      a.secrets.kv.items.delete(`even.secret.${noSecret}`);
+
+      const a2 = await w.reinstall(a);
+      expect((await g(a2).joinInvite(code)).kind).toBe('joined');
+      const keptRow = await a2.store.getGroup(kept);
+      expect(keptRow?.cursor).toBeGreaterThan(0);
+
+      expect(await g(a2).recoverGroupsFromSecrets()).toBe(1);
+      expect((await a2.store.listGroups()).map((r) => r.localId).sort()).toEqual(
+        [kept, missing].sort(),
+      );
+      expect(await a2.store.getGroup(kept)).toEqual(keptRow); // untouched
+      expect(await a2.store.getGroup(missing)).toMatchObject({ serverUrl: SERVER, cursor: 0 });
+      expectSynced(await sync(a2, missing));
+      expect((await derived(a2, missing)).name).toBe('Missing');
+    });
+
+    it('on launch, fills in the URL of a first-format entry and repairs one a crash left stale', async () => {
+      const w = await setup(kind);
+      const a = await w.device('A');
+      const { localId: first } = await createTrip(a);
+      const { localId: second } = await g(a).createGroup({
+        name: 'Other',
+        currency: 'EUR',
+        myName: 'Maya',
+        serverUrl: OTHER_SERVER,
+      });
+      await oldFormatEntry(a, first);
+      await a.secrets.setServerUrl(second, SERVER); // as if the app died between a move and its index update
+      expect(await a.secrets.listGroups()).toEqual([
+        { localId: first, serverUrl: null },
+        { localId: second, serverUrl: SERVER },
+      ]);
+
+      const a2 = await w.restart(a);
+      expect(await a2.secrets.listGroups()).toEqual([
+        { localId: first, serverUrl: SERVER },
+        { localId: second, serverUrl: OTHER_SERVER },
+      ]);
     });
   });
 

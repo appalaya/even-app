@@ -341,6 +341,8 @@ describe.each(STORE_KINDS)('rotation on the %s store', (kind) => {
     const rotated = await g(a).rotateInvite(g1, { serverUrl: OTHER_SERVER });
     await a.services.idle();
     expect(await a.store.getGroup(rotated.localId)).toMatchObject({ serverUrl: OTHER_SERVER });
+    const index = new Map((await a.secrets.listGroups()).map((e) => [e.localId, e.serverUrl]));
+    expect(index.get(rotated.localId)).toBe(OTHER_SERVER);
     const newSecret = await secretOn(a, rotated.localId);
     expect(serverIds(w, newSecret, OTHER_SERVER).length).toBe(
       (await a.store.dump(rotated.localId)).length,
