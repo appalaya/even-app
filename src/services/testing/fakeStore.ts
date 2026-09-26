@@ -7,11 +7,15 @@
  *   `ok` has a `ts`), all or nothing, and the group row must exist.
  * - the outbox is `acked = 0 AND push_state = 'pending'`, ordered by `ts` (null last) then `id`.
  * - `resetAcked` keeps rejected rows rejected unless `clearRejected`.
+ * - `setServer` refuses, changing nothing, a re-encryption that misses a readable row, names another row, repeats
+ *   an id, or holds an envelope that is not v1 or carries another id; stored text is the canonical `{id, v, n, c}`.
+ * - `listGroups` orders by `createdAt`, then `localId` (the SQL `ORDER BY created_at, local_id`).
  * - `transaction` snapshots everything and restores it if `fn` throws; nested calls behave as savepoints, and
  *   top-level transactions run one at a time.
+ * The engine suite runs against this and the real store alike (engine.test.ts), so a disagreement shows up there.
  * `fault` lets a test throw from any method (e.g. `setCursor`) to exercise rollback.
  */
-import { envelopeShape, isEnvelope, isId } from '@even/core';
+import { envelopeShape, isB64url, isEnvelope, isId } from '@even/core';
 
 import type {
   EventCounts,
@@ -131,10 +135,15 @@ export class FakeStore implements Store {
   readonly pendingDeletes: PendingDeletes = {
     add: async (entry) => {
       this.enter('pendingDeletes.add', [entry]);
+      if (!isB64url(entry.authToken, 43))
+        throw new Error('FakeStore: authToken must be 43 base64url');
       const exists = this.state.pendingDeletes.some(
         (d) => d.localId === entry.localId && d.serverUrl === entry.serverUrl,
       );
-      if (!exists) this.state.pendingDeletes.push({ ...entry });
+      if (!exists) {
+        const { localId, serverUrl, authToken } = entry;
+        this.state.pendingDeletes.push({ localId, serverUrl, authToken });
+      }
     },
     list: async () => {
       this.enter('pendingDeletes.list', []);
@@ -217,7 +226,7 @@ export class FakeStore implements Store {
   async listGroups(): Promise<GroupRow[]> {
     this.enter('listGroups', []);
     return [...this.state.groups.values()]
-      .sort((a, b) => a.createdAt - b.createdAt)
+      .sort((a, b) => a.createdAt - b.createdAt || compareCodeUnits(a.localId, b.localId))
       .map((g) => ({ ...g }));
   }
 
@@ -243,13 +252,24 @@ export class FakeStore implements Store {
     reencrypted: readonly ReadableEnvelope[],
   ): Promise<void> {
     this.enter('setServer', [localId, serverUrl, reencrypted]);
-    const group = this.group(localId);
-    const replacements = new Map(reencrypted.map((r) => [r.id, r.envelope]));
-    const rows = this.rows(localId);
-    for (const row of rows.values()) {
-      if (READABLE.has(row.status) && !replacements.has(row.id)) {
-        throw new Error(`FakeStore.setServer: no re-encryption for ${row.id}`);
+    const replacements = new Map<string, string>();
+    for (const { id, envelope } of reencrypted) {
+      if (!isEnvelope(envelope) || envelope.id !== id || replacements.has(id)) {
+        throw new Error(`FakeStore.setServer: bad re-encryption entry ${id}`);
       }
+      replacements.set(id, JSON.stringify({ id, v: envelope.v, n: envelope.n, c: envelope.c }));
+    }
+    const group = this.group(localId);
+    const rows = this.rows(localId);
+    const readable = [...rows.values()].filter((row) => READABLE.has(row.status));
+    const missing = readable.filter((row) => !replacements.has(row.id));
+    const extra = [...replacements.keys()].filter(
+      (id) => !READABLE.has(rows.get(id)?.status ?? 'undecryptable'),
+    );
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(
+        `FakeStore.setServer: incomplete_reencryption (${missing.length} missing, ${extra.length} extra)`,
+      );
     }
     group.serverUrl = serverUrl;
     group.cursor = 0;
@@ -261,7 +281,7 @@ export class FakeStore implements Store {
         rows.delete(id);
         continue;
       }
-      row.envelope = JSON.stringify(replacement);
+      row.envelope = replacement;
       row.acked = false;
       row.seq = null;
       row.pushState = 'pending';
@@ -400,6 +420,15 @@ export class FakeStore implements Store {
         id: row.id,
         envelope: JSON.parse(row.envelope) as ReadableEnvelope['envelope'],
       }));
+  }
+
+  async latestTs(localId: string): Promise<number | null> {
+    this.enter('latestTs', [localId]);
+    let latest: number | null = null;
+    for (const row of this.rows(localId).values()) {
+      if (row.ts !== null && (latest === null || row.ts > latest)) latest = row.ts;
+    }
+    return latest;
   }
 
   async countByStatus(localId: string): Promise<EventCounts> {

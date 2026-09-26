@@ -43,6 +43,14 @@ export function checkNullableId(value: unknown, what: string): string | null {
   return value === null ? null : checkId(value, what);
 }
 
+/** A per-server auth token as stored in `pending_deletes`: 43 base64url characters (32 bytes). */
+export function checkAuthToken(value: unknown, what = 'authToken'): string {
+  // Never echo the value: it is a credential.
+  if (typeof value !== 'string' || !isB64url(value, 43))
+    fail(`${what} must be 43 base64url characters`);
+  return value;
+}
+
 /** A safe integer ≥ `min`. */
 export function checkInt(value: unknown, what: string, min = 0): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min) {

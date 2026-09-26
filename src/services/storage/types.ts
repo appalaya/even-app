@@ -3,8 +3,10 @@
  * beside this file. Source of truth for the tables: design.md "Local storage" → "SQLite schema".
  *
  * Rules the implementation must keep:
- * - SQLite holds envelopes, never decrypted bodies. The only plaintext derived from bodies is `events.ts` and
- *   `groups.name_cache` (design.md "Architecture Overview", rule 2). Secrets live in secure store, not here.
+ * - SQLite holds envelopes, never decrypted bodies. The only plaintext derived from bodies is `events.ts`,
+ *   `groups.name_cache` and `groups.currency_cache` (design.md "Architecture Overview", rule 2). Secrets live in
+ *   secure store, not here. The one credential in SQLite is `pending_deletes.auth_token`: a per-server bearer
+ *   token (it cannot decrypt anything), kept so a DELETE can be retried after Leave removed the secret.
  * - Row types are camelCase mirrors of the snake_case columns; the column is named on each field.
  * - SQLite booleans (0/1) surface as `boolean`.
  * - Every method is async and safe to call from a background task.
@@ -106,7 +108,16 @@ export interface PendingDeleteRow {
   localId: string;
   /** `server_url`: canonical origin of the server holding the copy. */
   serverUrl: string;
+  /**
+   * `auth_token`: `deriveServer(secret, serverUrl).authToken` as 43-char base64url, derived while the secret still
+   * existed. The server group id is `base64url(SHA-256(token))`, so this is all a DELETE needs (design.md
+   * "Rotation, moving, closing").
+   */
+  authToken: string;
 }
+
+/** Identifies a debt: `pending_deletes`' primary key. */
+export type PendingDeleteKey = Pick<PendingDeleteRow, 'localId' | 'serverUrl'>;
 
 /** An outbox entry, in push order. */
 export type OutboxRow = Pick<EventRow, 'id' | 'ts' | 'envelope'>;
@@ -156,12 +167,15 @@ export type PrefKey =
 // ---------- The store ----------
 
 export interface PendingDeletes {
-  /** Records a debt; a duplicate (localId, serverUrl) is a no-op. Needs no `groups` row: debts outlive Leave. */
+  /**
+   * Records a debt with its token; a duplicate (localId, serverUrl) is a no-op (both derive from the same secret,
+   * so the token for a pair never changes). Needs no `groups` row: debts outlive Leave.
+   */
   add(entry: PendingDeleteRow): Promise<void>;
   /** In the order the debts were recorded. */
   list(): Promise<PendingDeleteRow[]>;
-  /** Clears a debt after the DELETE succeeded (204). Missing rows are a no-op. */
-  remove(entry: PendingDeleteRow): Promise<void>;
+  /** Clears a debt (the DELETE succeeded, or the server refused it for good). Missing rows are a no-op. */
+  remove(entry: PendingDeleteKey): Promise<void>;
 }
 
 export interface Store {
@@ -266,6 +280,11 @@ export interface Store {
    * and server-move re-encryption.
    */
   listReadable(localId: string): Promise<ReadableEnvelope[]>;
+  /**
+   * The newest cached `ts` among the group's events, any status (`MAX(ts)`, served by the `events_ts` index), or
+   * null when no event has one. Background refresh syncs only groups whose latest event is within 30 days.
+   */
+  latestTs(localId: string): Promise<number | null>;
   countByStatus(localId: string): Promise<EventCounts>;
   /**
    * Keeps the `keep` most recently inserted `undecryptable` rows (SQLite rowid order; `seq` is not usable

@@ -48,7 +48,7 @@ describe('migrate', () => {
     expect(await readSchemaVersion(db)).toBe(0);
     await migrate(db);
     expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(1);
+    expect(SCHEMA_VERSION).toBe(2);
 
     const objects = await db.all<{ type: string; name: string }>(
       `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
@@ -87,10 +87,39 @@ describe('migrate', () => {
       ['push_state', 0],
     ]);
     expect((await columns(db, 'prefs')).map((c) => c.name)).toEqual(['key', 'value']);
-    expect((await columns(db, 'pending_deletes')).map((c) => [c.name, c.pk])).toEqual([
-      ['local_id', 1],
-      ['server_url', 2],
+    expect((await columns(db, 'pending_deletes')).map((c) => [c.name, c.pk, c.notnull])).toEqual([
+      ['local_id', 1, 1],
+      ['server_url', 2, 1],
+      ['auth_token', 0, 1],
     ]);
+  });
+
+  it('v2 upgrades a v1 database: pending_deletes gains auth_token, v1 debts (no token) are dropped', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 1));
+    expect(await readSchemaVersion(db)).toBe(1);
+    const store = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 1) });
+    const group = makeGroup();
+    await store.upsertGroup(group);
+    await store.insertEvents(group.localId, [localRow(1_760_000_000_001)]);
+    await db.run('INSERT INTO pending_deletes (local_id, server_url) VALUES (?, ?)', [
+      group.localId,
+      group.serverUrl,
+    ]);
+
+    await migrate(db);
+
+    expect(await readSchemaVersion(db)).toBe(2);
+    expect((await columns(db, 'pending_deletes')).map((c) => c.name)).toEqual([
+      'local_id',
+      'server_url',
+      'auth_token',
+    ]);
+    expect(await db.all('SELECT * FROM pending_deletes')).toEqual([]);
+    // Nothing else is touched.
+    const upgraded = await openSqliteStore(db);
+    expect(await upgraded.getGroup(group.localId)).toEqual(group);
+    expect((await upgraded.countByStatus(group.localId)).byStatus.ok).toBe(1);
   });
 
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {
@@ -148,23 +177,23 @@ describe('migrate', () => {
     const extra: Migration[] = [
       ...MIGRATIONS,
       {
-        version: 2,
+        version: MIGRATIONS.length + 1,
         description: 'add a table',
         up: async (tx) => {
           await tx.run('CREATE TABLE extra (x INTEGER)');
         },
       },
       {
-        version: 3,
+        version: MIGRATIONS.length + 2,
         description: 'fails half-way',
         up: async (tx) => {
           await tx.run('CREATE TABLE half (x INTEGER)');
-          throw new Error('migration 3 failed');
+          throw new Error('the extra migration failed');
         },
       },
     ];
-    await expect(migrate(db, extra)).rejects.toThrow('migration 3 failed');
-    expect(await readSchemaVersion(db)).toBe(2);
+    await expect(migrate(db, extra)).rejects.toThrow('the extra migration failed');
+    expect(await readSchemaVersion(db)).toBe(MIGRATIONS.length + 1);
     const tables = await db.all<{ name: string }>(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('extra', 'half')`,
     );

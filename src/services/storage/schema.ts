@@ -74,8 +74,26 @@ const V1 = statements(
   `CREATE INDEX events_ts ON events (local_id, ts)`,
 );
 
+/**
+ * v2: `pending_deletes.auth_token` (design.md "Rotation, moving, closing": a debt carries the per-server token, so the
+ * retry still works after Leave removed the secret). SQLite cannot add a `NOT NULL` column without a default, so the
+ * table is rebuilt. A v1 row has no token and nothing can derive one here (secrets are in secure store), so it
+ * could never be paid; no build that wrote such rows shipped, and they are dropped.
+ */
+const V2 = statements(
+  `CREATE TABLE pending_deletes_v2 (
+    local_id   TEXT NOT NULL,
+    server_url TEXT NOT NULL,
+    auth_token TEXT NOT NULL,
+    PRIMARY KEY (local_id, server_url)
+  )`,
+  'DROP TABLE pending_deletes',
+  'ALTER TABLE pending_deletes_v2 RENAME TO pending_deletes',
+);
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, description: 'initial schema', up: V1 },
+  { version: 2, description: 'pending_deletes.auth_token', up: V2 },
 ];
 
 /** The schema version this build writes. */

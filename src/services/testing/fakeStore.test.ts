@@ -130,6 +130,43 @@ describe('FakeStore honours the Store contract', () => {
     expect((await store.getGroup(L))?.cursor).toBe(1);
   });
 
+  it('matches the SQLite store on latestTs, listGroups order, setServer refusals, and debt tokens', async () => {
+    const { store, keys, L } = await setup();
+    expect(await store.latestTs(L)).toBeNull();
+    await store.insertEvents(L, [
+      row(keys, idOf('a'), { ts: 5 }),
+      row(keys, idOf('b'), { ts: null, status: 'undecryptable' }),
+      row(keys, idOf('c'), { ts: 9, status: 'invalid' }),
+    ]);
+    expect(await store.latestTs(L)).toBe(9);
+
+    // Same createdAt: ties break on localId, as `ORDER BY created_at, local_id` does.
+    const others = [groupKeys(), groupKeys()];
+    for (const k of others) await store.upsertGroup(groupRow(k));
+    expect((await store.listGroups()).map((g) => g.localId)).toEqual(
+      [L, ...others.map((k) => k.localId)].sort(),
+    );
+
+    // A re-encryption must cover exactly the readable rows; a refusal changes nothing.
+    const env = (id: string) => sealFor(keys, ev.expense('x'), id);
+    const before = store.dump(L);
+    for (const bad of [
+      [{ id: idOf('a'), envelope: env(idOf('a')) }], // misses c
+      [idOf('a'), idOf('c'), idOf('b')].map((id) => ({ id, envelope: env(id) })), // b is not readable
+      [
+        { id: idOf('a'), envelope: env(idOf('c')) },
+        { id: idOf('c'), envelope: env(idOf('c')) },
+      ],
+    ]) {
+      await expect(store.setServer(L, 'https://other.test', bad)).rejects.toThrow();
+    }
+    expect(store.dump(L)).toEqual(before);
+
+    await expect(
+      store.pendingDeletes.add({ localId: L, serverUrl: 'https://other.test', authToken: 'short' }),
+    ).rejects.toThrow('authToken');
+  });
+
   it('prunes the oldest undecryptable rows by insertion order', async () => {
     const { store, keys, L } = await setup();
     const ids = ['a', 'b', 'c'].map(idOf);

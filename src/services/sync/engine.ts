@@ -2,7 +2,10 @@
  * The sync engine (design.md "Sync engine"): push → pull → record, per `active` group, as pure orchestration
  * over `Store`, `Secrets`, and `Transport`, so it runs in Node under Vitest with fakes. No React Native imports.
  *
- * Decisions the design leaves open, made here:
+ * Also owns the two operations that re-derive per-server keys: `moveServer` (re-encrypt, `setServer`, full push)
+ * and `deleteServerCopy` (record the debt with its token, then DELETE).
+ *
+ * Decisions made here, all now written into design.md "Sync engine":
  * - `'unknown'` (stored after a reset caused by a `null` epoch) is a placeholder, not an epoch: the next non-null
  *   epoch is adopted without a second reset, and a `null` response while it is stored is no change. Read
  *   literally, the epoch rule would call the recreated group's first epoch a second change and stop every
@@ -17,11 +20,18 @@
  * - Outbox rows that are not sendable envelopes (junk, or larger than `max_event_bytes`) are quarantined
  *   locally without a request; a `415` for an envelope whose `v ≠ 1` quarantines it, other `415`s stop.
  * - Backoff (30 s → 2 m → 10 m) binds `foreground`, `local_write` and `background`; `manual`,
- *   `pull_to_refresh` and `first_open` bypass it. The engine schedules its own retry at `retryAt`.
+ *   `pull_to_refresh`, `first_open` and `server_move` bypass it. The engine schedules its own retry at `retryAt`.
  * - `group_full`: pushing stops, the pull still runs, the cycle reports `failed` with `retryAt: null` (the user
  *   must act) and no backoff, so later triggers still pull.
+ * - `pending_deletes` are retried at the start of `syncAll` (every debt) and of a group's cycle (that group's):
+ *   204, or 404 (nothing left), pays the debt; no answer, 5xx, 429 and 503 keep it; any other answer (401, 410, …)
+ *   drops it with a local log line, since retrying cannot change it.
+ * - Logs name the server origin and an error code or message, never a group id, token, envelope, or body.
  */
 import {
+  b64urlDecode,
+  b64urlEncode,
+  canonicalOrigin,
   deriveLocal,
   deriveServer,
   envelopeShape,
@@ -32,20 +42,32 @@ import {
   parseEvent,
   PROTOCOL,
   reduce,
+  seal,
   type Envelope,
   type Event,
   type LogEntry,
 } from '@even/core';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import type { Secrets } from '../secrets/types';
-import type { GroupRow, NewEventRow, OutboxRow, Store } from '../storage/types';
+import type {
+  GroupRow,
+  NewEventRow,
+  OutboxRow,
+  PendingDeleteRow,
+  ReadableEnvelope,
+  Store,
+} from '../storage/types';
 import { SyncError, toSyncError } from './errors';
 import { createInfoCache, type InfoCache } from './info';
 import type {
+  DeleteServerCopyResult,
+  MoveServerResult,
   PullResponse,
   PushResponse,
   ServerInfo,
   SyncEngine,
+  SyncErrorCode,
   SyncEvent,
   SyncOptions,
   SyncResult,
@@ -116,6 +138,21 @@ export interface SyncEngineDeps {
 export interface SyncEngineHandle extends SyncEngine {
   /** Cancels pending debounce and retry timers; later reruns and retries are dropped. */
   dispose(): void;
+}
+
+// ---------- Small pure helpers ----------
+
+/**
+ * PROTOCOL.md §2: `groupId = base64url(SHA-256(authToken))`. What a pending delete needs after the secret is gone.
+ * (Core derives the group id only together with the token, from the secret; see the report on a core helper.)
+ */
+export function groupIdForToken(authToken: Uint8Array): string {
+  return b64urlEncode(sha256(authToken));
+}
+
+/** An error for a log line: its name and message only, never a `cause` chain or an attached object. */
+export function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : typeof error;
 }
 
 // ---------- Epoch rule (pure) ----------
@@ -258,6 +295,17 @@ const RESPECTS_BACKOFF: ReadonlySet<SyncTrigger> = new Set<SyncTrigger>([
   'background',
 ]);
 
+/** Answers after which a pending DELETE is kept for the next cycle; any other refusal drops the debt. */
+const DEBT_TRANSIENT: ReadonlySet<SyncErrorCode> = new Set<SyncErrorCode>([
+  'network',
+  'server_error',
+  'rate_limited',
+  'over_budget',
+]);
+
+type DebtOutcome =
+  { outcome: 'deleted' } | { outcome: 'pending' } | { outcome: 'dropped'; error: SyncErrorCode };
+
 type PhaseOutcome =
   | { kind: 'done' }
   | { kind: 'restart' }
@@ -347,7 +395,10 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       const handle = setTimeout(fn, ms);
       return () => clearTimeout(handle);
     });
-  const log = deps.log ?? ((message: string, detail?: unknown) => console.warn(message, detail));
+  const log =
+    deps.log ??
+    ((message: string, detail?: unknown) =>
+      detail === undefined ? console.warn(message) : console.warn(message, detail));
   const tuning: SyncTuning = { ...DEFAULT_TUNING, ...deps.tuning };
 
   const listeners = new Set<(event: SyncEvent) => void>();
@@ -358,6 +409,10 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
   const backoff = new Map<string, Backoff>();
   const batchLimit = new Map<string, number>();
   const pushPausedUntil = new Map<string, number>();
+  /** Groups whose server switch is running: new cycles are skipped until the move's own full push. */
+  const moving = new Set<string>();
+  /** `localId|serverUrl` of debts whose DELETE is in flight, so two callers never send it twice. */
+  const debtsInFlight = new Set<string>();
   let disposed = false;
 
   function emit(event: SyncEvent): void {
@@ -365,7 +420,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       try {
         listener(event);
       } catch (error) {
-        log('sync: listener threw', error);
+        log('sync: listener threw', describeError(error));
       }
     }
   }
@@ -713,15 +768,16 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     retryTimers.set(localId, cancel);
   }
 
+  /** Records a failed cycle on the group row (when there is one), backs off, and schedules the retry. */
   async function recordFailure(
-    group: GroupRow,
+    localId: string,
+    group: GroupRow | null,
     error: SyncError,
     trigger: SyncTrigger,
   ): Promise<SyncResult> {
-    const { localId } = group;
     const code = error.code;
     if (code === 'unauthorized' || code === 'local_error') {
-      log(`sync: ${code} for a group on ${group.serverUrl}`, error.message);
+      log(`sync: ${code} for a group on ${group?.serverUrl ?? 'an unknown server'}`, error.message);
     }
     let retryAt: number | null;
     if (code === 'group_blocked' || code === 'no_secret' || code === 'group_full') {
@@ -741,21 +797,34 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       if (code === 'group_blocked') await store.setGroupState(localId, 'blocked');
       await store.setSyncState(localId, { lastSyncError: code, epochResetsThisCycle: 0 });
     } catch (storeError) {
-      log('sync: could not record the failure', storeError);
+      log('sync: could not record the failure', describeError(storeError));
     }
     if (retryAt !== null) scheduleRetry(localId, retryAt, trigger);
     return { localId, outcome: 'failed', error: code, retryAt };
   }
 
-  async function execute(localId: string, options: SyncOptions): Promise<SyncResult> {
+  async function execute(
+    localId: string,
+    options: SyncOptions,
+    payDebts: boolean,
+  ): Promise<SyncResult> {
     const { trigger, deadline } = options;
+    if (deadline !== undefined && now() >= deadline) return skipped(localId, 'deadline');
     let group: GroupRow | null;
     try {
-      if (deadline !== undefined && now() >= deadline) return skipped(localId, 'deadline');
       group = await store.getGroup(localId);
     } catch (error) {
-      log('sync: could not read the group', error);
-      return { localId, outcome: 'failed', error: 'local_error', retryAt: null };
+      // The row cannot be read, so the error cannot be written to it either; it is still announced and retried.
+      log('sync: could not read the group', describeError(error));
+      emit({ type: 'started', localId, trigger });
+      const result = await recordFailure(
+        localId,
+        null,
+        new SyncError('local_error', describeError(error)),
+        trigger,
+      );
+      emit({ type: 'finished', localId, trigger, result });
+      return result;
     }
     if (group === null || group.state !== 'active') return skipped(localId, 'not_active');
 
@@ -781,6 +850,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     emit({ type: 'started', localId, trigger });
     let result: SyncResult;
     try {
+      // design.md: "The next sync cycle retries outstanding debts first." Never throws.
+      if (payDebts) await payPendingDeletes(localId, deadline);
       const synced = await runCycle(group, deadline);
       await store.setSyncState(localId, {
         lastSyncedAt: synced.at,
@@ -790,13 +861,23 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       backoff.delete(localId);
       result = synced;
     } catch (thrown) {
-      result = await recordFailure(group, toSyncError(thrown), trigger);
+      result = await recordFailure(localId, group, toSyncError(thrown), trigger);
     }
     emit({ type: 'finished', localId, trigger, result });
     return result;
   }
 
   function syncGroup(localId: string, options: SyncOptions): Promise<SyncResult> {
+    return startCycle(localId, options, true);
+  }
+
+  function startCycle(
+    localId: string,
+    options: SyncOptions,
+    payDebts: boolean,
+  ): Promise<SyncResult> {
+    // A server switch is rewriting the group; its own full push follows and covers this request.
+    if (moving.has(localId)) return Promise.resolve(skipped(localId, 'in_flight'));
     const running = inFlight.get(localId);
     if (running !== undefined) {
       // Taps during an in-flight sync are ignored; everything else shares the running cycle.
@@ -804,7 +885,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         ? Promise.resolve(skipped(localId, 'in_flight'))
         : running;
     }
-    const run = execute(localId, options).finally(() => {
+    const run = execute(localId, options, payDebts).finally(() => {
       inFlight.delete(localId);
       const again = rerun.get(localId);
       rerun.delete(localId);
@@ -814,16 +895,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     return run;
   }
 
-  /** Newest event `ts` of a group. The store has no query for it yet, so this reads every row. */
-  async function latestTs(localId: string): Promise<number | null> {
-    let latest: number | null = null;
-    for (const row of await store.listEnvelopes(localId)) {
-      if (row.ts !== null && (latest === null || row.ts > latest)) latest = row.ts;
-    }
-    return latest;
-  }
-
   async function syncAll(options: SyncOptions): Promise<SyncResult[]> {
+    await payPendingDeletes(undefined, options.deadline);
     let groups: GroupRow[];
     try {
       groups = (await store.listGroups()).filter((g) => g.state === 'active');
@@ -831,13 +904,13 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         const since = now() - tuning.backgroundWindowMs;
         const recent: GroupRow[] = [];
         for (const group of groups) {
-          const ts = await latestTs(group.localId);
+          const ts = await store.latestTs(group.localId);
           if (ts !== null && ts >= since) recent.push(group);
         }
         groups = recent;
       }
     } catch (error) {
-      log('sync: could not list groups', error);
+      log('sync: could not list groups', describeError(error));
       return [];
     }
     const results: SyncResult[] = [];
@@ -846,9 +919,158 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         results.push(skipped(group.localId, 'deadline'));
         continue;
       }
-      results.push(await syncGroup(group.localId, options));
+      // The debts were just retried above; the group's cycle does not retry them again.
+      results.push(await startCycle(group.localId, options, false));
     }
     return results;
+  }
+
+  // ----- pending deletes -----
+
+  /** One DELETE with the stored token; settles the debt per the rules in the header. Never throws. */
+  async function payDebt(debt: PendingDeleteRow): Promise<DebtOutcome> {
+    const key = `${debt.localId}|${debt.serverUrl}`;
+    if (debtsInFlight.has(key)) return { outcome: 'pending' };
+    debtsInFlight.add(key);
+    try {
+      let outcome: DebtOutcome;
+      try {
+        const token = b64urlDecode(debt.authToken);
+        await transportFor(debt.serverUrl).delete(groupIdForToken(token), token);
+        outcome = { outcome: 'deleted' };
+      } catch (thrown) {
+        const error = toSyncError(thrown);
+        if (error.status === 404) {
+          outcome = { outcome: 'deleted' }; // nothing left to delete there
+        } else if (DEBT_TRANSIENT.has(error.code)) {
+          return { outcome: 'pending' };
+        } else {
+          log(`sync: dropped a pending delete on ${debt.serverUrl}`, error.code);
+          outcome = { outcome: 'dropped', error: error.code };
+        }
+      }
+      try {
+        await store.pendingDeletes.remove(debt);
+      } catch (error) {
+        // The debt stays and is paid again next time; a DELETE is idempotent.
+        log('sync: could not clear a pending delete', describeError(error));
+      }
+      return outcome;
+    } finally {
+      debtsInFlight.delete(key);
+    }
+  }
+
+  /** Retries the outstanding debts (all, or one group's), in the order recorded, until the deadline. */
+  async function payPendingDeletes(
+    only: string | undefined,
+    deadline: number | undefined,
+  ): Promise<void> {
+    let debts: PendingDeleteRow[];
+    try {
+      debts = await store.pendingDeletes.list();
+    } catch (error) {
+      log('sync: could not read pending deletes', describeError(error));
+      return;
+    }
+    for (const debt of debts) {
+      if (only !== undefined && debt.localId !== only) continue;
+      if (deadline !== undefined && now() >= deadline) return;
+      await payDebt(debt);
+    }
+  }
+
+  async function deleteServerCopy(
+    localId: string,
+    serverUrl: string,
+  ): Promise<DeleteServerCopyResult> {
+    let origin: string;
+    try {
+      origin = canonicalOrigin(serverUrl);
+    } catch {
+      return { outcome: 'failed', error: 'invalid_url' };
+    }
+    try {
+      const group = await store.getGroup(localId);
+      if (group !== null && group.state === 'active' && group.serverUrl === origin) {
+        return { outcome: 'failed', error: 'current_server' };
+      }
+      const secret = await secrets.getSecret(localId);
+      if (secret === null || deriveLocal(secret).localId !== localId) {
+        return { outcome: 'failed', error: 'no_secret' };
+      }
+      const debt: PendingDeleteRow = {
+        localId,
+        serverUrl: origin,
+        authToken: b64urlEncode(deriveServer(secret, origin).authToken),
+      };
+      // Debt first, request second: a failure, or the app being killed mid-request, leaves it to be retried.
+      await store.pendingDeletes.add(debt);
+      const paid = await payDebt(debt);
+      return paid.outcome === 'dropped' ? { outcome: 'failed', error: paid.error } : paid;
+    } catch (error) {
+      log('sync: could not delete a server copy', describeError(error));
+      return { outcome: 'failed', error: 'local_error' };
+    }
+  }
+
+  // ----- moving to another server -----
+
+  async function moveServer(localId: string, serverUrl: string): Promise<MoveServerResult> {
+    const failed = (error: Extract<MoveServerResult, { outcome: 'failed' }>['error']) =>
+      ({ localId, outcome: 'failed', error }) as const;
+    let origin: string;
+    try {
+      origin = canonicalOrigin(serverUrl);
+    } catch {
+      return failed('invalid_url');
+    }
+    if (moving.has(localId)) return failed('in_flight');
+    moving.add(localId);
+    let dropped: number;
+    try {
+      // Let a running cycle finish; while `moving` is set, no new one starts.
+      for (let running = inFlight.get(localId); running; running = inFlight.get(localId)) {
+        await running;
+      }
+      const group = await store.getGroup(localId);
+      if (group === null) return failed('not_found');
+      if (group.state === 'closed' || group.state === 'hidden') return failed('not_movable');
+      if (group.serverUrl === origin) return failed('same_server');
+      const secret = await secrets.getSecret(localId);
+      if (secret === null) return failed('no_secret');
+      const { encryptionKey: key, localId: derived } = deriveLocal(secret);
+      if (derived !== localId) return failed('no_secret');
+      const from = deriveServer(secret, group.serverUrl).groupId;
+      const to = deriveServer(secret, origin).groupId;
+
+      // Read, re-encrypt, and switch in one transaction, so a write landing meanwhile cannot be left behind
+      // sealed for the old group id.
+      dropped = await store.transaction(async (tx) => {
+        const { byStatus } = await tx.countByStatus(localId);
+        const reencrypted: ReadableEnvelope[] = (await tx.listReadable(localId)).map(
+          ({ id, envelope }) => {
+            const body = open({ key, groupId: from, envelope }) as Event;
+            return { id, envelope: seal({ key, groupId: to, body, id }) };
+          },
+        );
+        await tx.setServer(localId, origin, reencrypted);
+        // A debt to delete the copy on the server this group now syncs through would wipe it.
+        await tx.pendingDeletes.remove({ localId, serverUrl: origin });
+        return byStatus.undecryptable + byStatus.unsupported_envelope;
+      });
+    } catch (error) {
+      log('sync: could not move a group', describeError(error));
+      return failed('local_error');
+    } finally {
+      moving.delete(localId);
+    }
+    // Backoff and batch size were learned from the old server.
+    backoff.delete(localId);
+    batchLimit.delete(localId);
+    cancelTimer(retryTimers, localId);
+    const sync = await startCycle(localId, { trigger: 'server_move' }, true);
+    return { localId, outcome: 'moved', serverUrl: origin, dropped, sync };
   }
 
   function requestSync(localId: string): void {
@@ -878,5 +1100,13 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     rerun.clear();
   }
 
-  return { syncGroup, syncAll, requestSync, subscribe, dispose };
+  return {
+    syncGroup,
+    syncAll,
+    moveServer,
+    deleteServerCopy,
+    requestSync,
+    subscribe,
+    dispose,
+  };
 }

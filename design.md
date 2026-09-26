@@ -50,13 +50,14 @@ Two rules make this shape hold:
    defines the event schema, the reducer, the money math, and the crypto.
    Screens call it; they never reimplement it. Metro resolves it through npm
    workspaces.
-2. **No decrypted content on disk, with two named exceptions.** SQLite holds
+2. **No decrypted content on disk, with named exceptions.** SQLite holds
    envelopes. Bodies are decrypted on open, held in memory per group, and
    discarded when the group closes. The exceptions: each event's ordering
-   timestamp `ts` (a number, no content) and the group's current name (also
-   plaintext in the invite), both cached for the Groups list and for cheap
-   ordering. Notification text is handed to the OS and is covered in the
-   threat model. This is what makes device backups safe to allow.
+   timestamp `ts` (a number, no content) and the group's current name and
+   currency (both also plaintext in the invite), cached for the Groups list
+   and for cheap ordering. Notification text is handed to the OS and is
+   covered in the threat model. This is what makes device backups safe to
+   allow.
 
 ## Identity model
 
@@ -114,7 +115,10 @@ canonicalOrigin(url: string): string        // protocol §8.1; throws on http://
 - The **secret** (32 bytes) is stored in secure store under
   `even.secret.<localId>`, accessibility `AFTER_FIRST_UNLOCK`.
 - Derived keys are computed on demand and held in memory only while a group
-  is open. They are never written to SQLite.
+  is open. They are never written to SQLite, with one exception: a pending
+  delete stores the per-server auth token it needs (see "Rotation, moving,
+  closing"). A token authorises reads, writes and deletes of ciphertext on
+  one server and cannot decrypt anything.
 - The **device id** is stored in secure store under `even.device`.
 
 Secure store also holds an index, `even.groups`, listing the local ids that
@@ -536,8 +540,9 @@ CREATE INDEX events_ts     ON events (local_id, ts);
   everywhere so the whole log is replayed to the new server, and **drops**
   `undecryptable` and `unsupported_envelope` rows, which cannot be
   re-encrypted (relabelling them would forge the associated data).
-- `ts` cached from the body and `name_cache` are the two pieces of decrypted
-  information kept on disk, as stated under Architecture.
+- `ts` cached from the body, `name_cache` and `currency_cache` are the only
+  decrypted information kept on disk, as stated under Architecture.
+  `pending_deletes.auth_token` is the only credential.
 - `status = 'undecryptable'` rows (AEAD failure under the correct key) are
   capped at 1,000 per group; beyond that the oldest are dropped, and settings
   offers "clear unreadable entries". `invalid`, `unsupported_envelope`
@@ -550,7 +555,13 @@ CREATE INDEX events_ts     ON events (local_id, ts);
 ### Migrations
 
 `PRAGMA user_version` with an ordered array of migration functions, run at
-open. Same pattern as Stow.
+open. Same pattern as Stow. Each migration runs in one transaction with its
+version bump; shipped migrations are never edited.
+
+- v1: the schema above, without `pending_deletes.auth_token`.
+- v2: rebuilds `pending_deletes` with `auth_token NOT NULL`. A v1 debt has
+  no token and nothing at migration time can derive one, so it is dropped (no
+  build that wrote one shipped).
 
 ## Sync engine
 
@@ -566,6 +577,18 @@ open. Same pattern as Stow.
   spinner without a request, and taps during an in-flight sync are ignored
 - Background task (below)
 - Group opened for the first time after join
+- A server move: `moveServer` runs a full push to the new server as soon as
+  the switch commits (trigger `server_move`)
+
+How the triggers treat a group that is backing off after a failure (below):
+`foreground`, `local_write` and `background` wait it out; `manual`,
+`pull_to_refresh`, `first_open` and `server_move` are the user asking and go
+ahead. A server's `Retry-After` binds every trigger, manual taps included.
+The 10 s manual-tap debounce applies only when the last cycle succeeded.
+Triggers for a group whose cycle is running share that cycle, except manual
+taps, which are ignored; a local write during a cycle runs the cycle once
+more after it, since it may have missed the outbox read. After a failure the
+engine schedules its own retry at the time it reports (`retryAt`).
 
 ### Cycle, per group
 
@@ -573,6 +596,9 @@ Only groups in state `active` sync. `closed`, `hidden`, and `blocked` groups
 never sync and never self-heal, except the single recognition sync described
 under Rotation.
 
+0. **Debts**: retry the group's outstanding `pending_deletes` (below).
+   `syncAll` retries every debt once before its first group instead, and its
+   group cycles skip this step.
 1. **Push**: select outbox events in `ts` order, send in batches of
    `min(max_batch, current batch size)`. On `200`, mark **every** envelope in
    the batch `acked = 1` (accepted or duplicate). Apply the epoch rule below to
@@ -591,7 +617,16 @@ under Rotation.
    transaction. Update `name_cache` from any `group.created`/`group.renamed`.
 3. **Recompute**: invalidate the group's memoised state; observers re-render.
 4. Record `last_synced_at` or `last_sync_error`; reset
-   `epoch_resets_this_cycle`.
+   `epoch_resets_this_cycle`. Both happen at the end of every cycle,
+   successful or not, so an `epoch_unstable` group tries again on a later
+   cycle instead of staying stuck.
+
+After a pull that brought a `group.created` or `group.renamed`, `name_cache`
+and `currency_cache` are re-derived from all of the group's naming events.
+A pulled entry that is not an envelope at all is stored as `undecryptable`
+with its text cut to 4 KiB, so one oversized item cannot fail its page; one
+with no usable id is skipped. A page that says `more` without advancing
+`next` stops the cycle as `server_error`.
 
 **Epoch rule.** If no epoch is stored and the response carries one, store it
 and continue. If the stored epoch is `'unknown'` (recorded after a `null`)
@@ -616,14 +651,40 @@ Groups sync sequentially; a failure in one does not block others.
 
 | Server error | App behaviour |
 |---|---|
-| network / 5xx / 429 / 503 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one. On the third consecutive 5xx for the same batch, halve the batch size (floor 1). Sync state shows "Not synced since …". |
+| network / 5xx / 429 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one. Within a cycle, a 5xx retries the same outbox head after 0.5 s → 1 s → 2 s; every third consecutive 5xx halves the batch size (floor 1, kept until the app restarts or the group moves); the cycle gives up after six consecutive 5xx while pushing (three while pulling) and backs off. Sync state shows "Not synced since …". |
+| `503 over_budget` | Pushes to that server pause until its `Retry-After` (30 s without one) while pulls go on ("reads still work"); the cycle reports `failed` with that retry time and the group is not backed off. |
 | `unauthorized` | Cannot happen for a correctly joined group. Treated as a bug: log locally, back off, show "Can't reach this group's server" with the URL. |
-| `not_found` / `method_not_allowed` on a documented route | Show "That URL isn't an Even server. Check the address." |
+| `not_found` / `method_not_allowed` on a documented route, or a `200` that is not the documented shape | The transport reports `not_an_even_server`. Show "That URL isn't an Even server. Check the address." |
 | `group_blocked` | Terminal for this server; see above. |
-| `group_full` | Stop pushing. Show the cap, the group's local usage, and offer export. |
-| `unsupported_version` | Stop. Show "This server needs updating" with the server's URL. |
+| `group_full` | Stop pushing; the pull still runs. Reported as `failed` with no retry time and no backoff, so later triggers keep pulling. Show the cap, the group's local usage, and offer export. |
+| `unsupported_version` | For an envelope whose `v ≠ 1` (a kept `unsupported_envelope` row re-pushed after a reset): quarantine it like `invalid_envelope`. Otherwise stop and show "This server needs updating" with the server's URL; also when `/v1/info` does not list protocol 1. |
 | `invalid_request` | Refresh `/v1/info`, re-batch, retry once; then treat as 5xx. |
 | `invalid_envelope` | Set `push_state = 'rejected'` on the envelope at `index`, continue with the rest. Count shown in settings. |
+
+A short `Retry-After` (5 s or less) on a 429 or 5xx is waited out inside the
+cycle (for 429s at most twice per cycle), never past a background deadline;
+a longer one ends the cycle and becomes the retry time. Outbox rows that are
+not sendable envelopes (junk, or larger than the server's `max_event_bytes`)
+are quarantined locally without a request.
+
+Beyond the protocol's names, `last_sync_error` holds `epoch_unstable`,
+`network` (no response: offline, DNS, TLS, timeout), `not_an_even_server`,
+`no_secret` (the row exists but secure store has no matching secret, e.g. an
+Android restore; never retried on its own), and
+`local_error` (storage or a bug; logged, backed off). `syncGroup` never
+throws: every failure is recorded there and announced with a `finished`
+event, including a group row that could not be read (recorded if the row can
+still be written).
+
+Local log lines name the server origin and an error code or message, never a
+group id, token, envelope or body (the same rule as the server's, in
+`THREAT-MODEL.md` "What we log").
+
+**Pending deletes.** A debt is retried at the start of each cycle (step 0).
+`204`, or `404` (nothing left there), pays it. No response, 5xx, 429 and 503
+keep it for the next cycle. Any other answer (`401`, `410`, `405`, …) cannot
+change on retry, so the debt is dropped with a local log line. The group id
+for the `DELETE` is `base64url(SHA-256(auth_token))`, so no secret is needed.
 
 **Usage meter.** The client sums its own envelope sizes per group and shows
 usage against the server's published caps in settings, with a warning at 80%.
@@ -641,8 +702,16 @@ interface Transport {
 }
 ```
 
-**HttpTransport**: `fetch` against the group's canonical `server_url`.
-Refuses non-HTTPS URLs at construction. No certificate options exist.
+**HttpTransport**: `fetch` against the group's canonical `server_url`
+(`canonicalOrigin`). Refuses non-HTTPS URLs at construction. No certificate
+options exist. Requests are sent with `redirect: 'error'` so the bearer
+token stays on its origin; React Native's `fetch` may not honour that option,
+which is checked on a real device.
+Every request times out after 30 s as `network`. It never retries; retry,
+backoff and `Retry-After` belong to the engine. Error messages carry the
+route pattern (`/v1/groups/{groupId}/events`), never the path. Tests may
+allow `http://127.0.0.1` and `http://localhost` with an explicit option,
+still deriving keys for the `https` form; the app never sets it.
 
 ### Group file
 
@@ -713,8 +782,16 @@ new invite keeps a read-only copy of the history up to the closure.
 **Move to another server** (settings → server). Writes `group.moved { server }`
 to the current server and waits for its acknowledgement, then switches
 `server_url` as described under storage, which also resets the group's state
-to `active` if it was `blocked`. Other members see the latest `group.moved`
-and are offered "Follow to <host>", which performs the same switch. A member
+to `active` if it was `blocked`. The switch is the engine's `moveServer`: it
+waits for a running cycle (cycles asked for meanwhile are skipped, since its
+own push follows), then in one transaction opens every readable envelope
+under the old group id, seals it again for the new one with the same id and
+body and a fresh nonce, drops the unreadable rows, calls `setServer`, and
+clears any debt to delete the copy on the new server; then it pushes the
+whole log there. Writing `group.moved` first is the caller's job. The write
+path seals for the `server_url` it reads in the same transaction as its
+insert, so no write can land sealed for the old group id. Other members see
+the latest `group.moved` and are offered "Follow to <host>", which performs the same switch. A member
 can also move by accepting a fresh invite that names a different server for a
 group they already hold; the app shows "Move Banff 2026 from <old host> to
 <new host>?" and refuses for `closed` or `hidden` groups. That is the recovery
@@ -733,17 +810,22 @@ would recreate it:
 - Leave offers "Also delete this group's copy on <host>", with the warning
   that other members will recreate it on their next sync unless they leave too.
 
-If a delete request fails, `pending_deletes` records the debt **together
-with the per-server auth token**, which is all a `DELETE` needs, so the retry
-still works after Leave has removed the secret. The next sync cycle retries
-outstanding debts first. Operator takedown is a server-side blocklist, not a
-client action.
+Both go through the engine's `deleteServerCopy`, which `pending_deletes`
+backs: it records the debt **together with the per-server auth token**,
+which is all a `DELETE` needs, and only then sends the request, so a failed
+request or a killed app is retried even after Leave has removed the secret.
+It refuses the server an `active` group still syncs through, so Leave runs
+in this order: delete the group's rows, call it, delete the secret. The next
+sync cycle retries outstanding debts first (see "Error handling"). Operator
+takedown is a server-side blocklist, not a client action.
 
 ## Background refresh
 
 - `expo-background-task` registers one task that runs the sync cycle for
   `active` groups that have an event, local or remote, dated within the last
-  30 days, skipping the rest, and stays under 25 seconds of work per run.
+  30 days (the store's `latestTs`, one `MAX(ts)` per group), skipping the
+  rest, and stays under 25 seconds of work per run (a deadline no new group
+  or debt starts after).
   Closed, hidden, and blocked groups are never touched.
 - After the cycle, for each new `ok` event authored by **another device** since
   the last notification, schedule a local notification through

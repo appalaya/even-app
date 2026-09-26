@@ -1,7 +1,7 @@
 /**
  * On-device check of the expo-sqlite path, which no Node test can cover: open a scratch database through the
  * same driver, pragmas, migrations, and store the app uses; write one group and one event; read them back;
- * close and delete the file. Returns one line for the startup self-check to log. Never throws.
+ * close and delete the file. Returns a verdict and a one-line summary for the startup self-check. Never throws.
  *
  * Uses its own database file, never `even.db`, so it cannot touch the user's groups.
  */
@@ -17,12 +17,18 @@ import {
 import * as SQLite from 'expo-sqlite';
 
 import { openExpoDriver } from './expoDriver';
-import { readSchemaVersion } from './schema';
+import { readSchemaVersion, SCHEMA_VERSION } from './schema';
 import { envelopeText, openSqliteStore } from './sqliteStore';
 
 const SMOKE_DATABASE = 'even-smoke.db';
 
-export async function runStorageSmokeTest(): Promise<string> {
+export interface StorageSmokeResult {
+  ok: boolean;
+  /** One line without a prefix, e.g. `storage ok: schema v2, journal=wal, …`. */
+  summary: string;
+}
+
+export async function runStorageSmokeTest(): Promise<StorageSmokeResult> {
   const started = performance.now();
   try {
     await SQLite.deleteDatabaseAsync(SMOKE_DATABASE).catch(() => undefined);
@@ -75,14 +81,21 @@ export async function runStorageSmokeTest(): Promise<string> {
         readBack?.envelope.c === envelope.c &&
         outbox.length === 1 &&
         journal === 'wal' &&
-        foreignKeys === 1;
+        foreignKeys === 1 &&
+        version === SCHEMA_VERSION;
       const ms = (performance.now() - started).toFixed(1);
-      return `[even] storage smoke ${ok ? 'ok' : 'FAILED'}: schema v${version}, journal=${journal}, foreign_keys=${foreignKeys}, insert+read ${readBack ? 1 : 0} row, outbox ${outbox.length}, ${ms} ms`;
+      return {
+        ok,
+        summary: `storage ${ok ? 'ok' : 'FAILED'}: schema v${version}, journal=${journal}, foreign_keys=${foreignKeys}, insert+read ${readBack ? 1 : 0} row, outbox ${outbox.length}, ${ms} ms`,
+      };
     } finally {
       await store.close();
       await SQLite.deleteDatabaseAsync(SMOKE_DATABASE).catch(() => undefined);
     }
   } catch (error) {
-    return `[even] storage smoke FAILED: ${error instanceof Error ? error.message : String(error)}`;
+    return {
+      ok: false,
+      summary: `storage FAILED: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
 }

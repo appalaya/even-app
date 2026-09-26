@@ -1,5 +1,5 @@
 import { b64urlEncode, InvalidServerUrlError, newSecret } from '@even/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { groupKeys, sealFor, Events } from '../testing/fixtures';
 import { isSyncError, SyncError } from './errors';
@@ -219,6 +219,72 @@ describe('HttpTransport errors', () => {
       }).fetch,
     });
     expect((await rejection(t.info())).code).toBe('network');
+  });
+
+  it('maps every protocol error name (404 and 405 as not_an_even_server)', async () => {
+    const table: [number, string, string][] = [
+      [400, 'invalid_request', 'invalid_request'],
+      [400, 'invalid_envelope', 'invalid_envelope'],
+      [401, 'unauthorized', 'unauthorized'],
+      [404, 'not_found', 'not_an_even_server'],
+      [405, 'method_not_allowed', 'not_an_even_server'],
+      [413, 'group_full', 'group_full'],
+      [415, 'unsupported_version', 'unsupported_version'],
+      [410, 'group_blocked', 'group_blocked'],
+      [429, 'rate_limited', 'rate_limited'],
+      [503, 'over_budget', 'over_budget'],
+      [500, 'server_error', 'server_error'],
+      [501, 'not_implemented', 'not_implemented'],
+    ];
+    for (const [status, error, code] of table) {
+      const t = new HttpTransport('https://s.example', {
+        fetch: stubFetch(() => json(status, { error })).fetch,
+      });
+      expect(await rejection(t.push('G', token, []))).toMatchObject({ code, status });
+    }
+  });
+
+  it('never puts the group id (which is in the path) into an error message', async () => {
+    const groupId = groupKeys().groupId;
+    const answers: (() => Response)[] = [
+      () => {
+        throw new TypeError(`fetch failed for https://s.example/v1/groups/${groupId}`);
+      },
+      () => new Response('bad gateway', { status: 502 }),
+      () => new Response('<html>', { status: 200 }),
+      () => json(401, {}),
+    ];
+    for (const answer of answers) {
+      const t = new HttpTransport('https://s.example', { fetch: stubFetch(answer).fetch });
+      for (const call of [
+        () => t.push(groupId, token, []),
+        () => t.pull(groupId, token, 0, 1),
+        () => t.delete(groupId, token),
+      ]) {
+        const error = await rejection(call());
+        expect(error.message).not.toContain(groupId);
+        expect(error.message).toMatch(/\/v1\/groups\/\{groupId\}/);
+      }
+    }
+  });
+
+  it('times out after 30 s by default', async () => {
+    vi.useFakeTimers();
+    try {
+      const hang = ((_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })) as unknown as typeof fetch;
+      const settled = vi.fn();
+      const pending = rejection(new HttpTransport('https://s.example', { fetch: hang }).info());
+      void pending.then(settled);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await pending).code).toBe('network');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('times out as network', async () => {

@@ -24,6 +24,7 @@ import type {
   InsertEventsResult,
   NewEventRow,
   OutboxRow,
+  PendingDeleteKey,
   PendingDeleteRow,
   PendingDeletes,
   PrefKey,
@@ -35,6 +36,7 @@ import type {
   SyncStatePatch,
 } from './types';
 import {
+  checkAuthToken,
   checkBoolean,
   checkEnum,
   checkId,
@@ -253,21 +255,26 @@ class SqlitePendingDeletes implements PendingDeletes {
   async add(entry: PendingDeleteRow): Promise<void> {
     const localId = checkLocalId(entry?.localId);
     const serverUrl = checkServerUrl(entry.serverUrl);
+    const authToken = checkAuthToken(entry.authToken);
     await this.db.run(
-      'INSERT INTO pending_deletes (local_id, server_url) VALUES (?, ?) ON CONFLICT DO NOTHING',
-      [localId, serverUrl],
+      'INSERT INTO pending_deletes (local_id, server_url, auth_token) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+      [localId, serverUrl, authToken],
     );
   }
 
   /** In the order the debts were recorded. */
   async list(): Promise<PendingDeleteRow[]> {
-    const rows = await this.db.all<{ local_id: string; server_url: string }>(
-      'SELECT local_id, server_url FROM pending_deletes ORDER BY rowid',
+    const rows = await this.db.all<{ local_id: string; server_url: string; auth_token: string }>(
+      'SELECT local_id, server_url, auth_token FROM pending_deletes ORDER BY rowid',
     );
-    return rows.map((r) => ({ localId: r.local_id, serverUrl: r.server_url }));
+    return rows.map((r) => ({
+      localId: r.local_id,
+      serverUrl: r.server_url,
+      authToken: r.auth_token,
+    }));
   }
 
-  async remove(entry: PendingDeleteRow): Promise<void> {
+  async remove(entry: PendingDeleteKey): Promise<void> {
     const localId = checkLocalId(entry?.localId);
     const serverUrl = checkServerUrl(entry.serverUrl);
     await this.db.run('DELETE FROM pending_deletes WHERE local_id = ? AND server_url = ?', [
@@ -624,6 +631,15 @@ export class SqliteStore implements Store {
       [localId],
     );
     return rows.map((r) => ({ id: r.id, envelope: parseReadable(r.id, r.envelope) }));
+  }
+
+  async latestTs(localId: string): Promise<number | null> {
+    checkLocalId(localId);
+    const row = await this.db.get<{ latest: number | null }>(
+      'SELECT MAX(ts) AS latest FROM events WHERE local_id = ?',
+      [localId],
+    );
+    return row?.latest ?? null;
   }
 
   async countByStatus(localId: string): Promise<EventCounts> {

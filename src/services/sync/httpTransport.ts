@@ -2,6 +2,10 @@
  * `Transport` over `fetch` (design.md "Transport"; PROTOCOL.md §5–§7). One instance per canonical server URL.
  * Refuses non-HTTPS URLs at construction; there are no certificate options. Every failure rejects with a
  * `SyncError` carrying the protocol `error` code, `index`, `reason`, and `Retry-After` in ms.
+ *
+ * No retries here: the engine owns retry, backoff, and `Retry-After`. Every request times out after 30 s (the body
+ * read included) as a `network` error. Error messages name the route pattern (`POST /v1/groups/{groupId}/events`),
+ * never the path itself, which carries the group id (../even-server/THREAT-MODEL.md "What we log").
  */
 import { b64urlEncode, canonicalOrigin, InvalidServerUrlError, type Envelope } from '@even/core';
 
@@ -187,7 +191,7 @@ export class HttpTransport implements Transport {
   }
 
   async info(): Promise<ServerInfo> {
-    const body = await this.request('GET', '/v1/info');
+    const body = await this.request('GET', '/v1/info', '/v1/info');
     const info = parseInfo(body);
     if (info === null)
       throw new SyncError('not_an_even_server', 'GET /v1/info: not the documented shape');
@@ -195,7 +199,7 @@ export class HttpTransport implements Transport {
   }
 
   async push(groupId: string, token: Uint8Array, envelopes: Envelope[]): Promise<PushResponse> {
-    const body = await this.request('POST', `${groupPath(groupId)}/events`, token, {
+    const body = await this.request('POST', `${groupPath(groupId)}/events`, EVENTS_ROUTE, token, {
       events: envelopes,
     });
     const response = parsePush(body);
@@ -211,7 +215,12 @@ export class HttpTransport implements Transport {
     limit: number,
   ): Promise<PullResponse> {
     const query = `?since=${encodeURIComponent(String(since))}&limit=${encodeURIComponent(String(limit))}`;
-    const body = await this.request('GET', `${groupPath(groupId)}/events${query}`, token);
+    const body = await this.request(
+      'GET',
+      `${groupPath(groupId)}/events${query}`,
+      EVENTS_ROUTE,
+      token,
+    );
     const response = parsePull(body);
     if (response === null)
       throw new SyncError('not_an_even_server', 'GET events: not the documented shape');
@@ -219,13 +228,17 @@ export class HttpTransport implements Transport {
   }
 
   async delete(groupId: string, token: Uint8Array): Promise<void> {
-    await this.request('DELETE', groupPath(groupId), token);
+    await this.request('DELETE', groupPath(groupId), GROUP_ROUTE, token);
   }
 
-  /** One request. Resolves with the parsed JSON body (undefined for an empty body); rejects with `SyncError`. */
+  /**
+   * One request. Resolves with the parsed JSON body (undefined for an empty body); rejects with `SyncError`.
+   * `route` is the path's pattern, the only form of it that appears in messages.
+   */
   private async request(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
+    route: string,
     token?: Uint8Array,
     json?: unknown,
   ): Promise<unknown> {
@@ -245,7 +258,7 @@ export class HttpTransport implements Transport {
       response = await this.fetchFn(`${this.base}${path}`, init);
       text = await response.text();
     } catch (cause) {
-      throw new SyncError('network', `${method} ${path.split('?')[0]}: no response`, { cause });
+      throw new SyncError('network', `${method} ${route}: no response`, { cause });
     } finally {
       clearTimeout(timer);
     }
@@ -262,13 +275,15 @@ export class HttpTransport implements Transport {
     }
 
     if (response.ok) {
-      if (!parsed) throw new SyncError('not_an_even_server', `${method}: response is not JSON`);
+      if (!parsed) {
+        throw new SyncError('not_an_even_server', `${method} ${route}: response is not JSON`);
+      }
       return body;
     }
-    throw this.errorFor(response, parsed ? body : undefined);
+    throw this.errorFor(response, parsed ? body : undefined, `${method} ${route}`);
   }
 
-  private errorFor(response: Response, body: unknown): SyncError {
+  private errorFor(response: Response, body: unknown, request: string): SyncError {
     const status = response.status;
     const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'), this.now());
     const record = isRecord(body) ? body : {};
@@ -289,9 +304,16 @@ export class HttpTransport implements Transport {
     if (isCount(record.index)) details.index = record.index;
     if (record.reason === 'bytes' || record.reason === 'events') details.reason = record.reason;
     if (retryAfterMs !== undefined) details.retryAfterMs = retryAfterMs;
-    return new SyncError(code, message ?? `HTTP ${status} ${named ?? ''}`.trim(), details);
+    return new SyncError(
+      code,
+      message ?? `${request}: HTTP ${status} ${named ?? ''}`.trim(),
+      details,
+    );
   }
 }
+
+const EVENTS_ROUTE = '/v1/groups/{groupId}/events';
+const GROUP_ROUTE = '/v1/groups/{groupId}';
 
 function groupPath(groupId: string): string {
   return `/v1/groups/${encodeURIComponent(groupId)}`;
