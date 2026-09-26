@@ -1,0 +1,74 @@
+{
+  "expo": {
+    "name": "Even",
+    "slug": "even",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "even",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.appalaya.even",
+      "appleTeamId": "9S29T387N4",
+      "supportsTablet": false,
+      "associatedDomains": ["applinks:even.appalaya.com"],
+      "infoPlist": {
+        "UIBackgroundModes": ["fetch", "processing"]
+      }
+    },
+    "android": {
+      "package": "com.appalaya.even",
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F5F1",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "even.appalaya.com",
+              "pathPrefix": "/i"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "./src/app"
+        }
+      ],
+      "expo-sqlite",
+      "expo-secure-store",
+      "expo-notifications",
+      "expo-background-task",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F6F5F1",
+          "dark": {
+            "backgroundColor": "#0E100F"
+          }
+        }
+      ],
+      "expo-sharing",
+      "expo-status-bar"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -19,8 +19,8 @@ Even's pure core. No React Native, no Expo, no I/O. Runs in Node under Vitest an
 | `integration.test.ts` | Cross-module paths (keys → seal → open → parseEvent → reduce → balances) and the size budget. |
 
 ```bash
-npm install
-npm run check    # typecheck + tests
+npm install      # at the repo root; core is an npm workspace (no lockfile of its own)
+npm run check    # typecheck + tests, run here
 ```
 
 Randomness comes from `globalThis.crypto.getRandomValues`; the app polyfills it at entry from `expo-crypto`.
