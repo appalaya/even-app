@@ -67,6 +67,7 @@ When the user says "parking lot:" followed by a thought — note it, don't act o
 - Per-server auth tokens and group ids: never store a server group id as the group's identity; the `localId` is. Re-encrypt when the server changes.
 - Additive changes to the event body ride on the current `sv` and old clients strip what they don't know. Breaking changes bump `sv` and add a reducer case for the old version. Old events are never migrated in place.
 - Anything that touches key derivation, encryption, or what goes outside the ciphertext is checked against `../even-server/THREAT-MODEL.md` first.
+- No literal colours outside `src/theme/`. Components consume semantic tokens from `useTheme()`; the lint rule enforces it. Themes are a later feature and this is what keeps them additive.
 - Elegance budget is a constraint, not a vibe: three primary screens, no tab bar, two required fields to add an expense. Adding a screen or a required field needs a reason in `design.md`.
 - Test on a real device for universal links and background refresh; the simulator lies about both.
 

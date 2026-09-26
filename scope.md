@@ -106,7 +106,9 @@ accounts, no ads, and no one but the group able to read it.
 - **Passphrase-protected group file.** v1 ships the plain group file with the
   same warning as the invite.
 - **Search and filters** beyond scrolling. Trips are small.
-- **Themes and custom categories.** Elegance is fewer choices.
+- **Themes** (app-level and per-group). Later version; v1 builds on semantic
+  colour tokens with a fixed resolution order so both are additive.
+- **Custom categories.** Elegance is fewer choices.
 
 ## Design Constraints
 

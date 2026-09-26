@@ -866,6 +866,36 @@ is a sheet or a settings sub-page.
   retention, usage meter, move, delete old copy after a move), export CSV, group file export, new invite, archive group,
   leave (with the optional server-copy delete).
 
+## Theme tokens
+
+Every colour in the app is a **semantic token**, resolved at runtime from a
+theme. Components never contain a literal colour; an ESLint rule rejects hex,
+`rgb(`, and named colours outside `src/theme/`.
+
+```ts
+interface ThemeTokens {
+  background: string; surface: string; surfaceRaised: string;
+  text: string; textMuted: string; border: string; separator: string;
+  accent: string; onAccent: string; accentSoft: string;   // soft = bars, chips
+  attention: string;                                      // banners; never used for money
+  avatar: readonly [string, string, string, string, string, string,
+                    string, string, string, string, string, string];
+}
+interface Theme { id: string; name: string; light: ThemeTokens; dark: ThemeTokens }
+```
+
+- v1 ships one theme, `even` (spruce on warm neutrals, the canvas palette),
+  defined once in `src/theme/themes.ts`. Adding a theme is adding an object.
+- **Resolution order, fixed now:** the group's theme if it has one, else the
+  app theme, else `even`; light or dark from the system appearance, with an
+  app-level override later. A `useTheme()` hook returns the resolved tokens;
+  a `ThemeProvider` wraps the app and a nested one wraps each group screen.
+- **Per-group theme (later)** is an event, `group.themed { theme: string }`,
+  inside the ciphertext like a rename; unknown theme ids fall back to `even`,
+  and clients that predate the field strip it. No protocol change.
+- **App theme (later)** is a row in the local `prefs` table.
+- The canvas's per-board accent picker is this mechanism in miniature.
+
 ## Elegance constraints
 
 These are budgets, checked in review:
@@ -873,7 +903,7 @@ These are budgets, checked in review:
 - Three primary screens, no tab bar.
 - Two required fields to add an expense; a first-time user saves one in under
   ten seconds.
-- One accent colour, system fonts, no illustrations, no onboarding carousel.
+- One accent colour per theme, system fonts, no onboarding carousel.
 - Dark mode and dynamic type from the first commit.
 - Nothing asks for a permission at launch.
 - Every list has an empty state that says what to do, in one sentence.
