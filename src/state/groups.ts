@@ -1,0 +1,1485 @@
+/**
+ * GroupService: every user action that changes a group, as plain async methods over `Store`, `Secrets`, the sync
+ * engine, a clock and this device's id. Screens call these and read `GroupStateStore`; they never write events.
+ *
+ * The write path (design.md "Ordering", "Validation", "Rotation, moving, closing" → Move):
+ * 1. per group, one write at a time, so each event's `ts` sees the previous one;
+ * 2. the permission and uniqueness rules are checked against the current derived state (honest clients enforce
+ *    them; the reducer cannot);
+ * 3. `ts = nextTs(now, log, target)`, gated on `canWrite`, and the body must pass `parseEvent` before it is sealed,
+ *    so this device never produces an event that fails validation on another phone;
+ * 4. the envelope is sealed for the `server_url` read inside the same transaction as its insert (origin `local`,
+ *    unacked), so no write can land sealed for an old server's group id;
+ * 5. the group's derived state is invalidated and a `local_write` sync is requested.
+ *
+ * Decisions where design.md leaves room (each is tested in groups.test.ts):
+ * - Rotation writes the new group, its `group.rotated` (and the optional `member.archived`) AND the old group's
+ *   `group.closed` in one local transaction, then pushes the new group, then syncs the old one. On the network the
+ *   order is design.md's (new group first, closure after); locally a crash can never leave a new group without the
+ *   old one's closure, which would otherwise make this device "recognise" its own rotation after a restart.
+ * - "Recognition done" for the rotating device is persistent and needs no extra column: the old group holds a
+ *   `group.closed` of origin `local` naming the new group. Recognition is skipped exactly then.
+ * - The one sync a closed group gets during recognition flips it to `active` for that cycle; it ends `hidden`.
+ * - Leave runs in the engine's order: rows, then `deleteServerCopy` (refused while an active row syncs to that
+ *   server), then the secret, so the pending delete's token is derived while the secret still exists.
+ * - A restore writes every field of the chosen version (amount and split together), so it wins every field it names.
+ * - Name uniqueness also guards unarchiving (a restored "Maya" may not collide with a newer one).
+ */
+import {
+  canonicalOrigin,
+  canWrite,
+  decodeInvite,
+  deriveLocal,
+  deriveServer,
+  encodeInvite,
+  entityIdOf,
+  inviteLink,
+  isCategory,
+  isClockSane,
+  isCurrency,
+  isGroupName,
+  isIsoDate,
+  LIMITS,
+  makeInvite,
+  newId,
+  newSecret,
+  nextTs,
+  open,
+  parseEvent,
+  PROTOCOL,
+  resealEnvelope,
+  seal,
+  secretFromInvite,
+  type Category,
+  type Event,
+  type EventPayload,
+  type Expense,
+  type ExpenseChanges,
+  type GroupState,
+  type LogEntry,
+  type MemberState,
+  type Payment,
+} from '@even/core';
+
+import { exportGroupCsv } from '../services/csv/csv';
+import type { FileIO } from '../services/groupFile/fileIO';
+import {
+  exportGroupFile as writeGroupFile,
+  GroupFileError,
+  importGroupFile as readGroupFile,
+  type ImportResult,
+} from '../services/groupFile/groupFile';
+import type { Secrets } from '../services/secrets/types';
+import type { GroupLifecycle, GroupRow, NewEventRow, Store } from '../services/storage/types';
+import type { InfoCache } from '../services/sync/info';
+import type {
+  DeleteServerCopyResult,
+  MoveServerResult,
+  ServerInfo,
+  SyncEngine,
+  SyncResult,
+  SyncTrigger,
+  Transport,
+} from '../services/sync/types';
+import { groupUsage, type GroupUsage } from '../services/sync/usage';
+import { allAcked } from './acks';
+import { fromSealError, inviteProblemOf, StateError, type InviteProblem } from './errors';
+import type { DerivedGroup, GroupStateStore } from './groupState';
+import { CONTROL_TYPES, isReadable, openType, parseEnvelopeText, typeOf } from './log';
+import { checkEmoji, normaliseName, type PrefsService } from './prefs';
+import { resolveSplit, sameSplit, type SplitSpec } from './split';
+
+// ---------- Public shapes ----------
+
+export interface CreateGroupInput {
+  name: string;
+  /** ISO 4217 code; immutable for the life of the group. */
+  currency: string;
+  /** Your name in the group. */
+  myName: string;
+  myEmoji?: string;
+  /** Names to pre-add ("People" chips); they pick their name when they join. */
+  people?: readonly string[];
+  /** "Advanced: sync server"; defaults to PROTOCOL.defaultServer. */
+  serverUrl?: string;
+}
+
+export interface InviteInfo {
+  /** The bare code ("Copy code"). */
+  code: string;
+  /** `https://even.appalaya.com/i#<code>` ("Share link"). */
+  link: string;
+  /** Share gating: false until `group.created` and the creator's `member.added` are acknowledged. */
+  ready: boolean;
+}
+
+export interface InvitePreview {
+  localId: string;
+  /** The invite's group name, or null ("a group"). */
+  name: string | null;
+  currency: string | null;
+  serverUrl: string;
+  /** The server's host, for "on sync.even.appalaya.com". */
+  host: string;
+  /** This phone already holds the group. */
+  local: { state: GroupLifecycle; serverUrl: string } | null;
+}
+
+export type PreviewResult =
+  { ok: true; invite: InvitePreview } | { ok: false; error: InviteProblem };
+
+export type JoinResult =
+  | {
+      kind: 'joined';
+      localId: string;
+      /** No member claimed yet: show "Which one are you?" once members are known. */
+      needsClaim: boolean;
+      /** The `first_open` sync. `synced`: the member list is available. Otherwise "Joined, waiting for first sync". */
+      firstSync: SyncResult;
+      /** The first sync did not complete: the name pick waits until members arrive. */
+      waiting: boolean;
+    }
+  /** Same group, same server: open it. */
+  | { kind: 'already'; localId: string }
+  /** Same group on another server: confirm "Move <name> from <old host> to <new host>?", then `acceptInviteMove`. */
+  | { kind: 'move'; localId: string; fromServer: string; toServer: string }
+  /** The invite opens a group this phone has closed or hidden (rotated away): refused. */
+  | { kind: 'closedGroupInvite'; localId: string; state: 'closed' | 'hidden' };
+
+export interface ExpenseDraft {
+  title: string;
+  /** Minor units. */
+  amount: number;
+  paidBy: string;
+  /** YYYY-MM-DD, the day it happened. */
+  date: string;
+  category: Category;
+  note?: string;
+  split: SplitSpec;
+}
+
+/** Changed fields only. `amount` and `split` travel together or not at all; `note: null` or `''` clears it. */
+export interface ExpenseEdit {
+  title?: string;
+  amount?: number;
+  split?: SplitSpec;
+  paidBy?: string;
+  date?: string;
+  category?: Category;
+  note?: string | null;
+}
+
+export interface PaymentDraft {
+  from: string;
+  to: string;
+  amount: number;
+  date: string;
+  note?: string;
+}
+
+export interface LeaveResult {
+  /** This device's events no server has acknowledged: other members will never see them. */
+  unsent: number;
+  /** When `deleteServerCopy` was asked for. */
+  serverCopy: DeleteServerCopyResult | null;
+}
+
+export interface RotateResult {
+  /** The new group. */
+  localId: string;
+  invite: InviteInfo;
+  /** Step 1: the old group's last sync. */
+  lastSync: SyncResult;
+  /** Step 5: the new group's first push. */
+  pushed: SyncResult;
+  /** Step 6: the old group's sync carrying `group.closed`. The old group is hidden once that is acknowledged. */
+  closing: SyncResult;
+}
+
+export type MoveResult =
+  | (MoveServerResult & { fromServer: string })
+  /** The current server never acknowledged `group.moved`; nothing was switched. */
+  | { localId: string; outcome: 'failed'; error: 'not_acknowledged'; fromServer: string };
+
+export interface UsageReport {
+  info: ServerInfo;
+  usage: GroupUsage;
+}
+
+export interface GroupServiceDeps {
+  store: Store;
+  secrets: Secrets;
+  engine: SyncEngine;
+  groupState: GroupStateStore;
+  /** This install's device id (`dev` on every event). */
+  deviceId: string;
+  now: () => number;
+  transportFor: (serverUrl: string) => Transport;
+  infoCache: InfoCache;
+  files?: FileIO | null;
+  prefs?: PrefsService | null;
+  log?: (message: string, detail?: unknown) => void;
+}
+
+// ---------- Internals ----------
+
+interface Draft {
+  payload: EventPayload;
+  /** Author override (self-add, claim, create); defaults to this device's claimed member. */
+  by?: string;
+}
+
+interface WriteContext {
+  derived: DerivedGroup;
+  state: GroupState;
+  row: GroupRow;
+  me: string | null;
+  currency: string | null;
+}
+
+/** What a read-only group still accepts: `join` (claims, self-add), `unarchive`, `control` (group.moved). */
+type Allow = 'normal' | 'join' | 'unarchive' | 'control';
+
+/** Length in Unicode code points, the unit every length rule counts. */
+function codePoints(text: string): number {
+  return [...text].length;
+}
+
+function nameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function hostOf(serverUrl: string): string {
+  return serverUrl.replace(/^https:\/\//, '');
+}
+
+function requireMember(state: GroupState, id: string): MemberState {
+  const member = state.members.get(id);
+  if (member === undefined || member.unknown) throw new StateError('not_found', 'no such member');
+  return member;
+}
+
+function assertNameFree(state: GroupState, name: string, except?: string): void {
+  const key = nameKey(name);
+  for (const member of state.members.values()) {
+    if (member.id === except || member.archived || member.unknown) continue;
+    if (nameKey(member.name) === key) {
+      throw new StateError('name_taken', 'another member already has this name');
+    }
+  }
+}
+
+function assertRoomForMember(state: GroupState): void {
+  let count = 0;
+  for (const member of state.members.values()) if (!member.unknown) count += 1;
+  if (count >= LIMITS.membersMax) {
+    throw new StateError('members_full', `a group has at most ${LIMITS.membersMax} members`);
+  }
+}
+
+function checkTitle(title: string): string {
+  const trimmed = title.trim();
+  const length = codePoints(trimmed);
+  if (length === 0 || length > LIMITS.titleMax) {
+    throw new StateError('invalid', `a title is 1 to ${LIMITS.titleMax} characters`);
+  }
+  return trimmed;
+}
+
+function checkAmount(amount: number): number {
+  if (!Number.isSafeInteger(amount) || amount < LIMITS.amountMin || amount > LIMITS.amountMax) {
+    throw new StateError('invalid', 'the amount is out of range');
+  }
+  return amount;
+}
+
+function checkDate(date: string): string {
+  if (!isIsoDate(date)) throw new StateError('invalid', 'a date is YYYY-MM-DD');
+  return date;
+}
+
+function checkCategory(category: Category): Category {
+  if (!isCategory(category)) throw new StateError('invalid', 'unknown category');
+  return category;
+}
+
+/** Trimmed; '' means "no note". */
+function checkNote(note: string): string {
+  const trimmed = note.trim();
+  if (codePoints(trimmed) > LIMITS.noteMax) {
+    throw new StateError('invalid', `a note is at most ${LIMITS.noteMax} characters`);
+  }
+  return trimmed;
+}
+
+function checkGroupName(name: string): string {
+  const trimmed = name.trim();
+  if (!isGroupName(trimmed)) {
+    throw new StateError('invalid', `a group name is 1 to ${LIMITS.groupNameMax} characters`);
+  }
+  return trimmed;
+}
+
+// ---------- The service ----------
+
+export class GroupService {
+  private readonly store: Store;
+  private readonly secrets: Secrets;
+  private readonly engine: SyncEngine;
+  private readonly groupState: GroupStateStore;
+  private readonly deviceId: string;
+  private readonly now: () => number;
+  private readonly transportFor: (serverUrl: string) => Transport;
+  private readonly infoCache: InfoCache;
+  private readonly files: FileIO | null;
+  private readonly prefs: PrefsService | null;
+  private readonly log: (message: string, detail?: unknown) => void;
+
+  private readonly locks = new Map<string, Promise<unknown>>();
+  /** Old groups whose rescue is running: their closure handling waits for it. */
+  private readonly recognizing = new Set<string>();
+
+  constructor(deps: GroupServiceDeps) {
+    this.store = deps.store;
+    this.secrets = deps.secrets;
+    this.engine = deps.engine;
+    this.groupState = deps.groupState;
+    this.deviceId = deps.deviceId;
+    this.now = deps.now;
+    this.transportFor = deps.transportFor;
+    this.infoCache = deps.infoCache;
+    this.files = deps.files ?? null;
+    this.prefs = deps.prefs ?? null;
+    this.log = deps.log ?? ((message, detail) => console.warn(message, detail));
+  }
+
+  // ===== Create, invite, join =====
+
+  /**
+   * Creates a group: a new secret and ids, the secret and the row (`active`, name and currency cached, `my_member_id`
+   * set), then, in design.md's order, the creator's `member.added` (by = the new member), `member.claimed`,
+   * `group.created`, and one `member.added` per pre-added name, each with `ts` from `nextTs`. Requests a sync.
+   */
+  async createGroup(input: CreateGroupInput): Promise<{ localId: string; memberId: string }> {
+    const name = checkGroupName(input.name);
+    const currency = input.currency.trim();
+    if (!isCurrency(currency)) throw new StateError('invalid', 'unknown currency');
+    const myName = normaliseName(input.myName);
+    const myEmoji = input.myEmoji === undefined ? undefined : checkEmoji(input.myEmoji);
+    const people = (input.people ?? []).map((person) => normaliseName(person));
+    const keys = [myName, ...people].map(nameKey);
+    if (new Set(keys).size !== keys.length) {
+      throw new StateError('name_taken', 'two people have the same name');
+    }
+    if (keys.length > LIMITS.membersMax) {
+      throw new StateError('members_full', `a group has at most ${LIMITS.membersMax} members`);
+    }
+    const serverUrl = this.canonical(input.serverUrl ?? PROTOCOL.defaultServer);
+    const now = this.now();
+    if (!isClockSane(now)) throw new StateError('clock', "check your phone's date");
+
+    const secret = newSecret();
+    const { localId, encryptionKey: key } = deriveLocal(secret);
+    const memberId = newId();
+    const drafts: Draft[] = [
+      {
+        payload: {
+          type: 'member.added',
+          member:
+            myEmoji === undefined
+              ? { id: memberId, name: myName }
+              : { id: memberId, name: myName, emoji: myEmoji },
+        },
+        by: memberId,
+      },
+      { payload: { type: 'member.claimed', id: memberId }, by: memberId },
+      { payload: { type: 'group.created', name, currency }, by: memberId },
+      ...people.map((person): Draft => ({
+        payload: { type: 'member.added', member: { id: newId(), name: person } },
+        by: memberId,
+      })),
+    ];
+    const entries = this.buildEvents(now, [], drafts, memberId);
+    const rows = this.sealRows(entries, key, deriveServer(secret, serverUrl).groupId);
+
+    await this.secrets.setSecret(localId, secret);
+    try {
+      await this.store.transaction(async (tx) => {
+        await tx.upsertGroup({
+          localId,
+          serverUrl,
+          epoch: null,
+          cursor: 0,
+          myMemberId: memberId,
+          nameCache: name,
+          currencyCache: currency,
+          createdAt: now,
+          lastSyncedAt: null,
+          lastSyncError: null,
+          state: 'active',
+          epochResetsThisCycle: 0,
+        });
+        await tx.insertEvents(localId, rows);
+      });
+    } catch (error) {
+      await this.secrets.deleteSecret(localId).catch(() => undefined);
+      throw error;
+    }
+    await this.seedPrefs(myName, myEmoji);
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+    this.engine.requestSync(localId);
+    return { localId, memberId };
+  }
+
+  /** The group's invite, and whether it may be shared yet. */
+  async inviteFor(localId: string): Promise<InviteInfo> {
+    const derived = await this.requireDerived(localId);
+    const secret = await this.secretOf(localId);
+    const extras: { g?: string; cur?: string } = {};
+    if (isGroupName(derived.name)) extras.g = derived.name;
+    if (derived.currency !== null && isCurrency(derived.currency)) extras.cur = derived.currency;
+    const code = encodeInvite(makeInvite(secret, derived.row.serverUrl, extras));
+    return { code, link: inviteLink(code), ready: derived.inviteReady };
+  }
+
+  /** Decodes a pasted code or link for the Join screen. Never throws for bad input. */
+  async previewInvite(text: string): Promise<PreviewResult> {
+    let invite: ReturnType<typeof decodeInvite>;
+    let localId: string;
+    try {
+      invite = decodeInvite(text);
+      localId = deriveLocal(secretFromInvite(invite)).localId;
+    } catch (error) {
+      return { ok: false, error: inviteProblemOf(error) };
+    }
+    const row = await this.store.getGroup(localId);
+    return {
+      ok: true,
+      invite: {
+        localId,
+        name: invite.g ?? null,
+        currency: invite.cur ?? null,
+        serverUrl: invite.s,
+        host: hostOf(invite.s),
+        local: row === null ? null : { state: row.state, serverUrl: row.serverUrl },
+      },
+    };
+  }
+
+  /**
+   * Joins from an invite. A new group: stores the secret and the row, runs the `first_open` sync, then recognises a
+   * rotation if the new group was rotated from one this phone holds. Offline, the group is still created (`active`,
+   * `last_sync_error` set) and the name pick waits. Throws `StateError` with an invite problem for bad input.
+   */
+  async joinInvite(text: string): Promise<JoinResult> {
+    let invite: ReturnType<typeof decodeInvite>;
+    let secret: Uint8Array;
+    try {
+      invite = decodeInvite(text);
+      secret = secretFromInvite(invite);
+    } catch (error) {
+      throw new StateError(inviteProblemOf(error), 'the invite cannot be used');
+    }
+    const { localId } = deriveLocal(secret);
+    const existing = await this.store.getGroup(localId);
+    if (existing !== null) {
+      if (existing.state === 'closed' || existing.state === 'hidden') {
+        return { kind: 'closedGroupInvite', localId, state: existing.state };
+      }
+      // A re-shared invite is also the recovery path for a row whose secret is missing (an Android restore).
+      const hadSecret = (await this.secrets.getSecret(localId)) !== null;
+      await this.secrets.setSecret(localId, secret);
+      if (existing.serverUrl !== invite.s) {
+        return { kind: 'move', localId, fromServer: existing.serverUrl, toServer: invite.s };
+      }
+      if (!hadSecret) {
+        this.groupState.invalidate(localId);
+        void this.engine.syncGroup(localId, { trigger: 'first_open' });
+      }
+      return { kind: 'already', localId };
+    }
+
+    await this.secrets.setSecret(localId, secret);
+    await this.store.upsertGroup({
+      localId,
+      serverUrl: invite.s,
+      epoch: null,
+      cursor: 0,
+      myMemberId: null,
+      nameCache: invite.g ?? null,
+      currencyCache: invite.cur ?? null,
+      createdAt: this.now(),
+      lastSyncedAt: null,
+      lastSyncError: null,
+      state: 'active',
+      epochResetsThisCycle: 0,
+    });
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+    const firstSync = await this.engine.syncGroup(localId, { trigger: 'first_open' });
+    await this.processLifecycle(localId);
+    const row = await this.store.getGroup(localId);
+    return {
+      kind: 'joined',
+      localId,
+      needsClaim: row?.myMemberId == null,
+      firstSync,
+      waiting: firstSync.outcome !== 'synced',
+    };
+  }
+
+  /** Moves a held group to the server a fresh invite names (the recovery path for a dead server): no `group.moved`. */
+  acceptInviteMove(localId: string, toServer: string): Promise<MoveResult> {
+    return this.moveServer(localId, toServer, { announce: false });
+  }
+
+  // ===== Members =====
+
+  /** "Which one are you?": writes `member.claimed` (by = that member) and sets `my_member_id`. */
+  async claimMember(localId: string, memberId: string): Promise<void> {
+    await this.append(
+      localId,
+      ({ state }) => {
+        const member = requireMember(state, memberId);
+        if (member.archived)
+          throw new StateError('not_allowed', 'an archived member cannot be claimed');
+        if (member.devices.includes(this.deviceId)) return []; // idempotent per (id, dev)
+        return [{ payload: { type: 'member.claimed', id: memberId }, by: memberId }];
+      },
+      { allow: 'join', afterInsert: (tx) => tx.setMyMember(localId, memberId) },
+    );
+  }
+
+  /** "I'm not listed": adds yourself (by = the new member, a self-add) and claims the seat. Returns the member id. */
+  async joinAsNewMember(localId: string, name: string, emoji?: string): Promise<string> {
+    const clean = normaliseName(name);
+    const cleanEmoji = emoji === undefined ? undefined : checkEmoji(emoji);
+    const memberId = newId();
+    await this.append(
+      localId,
+      ({ state }) => {
+        assertRoomForMember(state);
+        assertNameFree(state, clean);
+        const member =
+          cleanEmoji === undefined
+            ? { id: memberId, name: clean }
+            : { id: memberId, name: clean, emoji: cleanEmoji };
+        return [
+          { payload: { type: 'member.added', member }, by: memberId },
+          { payload: { type: 'member.claimed', id: memberId }, by: memberId },
+        ];
+      },
+      { allow: 'join', afterInsert: (tx) => tx.setMyMember(localId, memberId) },
+    );
+    await this.seedPrefs(clean, cleanEmoji);
+    return memberId;
+  }
+
+  /** Adds someone else by name (unique among non-archived members, case-insensitive). Returns the member id. */
+  async addMember(localId: string, name: string, emoji?: string): Promise<string> {
+    const clean = normaliseName(name);
+    const cleanEmoji = emoji === undefined ? undefined : checkEmoji(emoji);
+    const memberId = newId();
+    await this.append(localId, ({ state }) => {
+      assertRoomForMember(state);
+      assertNameFree(state, clean);
+      const member =
+        cleanEmoji === undefined
+          ? { id: memberId, name: clean }
+          : { id: memberId, name: clean, emoji: cleanEmoji };
+      return [{ payload: { type: 'member.added', member } }];
+    });
+    return memberId;
+  }
+
+  /**
+   * Renames a member or changes its avatar (`emoji: null` = initials). Allowed on your own seat and on a member nobody
+   * has claimed yet (someone has to fix a typo they typed); `not_allowed` on another joined member.
+   */
+  async updateMember(
+    localId: string,
+    memberId: string,
+    changes: { name?: string; emoji?: string | null },
+  ): Promise<void> {
+    const name = changes.name === undefined ? undefined : normaliseName(changes.name);
+    const emoji =
+      changes.emoji === undefined || changes.emoji === null
+        ? changes.emoji
+        : checkEmoji(changes.emoji);
+    await this.append(localId, ({ state, me }) => {
+      const member = requireMember(state, memberId);
+      if (memberId !== me && member.devices.length > 0) {
+        throw new StateError(
+          'not_allowed',
+          "another joined member's name and avatar are theirs to change",
+        );
+      }
+      const next: { name?: string; emoji?: string | null } = {};
+      if (name !== undefined && name !== member.name) {
+        assertNameFree(state, name, memberId);
+        next.name = name;
+      }
+      if (emoji === null && member.emoji !== undefined) next.emoji = null;
+      if (typeof emoji === 'string' && emoji !== member.emoji) next.emoji = emoji;
+      if (Object.keys(next).length === 0) return [];
+      return [{ payload: { type: 'member.updated', id: memberId, changes: next } }];
+    });
+  }
+
+  /** Archives another member (hidden from pickers; balances kept). Never yourself: that is Leave. */
+  async archiveMember(localId: string, memberId: string): Promise<void> {
+    await this.append(localId, ({ state, me }) => {
+      if (memberId === me)
+        throw new StateError('not_allowed', 'you cannot archive yourself; leave instead');
+      const member = requireMember(state, memberId);
+      return member.archived ? [] : [{ payload: { type: 'member.archived', id: memberId } }];
+    });
+  }
+
+  async unarchiveMember(localId: string, memberId: string): Promise<void> {
+    await this.append(localId, ({ state, me }) => {
+      if (memberId === me) throw new StateError('not_allowed', 'you cannot unarchive yourself');
+      const member = requireMember(state, memberId);
+      if (!member.archived) return [];
+      assertNameFree(state, member.name, memberId);
+      return [{ payload: { type: 'member.unarchived', id: memberId } }];
+    });
+  }
+
+  /** "I'm done adding" (your own mark by default). */
+  async setDone(localId: string, memberId?: string): Promise<void> {
+    await this.append(localId, ({ state, me }) => {
+      const id = memberId ?? me;
+      if (id === null) throw new StateError('not_claimed');
+      requireMember(state, id);
+      return state.doneMembers.includes(id) ? [] : [{ payload: { type: 'member.done', id } }];
+    });
+  }
+
+  /** "Adding more". */
+  async setUndone(localId: string, memberId?: string): Promise<void> {
+    await this.append(localId, ({ state, me }) => {
+      const id = memberId ?? me;
+      if (id === null) throw new StateError('not_claimed');
+      return state.doneMembers.includes(id) ? [{ payload: { type: 'member.undone', id } }] : [];
+    });
+  }
+
+  // ===== Expenses and payments =====
+
+  /** Adds an expense; the split spec is resolved (seeded by the new expense id) into the stored split. */
+  async addExpense(localId: string, draft: ExpenseDraft): Promise<string> {
+    const title = checkTitle(draft.title);
+    const amount = checkAmount(draft.amount);
+    const date = checkDate(draft.date);
+    const category = checkCategory(draft.category);
+    const note = draft.note === undefined ? '' : checkNote(draft.note);
+    const id = newId();
+    await this.append(localId, ({ state, currency }) => {
+      if (currency === null) throw new StateError('invalid', 'the group has not arrived yet');
+      requireMember(state, draft.paidBy);
+      const split = resolveSplit(amount, draft.split, id);
+      for (const memberId of Object.keys(split)) requireMember(state, memberId);
+      const expense: Expense = {
+        id,
+        title,
+        amount,
+        currency,
+        paidBy: draft.paidBy,
+        date,
+        category,
+        split,
+      };
+      if (note !== '') expense.note = note;
+      return [{ payload: { type: 'expense.added', expense } }];
+    });
+    return id;
+  }
+
+  /** Edits an expense: only fields that differ are written; amount and split change together or not at all. */
+  async updateExpense(localId: string, expenseId: string, edit: ExpenseEdit): Promise<void> {
+    if ((edit.amount === undefined) !== (edit.split === undefined)) {
+      throw new StateError('invalid', 'the amount and the split change together');
+    }
+    await this.append(localId, ({ state }) => {
+      const current = state.expenses.get(expenseId);
+      if (current === undefined) throw new StateError('not_found', 'no such expense');
+      const fields: Partial<Pick<Expense, 'title' | 'paidBy' | 'date' | 'category' | 'note'>> = {};
+      if (edit.title !== undefined) {
+        const title = checkTitle(edit.title);
+        if (title !== current.title) fields.title = title;
+      }
+      if (edit.paidBy !== undefined && edit.paidBy !== current.paidBy) {
+        requireMember(state, edit.paidBy);
+        fields.paidBy = edit.paidBy;
+      }
+      if (edit.date !== undefined && checkDate(edit.date) !== current.date) fields.date = edit.date;
+      if (edit.category !== undefined && checkCategory(edit.category) !== current.category) {
+        fields.category = edit.category;
+      }
+      if (edit.note !== undefined) {
+        const note = edit.note === null ? '' : checkNote(edit.note);
+        if (note !== (current.note ?? '')) fields.note = note;
+      }
+      let changes: ExpenseChanges = fields;
+      if (edit.amount !== undefined && edit.split !== undefined) {
+        const amount = checkAmount(edit.amount);
+        const split = resolveSplit(amount, edit.split, expenseId);
+        for (const memberId of Object.keys(split)) requireMember(state, memberId);
+        if (amount !== current.amount || !sameSplit(split, current.split)) {
+          changes = { ...fields, amount, split };
+        }
+      }
+      if (Object.keys(changes).length === 0) return [];
+      return [{ payload: { type: 'expense.updated', id: expenseId, changes } }];
+    });
+  }
+
+  async deleteExpense(localId: string, expenseId: string): Promise<void> {
+    await this.append(localId, ({ state }) => {
+      if (!state.expenses.has(expenseId)) throw new StateError('not_found', 'no such expense');
+      return [{ payload: { type: 'expense.deleted', id: expenseId } }];
+    });
+  }
+
+  /**
+   * Restores version `historyIndex` of an expense's history: an ordinary `expense.updated` carrying that version's
+   * fields, amount and split together. A no-op when the expense already reads that way.
+   */
+  async restoreExpenseVersion(
+    localId: string,
+    expenseId: string,
+    historyIndex: number,
+  ): Promise<void> {
+    await this.append(localId, ({ state }) => {
+      const current = state.expenses.get(expenseId);
+      if (current === undefined) throw new StateError('not_found', 'no such expense');
+      const version = current.history[historyIndex];
+      if (version === undefined || version.kind === 'deleted') {
+        throw new StateError('not_found', 'no such version');
+      }
+      const snap = version.snapshot;
+      const unchanged =
+        snap.title === current.title &&
+        snap.paidBy === current.paidBy &&
+        snap.date === current.date &&
+        snap.category === current.category &&
+        (snap.note ?? '') === (current.note ?? '') &&
+        snap.amount === current.amount &&
+        sameSplit(snap.split, current.split);
+      if (unchanged) return [];
+      const changes: ExpenseChanges = {
+        title: snap.title,
+        paidBy: snap.paidBy,
+        date: snap.date,
+        category: snap.category,
+        note: snap.note ?? '',
+        amount: snap.amount,
+        split: { ...snap.split },
+      };
+      return [{ payload: { type: 'expense.updated', id: expenseId, changes } }];
+    });
+  }
+
+  /** Records a settlement from one member to another. */
+  async addPayment(localId: string, draft: PaymentDraft): Promise<string> {
+    const amount = checkAmount(draft.amount);
+    const date = checkDate(draft.date);
+    const note = draft.note === undefined ? '' : checkNote(draft.note);
+    if (draft.from === draft.to) throw new StateError('invalid', 'a payment goes to someone else');
+    const id = newId();
+    await this.append(localId, ({ state, currency }) => {
+      if (currency === null) throw new StateError('invalid', 'the group has not arrived yet');
+      requireMember(state, draft.from);
+      requireMember(state, draft.to);
+      const payment: Payment = { id, from: draft.from, to: draft.to, amount, currency, date };
+      if (note !== '') payment.note = note;
+      return [{ payload: { type: 'payment.added', payment } }];
+    });
+    return id;
+  }
+
+  async deletePayment(localId: string, paymentId: string): Promise<void> {
+    await this.append(localId, ({ state }) => {
+      if (!state.payments.has(paymentId)) throw new StateError('not_found', 'no such payment');
+      return [{ payload: { type: 'payment.deleted', id: paymentId } }];
+    });
+  }
+
+  // ===== The group =====
+
+  async renameGroup(localId: string, name: string): Promise<void> {
+    const clean = checkGroupName(name);
+    await this.append(
+      localId,
+      ({ state }) =>
+        state.name === clean ? [] : [{ payload: { type: 'group.renamed', name: clean } }],
+      { afterInsert: (tx) => tx.setNameCache(localId, { name: clean }) },
+    );
+  }
+
+  /** Read-only by choice; still syncs; reversible. */
+  async archiveGroup(localId: string): Promise<void> {
+    await this.append(localId, ({ state }) =>
+      state.archived ? [] : [{ payload: { type: 'group.archived' } }],
+    );
+  }
+
+  async unarchiveGroup(localId: string): Promise<void> {
+    await this.append(
+      localId,
+      ({ state }) => (state.archived ? [{ payload: { type: 'group.unarchived' } }] : []),
+      { allow: 'unarchive' },
+    );
+  }
+
+  /** How many of this device's events no server has acknowledged (the Leave confirmation's number). */
+  async unsentCount(localId: string): Promise<number> {
+    const counts = await this.store.countByStatus(localId);
+    if (counts.outbox === 0) return counts.rejected;
+    const pending = new Set((await this.store.outbox(localId, counts.outbox)).map((row) => row.id));
+    let unsent = 0;
+    for (const row of await this.store.listEnvelopes(localId)) {
+      if (row.origin === 'local' && pending.has(row.id)) unsent += 1;
+    }
+    return unsent + counts.rejected;
+  }
+
+  /**
+   * Leave is local only: the group's rows, then (when asked) the server copy's delete, then the secret. That is the
+   * engine's order: `deleteServerCopy` refuses the server an active row still syncs through, and it records the debt
+   * with its token (derived from the secret) before sending, so the delete is retried even after the secret is gone.
+   */
+  async leaveGroup(
+    localId: string,
+    options: { deleteServerCopy?: boolean } = {},
+  ): Promise<LeaveResult> {
+    return this.withLock(localId, async () => {
+      const row = await this.store.getGroup(localId);
+      if (row === null) throw new StateError('not_found', 'no such group');
+      const unsent = await this.unsentCount(localId);
+      await this.store.deleteGroup(localId);
+      const serverCopy =
+        options.deleteServerCopy === true
+          ? await this.engine.deleteServerCopy(localId, row.serverUrl)
+          : null;
+      await this.secrets.deleteSecret(localId);
+      this.groupState.evict(localId);
+      this.groupState.groupsChanged();
+      return { unsent, serverCopy };
+    });
+  }
+
+  /** Two concurrent rotations: the user picked the other group, so this one is hidden. */
+  async hideGroup(localId: string): Promise<void> {
+    await this.store.setGroupState(localId, 'hidden');
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+  }
+
+  /** Settings → "clear unreadable entries". Returns how many were deleted. */
+  async clearUnreadable(localId: string): Promise<number> {
+    const deleted = await this.store.pruneUndecryptable(localId, 0);
+    this.groupState.invalidate(localId);
+    return deleted;
+  }
+
+  /** Pull to refresh, or a tap on the status line's sync glyph (`manual`, debounced by the engine). */
+  sync(
+    localId: string,
+    trigger: Extract<SyncTrigger, 'pull_to_refresh' | 'manual'>,
+  ): Promise<SyncResult> {
+    return this.engine.syncGroup(localId, { trigger });
+  }
+
+  // ===== Rotation =====
+
+  /**
+   * Regenerate the invite (design.md "Rotate invite", steps 1–6). Returns the new group and its invite. The old group
+   * keeps syncing until its `group.closed` is acknowledged and is then hidden (by `processLifecycle`, on the engine's
+   * `finished` events, including after a restart).
+   */
+  async rotateInvite(
+    localId: string,
+    options: { removeMemberId?: string; serverUrl?: string } = {},
+  ): Promise<RotateResult> {
+    const server = options.serverUrl === undefined ? undefined : this.canonical(options.serverUrl);
+    return this.withLock(localId, async () => {
+      const before = await this.requireDerived(localId);
+      const beforeState = this.stateOf(before);
+      if (before.readOnly === 'hidden' || before.readOnly === 'closed') {
+        throw new StateError('read_only', 'this group was already rotated');
+      }
+      const me = before.row.myMemberId;
+      if (me === null) throw new StateError('not_claimed');
+      const removed = options.removeMemberId;
+      if (removed !== undefined) {
+        if (removed === me) throw new StateError('not_allowed', 'you cannot remove yourself');
+        requireMember(beforeState, removed);
+      }
+
+      // 1. One last sync, so nothing pushed by others in the last minutes is lost.
+      const lastSync = await this.engine.syncGroup(localId, { trigger: 'pull_to_refresh' });
+      const derived = await this.requireDerived(localId);
+      const state = this.stateOf(derived);
+      if (derived.readOnly === 'closed')
+        throw new StateError('read_only', 'someone rotated this group first');
+      const oldLog = await this.groupState.entries(localId);
+      const oldSecret = await this.secretOf(localId);
+      const oldKey = deriveLocal(oldSecret).encryptionKey;
+      const now = this.now();
+      if (!isClockSane(now)) throw new StateError('clock', "check your phone's date");
+
+      // 2. A new secret: new local id, new key.
+      const secret = newSecret();
+      const { localId: newLocalId, encryptionKey: newKey } = deriveLocal(secret);
+      await this.secrets.setSecret(newLocalId, secret);
+      try {
+        await this.store.transaction(async (tx) => {
+          const row = await tx.getGroup(localId);
+          if (row === null) throw new StateError('not_found', 'no such group');
+          const serverUrl = server ?? row.serverUrl;
+          const oldGroupId = deriveServer(oldSecret, row.serverUrl).groupId;
+          const newGroupId = deriveServer(secret, serverUrl).groupId;
+
+          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events stay behind.
+          const copied: NewEventRow[] = [];
+          const newLog: LogEntry[] = [];
+          for (const stored of await tx.listEnvelopes(localId)) {
+            if (!isReadable(stored.status)) continue;
+            const envelope = parseEnvelopeText(stored.envelope);
+            if (envelope === null) continue;
+            let body: unknown;
+            try {
+              body = open({ key: oldKey, groupId: oldGroupId, envelope });
+            } catch {
+              continue;
+            }
+            if (CONTROL_TYPES.has(typeOf(body) ?? '')) continue;
+            const resealed = resealEnvelope({
+              key: oldKey,
+              groupId: oldGroupId,
+              newKey,
+              newGroupId,
+              envelope,
+            });
+            copied.push({
+              id: stored.id,
+              origin: stored.origin,
+              acked: false,
+              seq: null,
+              ts: stored.ts,
+              envelope: JSON.stringify(resealed),
+              status: stored.status,
+            });
+            if (stored.status === 'ok') {
+              const event = parseEvent(body);
+              if (event !== null) newLog.push({ id: stored.id, event });
+            }
+          }
+          await tx.upsertGroup({
+            localId: newLocalId,
+            serverUrl,
+            epoch: null,
+            cursor: 0,
+            myMemberId: row.myMemberId,
+            nameCache: row.nameCache,
+            currencyCache: row.currencyCache,
+            createdAt: now,
+            lastSyncedAt: null,
+            lastSyncError: null,
+            state: 'active',
+            epochResetsThisCycle: 0,
+          });
+          if (copied.length > 0) await tx.insertEvents(newLocalId, copied);
+
+          // 4. The link from the new group, and the removal the user picked.
+          const marks: Draft[] = [{ payload: { type: 'group.rotated', from: localId } }];
+          if (removed !== undefined && state.members.get(removed)?.archived !== true) {
+            marks.push({ payload: { type: 'member.archived', id: removed } });
+          }
+          const markEntries = this.buildEvents(now, newLog, marks, me);
+          await tx.insertEvents(newLocalId, this.sealRows(markEntries, newKey, newGroupId));
+
+          // 6. The closure of the old group (pushed after the new group; see the header).
+          const closure = this.buildEvents(
+            now,
+            oldLog,
+            [{ payload: { type: 'group.closed', reason: 'rotated', to: newLocalId } }],
+            me,
+          );
+          await tx.insertEvents(localId, this.sealRows(closure, oldKey, oldGroupId));
+        });
+      } catch (error) {
+        await this.secrets.deleteSecret(newLocalId).catch(() => undefined);
+        throw error;
+      }
+      this.groupState.invalidate(localId);
+      this.groupState.invalidate(newLocalId);
+      this.groupState.groupsChanged();
+
+      // 5. Push the new group.
+      const pushed = await this.engine.syncGroup(newLocalId, { trigger: 'pull_to_refresh' });
+      // 6. Sync the old group until the closure is acknowledged; hide it then.
+      const closing = await this.engine.syncGroup(localId, { trigger: 'pull_to_refresh' });
+      await this.processLifecycle(localId);
+      return {
+        localId: newLocalId,
+        invite: await this.inviteFor(newLocalId),
+        lastSync,
+        pushed,
+        closing,
+      };
+    });
+  }
+
+  /**
+   * Checks one group's lifecycle after it changed (a sync finished, a join, an import, app start): refreshes the
+   * name/currency cache, applies a closure, and recognises a rotation. Runs one at a time per group.
+   */
+  processLifecycle(localId: string): Promise<void> {
+    return this.withLock(`lifecycle|${localId}`, async () => {
+      const derived = await this.groupState.get(localId);
+      if (derived === null || derived.state === null) return;
+      await this.refreshNameCache(derived);
+      await this.handleClosure(localId, derived);
+      if (derived.state.rotatedFrom.length > 0) await this.recognizeRotation(localId, derived);
+    });
+  }
+
+  /** Runs `processLifecycle` for every group that is not hidden (app start: resumes a pending closure). */
+  async reconcile(): Promise<void> {
+    for (const row of await this.store.listGroups()) {
+      if (row.state === 'hidden') continue;
+      try {
+        await this.processLifecycle(row.localId);
+      } catch (error) {
+        this.log('state: lifecycle check failed', error instanceof Error ? error.message : error);
+      }
+    }
+  }
+
+  /**
+   * "Recognising a closure": a `group.closed` from another device sets the group `closed` (read-only, never syncs;
+   * "ask a member for the new invite"). This device's own closure (it rotated the group) instead hides the group once
+   * the server has acknowledged it.
+   */
+  async handleClosure(localId: string, known?: DerivedGroup): Promise<void> {
+    const derived = known ?? (await this.groupState.get(localId));
+    if (derived?.state?.closed == null) return;
+    if (this.recognizing.has(localId)) return;
+    const { row } = derived;
+    if (row.state !== 'active' && row.state !== 'blocked') return;
+    if (derived.localClosure !== null) {
+      const { eventId, ts } = derived.localClosure;
+      // A blocked server will never acknowledge it: nothing is gained by keeping the group.
+      const done = row.state === 'blocked' || (await allAcked(this.store, localId, [eventId], ts));
+      if (!done) return;
+      await this.store.setGroupState(localId, 'hidden');
+    } else {
+      await this.store.setGroupState(localId, 'closed');
+    }
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+  }
+
+  /**
+   * "Recognising a rotation": for each `group.rotated { from }` in this group naming a local group that is not
+   * hidden, sync the old group one last time, then re-encrypt into this group every old-group envelope of origin
+   * `local` whose id this group lacks (this device's own writes, the unpushed outbox included, and nothing else;
+   * control events never), unacked; hide the old group and carry over `my_member_id`.
+   */
+  async recognizeRotation(localId: string, known?: DerivedGroup): Promise<void> {
+    const derived = known ?? (await this.groupState.get(localId));
+    for (const from of derived?.state?.rotatedFrom ?? []) {
+      if (from !== localId) await this.rescueFrom(localId, from);
+    }
+  }
+
+  private async rescueFrom(newLocalId: string, oldLocalId: string): Promise<void> {
+    const old = await this.store.getGroup(oldLocalId);
+    if (old === null || old.state === 'hidden' || this.recognizing.has(oldLocalId)) return;
+    const oldDerived = await this.groupState.get(oldLocalId);
+    if (oldDerived?.localClosure?.to === newLocalId) return; // this device rotated it: recognition done
+    this.recognizing.add(oldLocalId);
+    let rescued = 0;
+    try {
+      // The one exception to "closed groups never sync".
+      if (old.state !== 'active') await this.store.setGroupState(oldLocalId, 'active');
+      await this.engine.syncGroup(oldLocalId, { trigger: 'pull_to_refresh' });
+      const oldSecret = await this.secrets.getSecret(oldLocalId);
+      const newSecret = await this.secrets.getSecret(newLocalId);
+      rescued = await this.store.transaction(async (tx) => {
+        const oldRow = await tx.getGroup(oldLocalId);
+        const newRow = await tx.getGroup(newLocalId);
+        if (oldRow === null || newRow === null) return 0;
+        const rows: NewEventRow[] = [];
+        if (
+          oldSecret !== null &&
+          newSecret !== null &&
+          deriveLocal(oldSecret).localId === oldLocalId &&
+          deriveLocal(newSecret).localId === newLocalId
+        ) {
+          const oldKey = deriveLocal(oldSecret).encryptionKey;
+          const newKey = deriveLocal(newSecret).encryptionKey;
+          const oldGroupId = deriveServer(oldSecret, oldRow.serverUrl).groupId;
+          const newGroupId = deriveServer(newSecret, newRow.serverUrl).groupId;
+          const have = new Set((await tx.listEnvelopes(newLocalId)).map((row) => row.id));
+          for (const stored of await tx.listEnvelopes(oldLocalId)) {
+            if (stored.origin !== 'local' || !isReadable(stored.status) || have.has(stored.id))
+              continue;
+            const envelope = parseEnvelopeText(stored.envelope);
+            if (envelope === null) continue;
+            if (CONTROL_TYPES.has(openType(oldKey, oldGroupId, envelope) ?? '')) continue;
+            let resealed;
+            try {
+              resealed = resealEnvelope({
+                key: oldKey,
+                groupId: oldGroupId,
+                newKey,
+                newGroupId,
+                envelope,
+              });
+            } catch {
+              continue;
+            }
+            rows.push({
+              id: stored.id,
+              origin: 'local',
+              acked: false,
+              seq: null,
+              ts: stored.ts,
+              envelope: JSON.stringify(resealed),
+              status: stored.status,
+            });
+          }
+          if (rows.length > 0) await tx.insertEvents(newLocalId, rows);
+        }
+        await tx.setGroupState(oldLocalId, 'hidden');
+        if (newRow.myMemberId === null && oldRow.myMemberId !== null) {
+          await tx.setMyMember(newLocalId, oldRow.myMemberId);
+        }
+        return rows.length;
+      });
+    } finally {
+      this.recognizing.delete(oldLocalId);
+    }
+    this.groupState.invalidate(oldLocalId);
+    this.groupState.invalidate(newLocalId);
+    this.groupState.groupsChanged();
+    if (rescued > 0) this.engine.requestSync(newLocalId);
+  }
+
+  // ===== Moving =====
+
+  /**
+   * Settings → server → move. Writes `group.moved { server }` and waits for the current server's acknowledgement
+   * (two sync attempts), then switches through the engine's `moveServer` (re-encrypt, `setServer`, full push). A
+   * blocked group skips the announcement (its server refuses it); so does `announce: false`, used when a fresh invite
+   * names the new server (the old one may be dead).
+   */
+  async moveServer(
+    localId: string,
+    serverUrl: string,
+    options: { announce?: boolean } = {},
+  ): Promise<MoveResult> {
+    const origin = this.canonical(serverUrl);
+    const row = await this.store.getGroup(localId);
+    if (row === null) throw new StateError('not_found', 'no such group');
+    const fromServer = row.serverUrl;
+    const announce =
+      (options.announce ?? true) && row.state === 'active' && row.serverUrl !== origin;
+    if (announce) {
+      const [moved] = await this.append(
+        localId,
+        () => [{ payload: { type: 'group.moved', server: origin } }],
+        { allow: 'control' },
+      );
+      if (moved === undefined) throw new StateError('invalid', 'group.moved was not written');
+      let acked = false;
+      for (let attempt = 0; attempt < 2 && !acked; attempt += 1) {
+        await this.engine.syncGroup(localId, { trigger: 'pull_to_refresh' });
+        acked = await allAcked(this.store, localId, [moved.id], moved.event.ts);
+      }
+      if (!acked) return { localId, outcome: 'failed', error: 'not_acknowledged', fromServer };
+    }
+    const result = await this.engine.moveServer(localId, origin);
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+    return { ...result, fromServer };
+  }
+
+  /** "Follow to <host>": another member moved the group; the same switch, without writing `group.moved`. */
+  async followMove(localId: string): Promise<MoveResult> {
+    const derived = await this.requireDerived(localId);
+    if (derived.moveOffer === null) throw new StateError('not_found', 'no move to follow');
+    const result = await this.engine.moveServer(localId, derived.moveOffer);
+    this.groupState.invalidate(localId);
+    this.groupState.groupsChanged();
+    return { ...result, fromServer: derived.row.serverUrl };
+  }
+
+  /** "Delete the copy on <old host>" after a move (never the current server; the engine refuses that). */
+  deleteServerCopy(localId: string, serverUrl: string): Promise<DeleteServerCopyResult> {
+    return this.engine.deleteServerCopy(localId, serverUrl);
+  }
+
+  /** The usage meter: this group's envelopes against the server's caps; null when the server's info is unknown. */
+  async usage(localId: string): Promise<UsageReport | null> {
+    const row = await this.store.getGroup(localId);
+    if (row === null) throw new StateError('not_found', 'no such group');
+    let info: ServerInfo | undefined;
+    try {
+      info = await this.infoCache.get(row.serverUrl, this.transportFor(row.serverUrl));
+    } catch {
+      info = this.infoCache.peek(row.serverUrl);
+    }
+    if (info === undefined) return null;
+    return { info, usage: await groupUsage(this.store, localId, info) };
+  }
+
+  // ===== Files =====
+
+  /** Group settings → group file export (the share sheet warns that it is as sensitive as the invite). */
+  async exportGroupFile(localId: string, options: { dialogTitle?: string } = {}): Promise<void> {
+    const files = this.requireFiles();
+    try {
+      await writeGroupFile({ store: this.store, secrets: this.secrets, files }, localId, options);
+    } catch (error) {
+      if (error instanceof GroupFileError) throw new StateError(error.code, error.message);
+      throw error;
+    }
+  }
+
+  /** Lets the user pick a group file; its text, or null if they cancel. Pass it to `importGroupFile`. */
+  async pickGroupFile(): Promise<string | null> {
+    return (await this.requireFiles().pick())?.text ?? null;
+  }
+
+  /**
+   * Imports a group file (Groups screen, or App settings). `refused` means the group is closed or hidden here: ask
+   * whether to revive it, then call again with `force`.
+   */
+  async importGroupFile(text: string, options: { force?: boolean } = {}): Promise<ImportResult> {
+    const result = await readGroupFile(
+      { store: this.store, secrets: this.secrets, now: this.now },
+      text,
+      options,
+    );
+    if (result.outcome === 'imported') {
+      this.groupState.invalidate(result.localId);
+      this.groupState.groupsChanged();
+      await this.processLifecycle(result.localId);
+      this.engine.requestSync(result.localId);
+    }
+    return result;
+  }
+
+  /** Group settings → export CSV. */
+  async exportCsv(localId: string): Promise<void> {
+    const files = this.requireFiles();
+    const derived = await this.requireDerived(localId);
+    await exportGroupCsv(files, this.stateOf(derived), derived.name);
+  }
+
+  // ===== Internals =====
+
+  private requireFiles(): FileIO {
+    if (this.files === null) throw new StateError('not_found', 'file sharing is not available');
+    return this.files;
+  }
+
+  private canonical(url: string): string {
+    try {
+      return canonicalOrigin(url);
+    } catch {
+      throw new StateError('invalid_url', 'that is not an https server URL');
+    }
+  }
+
+  private async requireDerived(localId: string): Promise<DerivedGroup> {
+    const derived = await this.groupState.get(localId);
+    if (derived === null) throw new StateError('not_found', 'no such group');
+    return derived;
+  }
+
+  private stateOf(derived: DerivedGroup): GroupState {
+    if (derived.state === null)
+      throw new StateError('no_secret', 'this phone has no key for the group');
+    return derived.state;
+  }
+
+  private async secretOf(localId: string): Promise<Uint8Array> {
+    const secret = await this.secrets.getSecret(localId);
+    if (secret === null || deriveLocal(secret).localId !== localId) {
+      throw new StateError('no_secret', 'this phone has no key for the group');
+    }
+    return secret;
+  }
+
+  private async seedPrefs(name: string, emoji: string | undefined): Promise<void> {
+    if (this.prefs === null) return;
+    try {
+      await this.prefs.seedMe(name, emoji);
+    } catch (error) {
+      this.log(
+        'state: could not remember the default name',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  private async refreshNameCache(derived: DerivedGroup): Promise<void> {
+    const { state, row } = derived;
+    if (state === null || !state.created) return;
+    if (row.nameCache === state.name && row.currencyCache === state.currency) return;
+    await this.store.setNameCache(row.localId, { name: state.name, currency: state.currency });
+    this.groupState.invalidate(row.localId);
+    this.groupState.groupsChanged();
+  }
+
+  /** One task at a time per key; a failure does not block the next one. */
+  private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    const run = previous.then(fn, fn);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.locks.set(key, tail);
+    void tail.then(() => {
+      if (this.locks.get(key) === tail) this.locks.delete(key);
+    });
+    return run;
+  }
+
+  /** Events for `drafts`, in order, each with `ts = nextTs(now, log so far, target)`, validated by `parseEvent`. */
+  private buildEvents(
+    now: number,
+    log: readonly LogEntry[],
+    drafts: readonly Draft[],
+    by: string | null,
+  ): LogEntry[] {
+    const working: LogEntry[] = [...log];
+    const out: LogEntry[] = [];
+    for (const draft of drafts) {
+      const author = draft.by ?? by;
+      if (author === null)
+        throw new StateError('not_claimed', 'pick your name in this group first');
+      const provisional = {
+        sv: 1,
+        ts: now,
+        at: now,
+        by: author,
+        dev: this.deviceId,
+        ...draft.payload,
+      } as Event;
+      const target = entityIdOf(provisional) ?? undefined;
+      if (!canWrite(now, working, target)) {
+        throw new StateError('clock', "check your phone's date");
+      }
+      const event = parseEvent({ ...provisional, ts: nextTs(now, working, target) });
+      if (event === null) {
+        throw new StateError(
+          'invalid',
+          `this ${draft.payload.type} would not be valid on other phones`,
+        );
+      }
+      const entry: LogEntry = { id: newId(), event };
+      working.push(entry);
+      out.push(entry);
+    }
+    return out;
+  }
+
+  private sealRows(entries: readonly LogEntry[], key: Uint8Array, groupId: string): NewEventRow[] {
+    return entries.map(({ id, event }) => {
+      let envelope;
+      try {
+        envelope = seal({ key, groupId, body: event, id });
+      } catch (error) {
+        throw fromSealError(error);
+      }
+      return {
+        id,
+        origin: 'local',
+        acked: false,
+        seq: null,
+        ts: event.ts,
+        envelope: JSON.stringify(envelope),
+        status: 'ok',
+      };
+    });
+  }
+
+  private checkWritable(derived: DerivedGroup, allow: Allow): void {
+    switch (derived.readOnly) {
+      case null:
+        return;
+      case 'no_secret':
+        throw new StateError('no_secret', 'this phone has no key for the group');
+      case 'hidden':
+      case 'closed':
+        throw new StateError(
+          'read_only',
+          'this group was rotated; ask a member for the new invite',
+        );
+      case 'archived':
+        if (allow === 'normal') throw new StateError('read_only', 'this group is archived');
+        return;
+    }
+  }
+
+  /**
+   * The write path (see the header). `build` sees the current derived state and returns the events to write (none:
+   * nothing changes, though `afterInsert` still runs). Returns the written entries.
+   */
+  private append(
+    localId: string,
+    build: (context: WriteContext) => Draft[],
+    options: { allow?: Allow; afterInsert?: (tx: Store) => Promise<void> } = {},
+  ): Promise<LogEntry[]> {
+    return this.withLock(localId, async () => {
+      const derived = await this.requireDerived(localId);
+      const state = this.stateOf(derived);
+      const allow = options.allow ?? 'normal';
+      this.checkWritable(derived, allow);
+      // Every event but a join's own (a claim, a self-add) is signed by this device's member.
+      if (allow !== 'join' && derived.row.myMemberId === null) {
+        throw new StateError('not_claimed', 'pick your name in this group first');
+      }
+      const context: WriteContext = {
+        derived,
+        state,
+        row: derived.row,
+        me: derived.row.myMemberId,
+        currency: derived.currency,
+      };
+      const drafts = build(context);
+      const afterInsert = options.afterInsert;
+      if (drafts.length === 0) {
+        if (afterInsert !== undefined) {
+          await this.store.transaction((tx) => afterInsert(tx));
+          this.groupState.invalidate(localId);
+        }
+        return [];
+      }
+      const log = await this.groupState.entries(localId);
+      const entries = this.buildEvents(this.now(), log, drafts, context.me);
+      const secret = await this.secretOf(localId);
+      const key = deriveLocal(secret).encryptionKey;
+      await this.store.transaction(async (tx) => {
+        const row = await tx.getGroup(localId);
+        if (row === null) throw new StateError('not_found', 'no such group');
+        // Sealed for the server read in this transaction, so a move committing meanwhile cannot strand it.
+        const { groupId } = deriveServer(secret, row.serverUrl);
+        await tx.insertEvents(localId, this.sealRows(entries, key, groupId));
+        if (afterInsert !== undefined) await afterInsert(tx);
+      });
+      this.groupState.invalidate(localId);
+      this.engine.requestSync(localId);
+      return entries;
+    });
+  }
+}

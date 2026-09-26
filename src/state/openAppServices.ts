@@ -1,0 +1,60 @@
+/**
+ * The device wiring: expo-sqlite store, expo-secure-store secrets, `HttpTransport` per server origin, expo file
+ * sharing, and expo-notifications' permission. One instance per process (the background task, a later step, reuses
+ * it). Never imported by Node tests.
+ */
+import * as Notifications from 'expo-notifications';
+
+import { expoFileIO } from '../services/groupFile/expoFileIO';
+import { secrets } from '../services/secrets/secureStore';
+import { openStore } from '../services/storage/openStore';
+import { HttpTransport } from '../services/sync/httpTransport';
+import { createInfoCache } from '../services/sync/info';
+import type { NotificationPermission, NotificationStatus } from './prefs';
+import { createAppServices, type AppServices } from './services';
+
+function toStatus(response: { granted: boolean; status: string }): NotificationStatus {
+  if (response.granted) return 'granted';
+  return response.status === 'denied' ? 'denied' : 'undetermined';
+}
+
+const notifications: NotificationPermission = {
+  async status() {
+    return toStatus(await Notifications.getPermissionsAsync());
+  },
+  async request() {
+    return toStatus(await Notifications.requestPermissionsAsync());
+  },
+};
+
+let opened: Promise<AppServices> | null = null;
+
+/** Opens (once per process) the app's services. A failed open is not cached, so a later call can retry. */
+export function openAppServices(): Promise<AppServices> {
+  if (opened === null) {
+    const transports = new Map<string, HttpTransport>();
+    const transportFor = (serverUrl: string): HttpTransport => {
+      let transport = transports.get(serverUrl);
+      if (transport === undefined) {
+        transport = new HttpTransport(serverUrl);
+        transports.set(serverUrl, transport);
+      }
+      return transport;
+    };
+    const run = openStore().then((store) =>
+      createAppServices({
+        store,
+        secrets,
+        transportFor,
+        infoCache: createInfoCache(),
+        files: expoFileIO,
+        notifications,
+      }),
+    );
+    run.catch(() => {
+      opened = null;
+    });
+    opened = run;
+  }
+  return opened;
+}

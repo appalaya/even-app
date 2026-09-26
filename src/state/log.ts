@@ -1,0 +1,103 @@
+/**
+ * Small pure helpers over stored envelopes, shared by the derived state, the write path, rotation and recognition.
+ * Decrypted bodies only ever live in memory.
+ */
+import { isEnvelope, open, type Envelope, type LogEntry } from '@even/core';
+
+import type { EventStatus, ReadableStatus } from '../services/storage/types';
+
+/**
+ * Control events are about one group's place in the world (design.md "Rotation, moving, closing"). They are never
+ * carried from an old group into its rotated successor, neither by the rotator nor by a straggler's rescue.
+ */
+export const CONTROL_TYPES: ReadonlySet<string> = new Set([
+  'group.closed',
+  'group.rotated',
+  'group.moved',
+]);
+
+const READABLE: ReadonlySet<EventStatus> = new Set<EventStatus>([
+  'ok',
+  'invalid',
+  'unsupported_body',
+]);
+
+/** Statuses whose envelope this client opened and can re-encrypt. */
+export function isReadable(status: EventStatus): status is ReadableStatus {
+  return READABLE.has(status);
+}
+
+/** The stored envelope text as a strict v1 envelope, or null. Never throws. */
+export function parseEnvelopeText(text: string): Envelope | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  return isEnvelope(value) ? { id: value.id, v: value.v, n: value.n, c: value.c } : null;
+}
+
+/** The `type` field of an opened body, if it has one. */
+export function typeOf(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+  const type = (body as Record<string, unknown>).type;
+  return typeof type === 'string' ? type : null;
+}
+
+/** Expense and payment events: the ones whose loss makes balances incomplete. */
+export function isMoneyType(type: string | null): boolean {
+  return type !== null && (type.startsWith('expense.') || type.startsWith('payment.'));
+}
+
+/** Opens an envelope and returns its body's `type`, or null when it cannot be opened or has none. */
+export function openType(key: Uint8Array, groupId: string, envelope: Envelope): string | null {
+  try {
+    return typeOf(open({ key, groupId, envelope }));
+  } catch {
+    return null;
+  }
+}
+
+/** Plain UTF-16 code-unit comparison, as the reducer orders ids. */
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** The earliest entry by (ts, id) matching `predicate`, the one the reducer applies first. */
+export function firstEntry(
+  entries: readonly LogEntry[],
+  predicate: (entry: LogEntry) => boolean,
+): LogEntry | null {
+  let best: LogEntry | null = null;
+  for (const entry of entries) {
+    if (!predicate(entry)) continue;
+    if (
+      best === null ||
+      entry.event.ts < best.event.ts ||
+      (entry.event.ts === best.event.ts && compareIds(entry.id, best.id) < 0)
+    ) {
+      best = entry;
+    }
+  }
+  return best;
+}
+
+/** The latest entry by (ts, id) matching `predicate`. */
+export function lastEntry(
+  entries: readonly LogEntry[],
+  predicate: (entry: LogEntry) => boolean,
+): LogEntry | null {
+  let best: LogEntry | null = null;
+  for (const entry of entries) {
+    if (!predicate(entry)) continue;
+    if (
+      best === null ||
+      entry.event.ts > best.event.ts ||
+      (entry.event.ts === best.event.ts && compareIds(entry.id, best.id) > 0)
+    ) {
+      best = entry;
+    }
+  }
+  return best;
+}
