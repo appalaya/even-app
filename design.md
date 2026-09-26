@@ -229,6 +229,9 @@ display. It passes the exponent explicitly as `minimumFractionDigits` and
 `maximumFractionDigits` to `Intl.NumberFormat`, because the CLDR data behind
 `Intl` disagrees with ISO for several currencies and varies by OS version;
 two phones must never read the same integer as amounts 100× apart.
+`formatMinor` takes a `display` option (`narrowSymbol`, `symbol`, `code` or
+`none`) and defaults to `narrowSymbol`, so CAD reads "$36.00", not
+"CA$36.00", and the screen shows the "CAD" label once.
 
 **Splits are stored resolved.** The UI offers equal / exact / percent, but the
 event carries the final minor units per member. Changing the rule later never

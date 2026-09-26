@@ -37,4 +37,7 @@ Android build before relying on them:
   units). If it is missing, `formatMinor` falls back to the nearest double (off by at most one minor unit, only above
   10¹⁵). Also check that `formatMinor(150, 'CAD')`, `formatMinor(1234, 'KWD')` and `formatMinor(-5, 'JPY')` render
   with the ISO exponent in the device locale, since the fraction digits come from `Intl`.
+- **`currencyDisplay: 'narrowSymbol'`** (`money.ts`, `formatMinor`'s default display). An engine that rejects it gets
+  the full symbol instead ("CA$1.50" where "$1.50" was meant); check that `formatMinor(150, 'CAD', 'en-US')` reads
+  "$1.50" on device.
 

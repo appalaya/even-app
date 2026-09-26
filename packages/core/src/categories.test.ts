@@ -28,7 +28,7 @@ describe('CATEGORY_EMOJI / CATEGORY_LABEL', () => {
 
   it('uses the English labels', () => {
     expect(CATEGORIES.map((c) => CATEGORY_LABEL[c])).toEqual([
-      'Food', 'Groceries', 'Drinks', 'Coffee', 'Lodging', 'Flights', 'Transit', 'Fuel', 'Parking', 'Rental car',
+      'Food', 'Groceries', 'Drinks', 'Coffee', 'Lodging', 'Flights', 'Transit', 'Fuel', 'Parking', 'Rental',
       'Activities', 'Shopping', 'Fees', 'Health', 'Gifts', 'Other',
     ]);
   });

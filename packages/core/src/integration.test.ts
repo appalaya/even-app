@@ -499,8 +499,8 @@ describe('integration: determinism', () => {
 // ---------- the Banff walkthrough, end to end ----------
 
 describe('integration: Banff walkthrough with formatMinor bound to CAD', () => {
-  it('formats CAD with the ISO exponent', () => {
-    expect(cad(9000).replace(/\s/g, ' ')).toMatch(/^CA\$ ?90\.00$/);
+  it('formats CAD with the ISO exponent and the narrow symbol', () => {
+    expect(cad(9000).replace(/\s/g, ' ')).toBe('$90.00');
   });
 
   it('before the payment: Nathan owes Maya 44.00 and Jordan 8.00', () => {
@@ -541,7 +541,7 @@ describe('integration: Banff walkthrough with formatMinor bound to CAD', () => {
       `Maya changed Dinner from ${cad(9000)} to ${cad(9600)}`,
       `Nathan paid Jordan ${cad(800)}`,
     ]);
-    expect(s.activity.at(-1)?.summary.replace(/\s/g, ' ')).toMatch(/^Nathan paid Jordan CA\$ ?8\.00$/);
+    expect(s.activity.at(-1)?.summary.replace(/\s/g, ' ')).toBe('Nathan paid Jordan $8.00');
     // The activity item carries the envelope id, device and wall clock the feed shows.
     expect(s.activity.at(-1)).toMatchObject({ eventId: g.envelopes.at(-1)?.id, dev: DEV_NATHAN, by: NATHAN });
   });

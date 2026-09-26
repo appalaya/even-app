@@ -33,7 +33,7 @@ export const CATEGORY_LABEL: Readonly<Record<Category, string>> = Object.freeze(
   transit: 'Transit',
   fuel: 'Fuel',
   parking: 'Parking',
-  rental: 'Rental car',
+  rental: 'Rental',
   activities: 'Activities',
   shopping: 'Shopping',
   fees: 'Fees',

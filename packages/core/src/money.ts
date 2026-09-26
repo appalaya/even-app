@@ -2,7 +2,9 @@
  * Money in integer minor units. Frozen ISO 4217 exponent table; BigInt split math.
  *
  * This module is the only place that converts between minor units and display (design.md, "Minor units, not
- * cents"). Everything below the formatting layer is an integer number of minor units.
+ * cents"). Everything below the formatting layer is an integer number of minor units. formatMinor shows the
+ * currency's narrow symbol by default ("$36.00" for CAD, not "CA$36.00"), because the UI labels the currency code
+ * once per screen; `display` asks for Intl's full symbol, the ISO code, or no symbol at all.
  *
  * Splits (design.md, "Rounding"): splitWeighted is the UI's Equal mode, with an optional per-member multiplier and
  * extra amount (Splitwise's shares and adjustments); splitEqual is its all-ones case; splitByBasisPoints is Percent.
@@ -72,18 +74,41 @@ export function exponentOf(code: string): number {
 
 // ---------- Formatting ----------
 
+/**
+ * How formatMinor shows the currency: Intl's `currencyDisplay` values, plus `'none'` for the bare number.
+ * - `'narrowSymbol'` (default): "$36.00" for CAD in en-US.
+ * - `'symbol'`: Intl's disambiguating symbol, "CA$36.00".
+ * - `'code'`: "CAD 36.00".
+ * - `'none'`: "36.00", locale grouping and decimal separator, ISO fraction digits, no currency at all.
+ */
+export type CurrencyDisplay = 'narrowSymbol' | 'symbol' | 'code' | 'none';
+
+export interface FormatMinorOptions {
+  display?: CurrencyDisplay;
+}
+
+const DISPLAYS: ReadonlySet<string> = new Set<CurrencyDisplay>(['narrowSymbol', 'symbol', 'code', 'none']);
+
 const formatters = new Map<string, Intl.NumberFormat>();
 
-function formatterFor(currency: string, exp: number, locale: string | undefined): Intl.NumberFormat {
-  const key = `${locale ?? ''}|${currency}`;
+function createFormatter(currency: string, exp: number, locale: string | undefined, display: CurrencyDisplay): Intl.NumberFormat {
+  const digits = { minimumFractionDigits: exp, maximumFractionDigits: exp };
+  if (display === 'none') return new Intl.NumberFormat(locale, { style: 'decimal', ...digits });
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: display, ...digits });
+  } catch (err) {
+    // Engines predating ES2020's 'narrowSymbol' reject it with a RangeError; the full symbol is the nearest thing.
+    // A malformed locale throws again here, from the retry.
+    if (display !== 'narrowSymbol' || !(err instanceof RangeError)) throw err;
+    return new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: 'symbol', ...digits });
+  }
+}
+
+function formatterFor(currency: string, exp: number, locale: string | undefined, display: CurrencyDisplay): Intl.NumberFormat {
+  const key = `${locale ?? ''}|${currency}|${display}`;
   let nf = formatters.get(key);
   if (nf === undefined) {
-    nf = new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: exp,
-      maximumFractionDigits: exp,
-    });
+    nf = createFormatter(currency, exp, locale, display);
     formatters.set(key, nf);
   }
   return nf;
@@ -95,6 +120,9 @@ const EXACT_VIA_NUMBER = 1_000_000_000_000_000n;
 /**
  * Intl.NumberFormat with the ISO exponent passed explicitly as min/max fraction digits.
  *
+ * `options.display` (default `'narrowSymbol'`) picks how the currency shows; see CurrencyDisplay. The exponent,
+ * grouping, sign and exactness below are the same in every mode.
+ *
  * Exactness: the decimal is built from the integer with BigInt and string ops — no floating division.
  * - |amount| < 10^15 (every amount within LIMITS, and any realistic balance): the decimal string has ≤ 15
  *   significant digits, so `Number(decimalString)` is the nearest double and Intl, rounding to `exp` fraction
@@ -104,12 +132,15 @@ const EXACT_VIA_NUMBER = 1_000_000_000_000_000n;
  *   `0.<minor digits>` for the fraction digits in the locale's own numbering system. If the engine lacks
  *   `formatToParts`, falls back to the nearest double (off by at most one minor unit, only above 10^15).
  *
- * Throws RangeError on a non-safe-integer amount or unknown currency; Intl throws RangeError on a malformed locale.
+ * Throws RangeError on a non-safe-integer amount, unknown currency or unknown display; Intl throws RangeError on a
+ * malformed locale.
  */
-export function formatMinor(amount: number, currency: string, locale?: string): string {
+export function formatMinor(amount: number, currency: string, locale?: string, options?: FormatMinorOptions): string {
   if (!Number.isSafeInteger(amount)) throw new RangeError(`formatMinor: amount must be a safe integer, got ${amount}`);
   const exp = exponentOf(currency);
-  const nf = formatterFor(currency, exp, locale);
+  const display = options?.display ?? 'narrowSymbol';
+  if (!DISPLAYS.has(display)) throw new RangeError(`formatMinor: unknown display ${String(display)}`);
+  const nf = formatterFor(currency, exp, locale, display);
   if (exp === 0) return nf.format(amount === 0 ? 0 : amount); // normalise -0
 
   const negative = amount < 0;

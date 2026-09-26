@@ -6,6 +6,7 @@ import {
   exponentOf,
   formatMinor,
   isCurrency,
+  type CurrencyDisplay,
   isValidSplit,
   minorToDecimal,
   splitByBasisPoints,
@@ -29,13 +30,16 @@ function fnvRef(s: string): number {
 }
 
 /** Exact reference: Node's Intl accepts a decimal string and formats it without going through a double. */
-function refFormat(amount: number, currency: string, locale: string): string {
+function refFormat(amount: number, currency: string, locale: string, display: CurrencyDisplay = 'narrowSymbol'): string {
   const exp = CURRENCY_EXPONENTS[currency] ?? 0;
   const neg = amount < 0;
   const abs = BigInt(Math.abs(amount));
   const scale = 10n ** BigInt(exp);
   const dec = exp === 0 ? abs.toString() : `${abs / scale}.${(abs % scale).toString().padStart(exp, '0')}`;
-  const nf = new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: exp, maximumFractionDigits: exp });
+  const digits = { minimumFractionDigits: exp, maximumFractionDigits: exp };
+  const nf = display === 'none'
+    ? new Intl.NumberFormat(locale, { style: 'decimal', ...digits })
+    : new Intl.NumberFormat(locale, { style: 'currency', currency, currencyDisplay: display, ...digits });
   return nf.format(`${neg ? '-' : ''}${dec}` as unknown as number);
 }
 
@@ -93,11 +97,15 @@ describe('isCurrency / exponentOf', () => {
 describe('formatMinor', () => {
   it('formats 10^12 minor units of USD exactly', () => {
     expect(formatMinor(1_000_000_000_000, 'USD', 'en-US')).toBe('$10,000,000,000.00');
+    expect(formatMinor(1_000_000_000_000, 'USD', 'en-US', { display: 'narrowSymbol' })).toBe('$10,000,000,000.00');
+    expect(formatMinor(1_000_000_000_000, 'USD', 'en-US', { display: 'none' })).toBe('10,000,000,000.00');
+    expect(norm(formatMinor(1_000_000_000_000, 'CAD', 'en-US', { display: 'narrowSymbol' }))).toBe('$10,000,000,000.00');
+    expect(norm(formatMinor(1_000_000_000_000, 'CAD', 'de-DE', { display: 'none' }))).toBe('10.000.000.000,00');
   });
 
   it('USD / CAD / JPY / KWD / EUR in en-US', () => {
     expect(formatMinor(123456, 'USD', 'en-US')).toBe('$1,234.56');
-    expect(norm(formatMinor(150, 'CAD', 'en-US'))).toMatch(/^CA\$ ?1\.50$/);
+    expect(norm(formatMinor(150, 'CAD', 'en-US'))).toBe('$1.50');
     expect(formatMinor(1234567, 'JPY', 'en-US')).toBe('¥1,234,567');
     expect(norm(formatMinor(1234, 'KWD', 'en-US'))).toMatch(/^KWD 1\.234$/);
     expect(formatMinor(123456, 'EUR', 'en-US')).toBe('€1,234.56');
@@ -116,6 +124,73 @@ describe('formatMinor', () => {
       expect(out.startsWith(`${digits} `)).toBe(true);
     }
     expect(norm(formatMinor(123456, 'EUR', 'de-DE'))).toBe('1.234,56 €');
+  });
+
+  it('shows the currency per display mode: USD / CAD / JPY / KWD / EUR in en-US, en-CA, de-DE', () => {
+    const amounts: Array<[number, string]> = [[123456, 'USD'], [150, 'CAD'], [1234567, 'JPY'], [1234, 'KWD'], [123456, 'EUR']];
+    const expected: Record<string, Record<CurrencyDisplay, string[]>> = {
+      'en-US': {
+        narrowSymbol: ['$1,234.56', '$1.50', '¥1,234,567', 'KWD 1.234', '€1,234.56'],
+        symbol: ['$1,234.56', 'CA$1.50', '¥1,234,567', 'KWD 1.234', '€1,234.56'],
+        code: ['USD 1,234.56', 'CAD 1.50', 'JPY 1,234,567', 'KWD 1.234', 'EUR 1,234.56'],
+        none: ['1,234.56', '1.50', '1,234,567', '1.234', '1,234.56'],
+      },
+      'en-CA': {
+        narrowSymbol: ['$1,234.56', '$1.50', '¥1,234,567', 'KWD 1.234', '€1,234.56'],
+        symbol: ['US$1,234.56', '$1.50', 'JP¥1,234,567', 'KWD 1.234', '€1,234.56'],
+        code: ['USD 1,234.56', 'CAD 1.50', 'JPY 1,234,567', 'KWD 1.234', 'EUR 1,234.56'],
+        none: ['1,234.56', '1.50', '1,234,567', '1.234', '1,234.56'],
+      },
+      'de-DE': {
+        narrowSymbol: ['1.234,56 $', '1,50 $', '1.234.567 ¥', '1,234 KWD', '1.234,56 €'],
+        symbol: ['1.234,56 $', '1,50 CA$', '1.234.567 ¥', '1,234 KWD', '1.234,56 €'],
+        code: ['1.234,56 USD', '1,50 CAD', '1.234.567 JPY', '1,234 KWD', '1.234,56 EUR'],
+        none: ['1.234,56', '1,50', '1.234.567', '1,234', '1.234,56'],
+      },
+    };
+    for (const [locale, byDisplay] of Object.entries(expected)) {
+      for (const [display, outs] of Object.entries(byDisplay) as Array<[CurrencyDisplay, string[]]>) {
+        const got = amounts.map(([amount, cur]) => norm(formatMinor(amount, cur, locale, { display })));
+        expect([locale, display, got]).toEqual([locale, display, outs]);
+      }
+      // The default is narrowSymbol.
+      const byDefault = amounts.map(([amount, cur]) => norm(formatMinor(amount, cur, locale)));
+      expect(byDefault).toEqual(byDisplay.narrowSymbol);
+      expect(amounts.map(([amount, cur]) => norm(formatMinor(amount, cur, locale, {})))).toEqual(byDisplay.narrowSymbol);
+    }
+  });
+
+  it('keeps the sign and the exact large-amount path in every display mode', () => {
+    expect(formatMinor(-123456, 'CAD', 'en-US', { display: 'none' })).toBe('-1,234.56');
+    expect(norm(formatMinor(-150, 'CAD', 'de-DE', { display: 'code' }))).toBe('-1,50 CAD');
+    expect(formatMinor(-0, 'JPY', 'en-US', { display: 'none' })).toBe('0');
+    expect(formatMinor(Number.MAX_SAFE_INTEGER, 'USD', 'en-US', { display: 'none' })).toBe('90,071,992,547,409.91');
+    expect(formatMinor(-Number.MAX_SAFE_INTEGER, 'CAD', 'en-US', { display: 'none' })).toBe('-90,071,992,547,409.91');
+    expect(norm(formatMinor(-Number.MAX_SAFE_INTEGER, 'CAD', 'en-US', { display: 'code' }))).toBe('-CAD 90,071,992,547,409.91');
+    expect(formatMinor(Number.MAX_SAFE_INTEGER, 'CAD', 'en-US', { display: 'symbol' })).toBe('CA$90,071,992,547,409.91');
+    expect(norm(formatMinor(1_234_567_890_123_457, 'KWD', 'de-DE', { display: 'none' }))).toBe('1.234.567.890.123,457');
+  });
+
+  it('throws RangeError on an unknown display', () => {
+    const bad = [{ display: 'name' }, { display: 'NONE' }, { display: '' }] as unknown as Array<{ display: CurrencyDisplay }>;
+    for (const options of bad) expect(() => formatMinor(100, 'USD', 'en-US', options)).toThrow(RangeError);
+  });
+
+  it('falls back to the full symbol on an engine without narrowSymbol', () => {
+    const holder = Intl as unknown as { NumberFormat: typeof Intl.NumberFormat };
+    const Original = holder.NumberFormat;
+    const Strict = function (locale?: string, opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
+      if (opts?.currencyDisplay === 'narrowSymbol') throw new RangeError('narrowSymbol is not supported');
+      return new Original(locale, opts);
+    } as unknown as typeof Intl.NumberFormat;
+    holder.NumberFormat = Strict;
+    try {
+      // A locale / currency pair no other test formats, so the formatter cache holds nothing for it yet.
+      expect(norm(formatMinor(150, 'NZD', 'en-AU'))).toBe(norm(refFormat(150, 'NZD', 'en-AU', 'symbol')));
+      expect(() => formatMinor(150, 'NZD', 'not a locale!')).toThrow(RangeError);
+    } finally {
+      holder.NumberFormat = Original;
+    }
   });
 
   it('uses the ISO exponent even where CLDR disagrees', () => {
@@ -154,19 +229,22 @@ describe('formatMinor', () => {
     expect(hi).not.toMatch(/[0-9]/);
   });
 
-  it('matches an exact decimal-string reference for any safe integer (property)', () => {
-    const currencies = ['USD', 'JPY', 'KWD', 'CLF', 'EUR'];
-    const locales = ['en-US', 'de-DE', 'fr-CH', 'ar-EG', 'ja-JP'];
+  it('matches an exact decimal-string reference for any safe integer, in every display mode (property)', () => {
+    const currencies = ['USD', 'CAD', 'JPY', 'KWD', 'CLF', 'EUR'];
+    const locales = ['en-US', 'en-CA', 'de-DE', 'fr-CH', 'ar-EG', 'ja-JP'];
+    const displays: CurrencyDisplay[] = ['narrowSymbol', 'symbol', 'code', 'none'];
     fc.assert(
       fc.property(
         fc.oneof(fc.integer({ min: -LIMITS.amountMax, max: LIMITS.amountMax }), fc.maxSafeInteger(), fc.integer({ min: -1000, max: 1000 })),
         fc.constantFrom(...currencies),
         fc.constantFrom(...locales),
-        (amount, currency, locale) => {
-          expect(formatMinor(amount, currency, locale)).toBe(refFormat(amount, currency, locale));
+        fc.constantFrom(...displays),
+        (amount, currency, locale, display) => {
+          expect(formatMinor(amount, currency, locale, { display })).toBe(refFormat(amount, currency, locale, display));
+          if (display === 'narrowSymbol') expect(formatMinor(amount, currency, locale)).toBe(refFormat(amount, currency, locale));
         },
       ),
-      { numRuns: 500 },
+      { numRuns: 1000 },
     );
   });
 
@@ -192,7 +270,10 @@ describe('formatMinor', () => {
 
   it('uses the default locale when none is given', () => {
     expect(formatMinor(123456, 'USD')).toBe(new Intl.NumberFormat(undefined, {
-      style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2,
+      style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).format(1234.56));
+    expect(formatMinor(123456, 'CAD', undefined, { display: 'none' })).toBe(new Intl.NumberFormat(undefined, {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).format(1234.56));
   });
 });
