@@ -85,9 +85,23 @@ export type ProtocolErrorCode =
  * Everything a sync can fail with. Beyond the protocol names:
  * - `epoch_unstable`: the epoch changed twice in one cycle; the group stops (the epoch rule).
  * - `network`: no HTTP response at all (offline, DNS, TLS, timeout). Transient, like 5xx.
+ * - `not_an_even_server`: a `404`/`405` on a documented route, or a `200` whose body is not the documented
+ *   shape (PROTOCOL.md §10). The transport reports this instead of `not_found` / `method_not_allowed`, which
+ *   therefore never reach the engine. UI: "That URL isn't an Even server. Check the address."
+ * - `no_secret`: this phone has the group's row but no secret for it (or one that derives another local id),
+ *   e.g. an Android restore (design.md "Keys"). Nothing can be decrypted or authenticated; the engine does not
+ *   retry on its own. Recovery is a re-shared invite or the group file.
+ * - `local_error`: the cycle stopped on a local failure (storage, a bug), not a server answer. Logged; retried
+ *   with backoff.
  * This is what `groups.last_sync_error` holds.
  */
-export type SyncErrorCode = ProtocolErrorCode | 'epoch_unstable' | 'network';
+export type SyncErrorCode =
+  | ProtocolErrorCode
+  | 'epoch_unstable'
+  | 'network'
+  | 'not_an_even_server'
+  | 'no_secret'
+  | 'local_error';
 
 /** What a `Transport` rejects with, and what the engine records. */
 export interface SyncError extends Error {
