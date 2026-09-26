@@ -180,6 +180,25 @@ describe('nets', () => {
     }
     expect(() => nets(s)).toThrow(RangeError);
   });
+
+  it('accumulates in BigInt: an intermediate total beyond 2^53 is fine when every final net is safe', () => {
+    const s = emptyState();
+    const [a, b] = [pad('a'), pad('b')];
+    for (const id of [a, b]) {
+      s.members.set(id, { id, name: id, archived: false, devices: [], unknown: false, color: memberColor(id), initials: 'A' });
+    }
+    const big = Number.MAX_SAFE_INTEGER;
+    for (const id of [pad('e1'), pad('e2')]) {
+      const e = expense(id, { currency: '', amount: big, paidBy: a, split: { [b]: big } });
+      s.expenses.set(id, { ...e, addedBy: a, addedAt: T0, updatedAt: T0, history: [] });
+    }
+    // a is at 2·MAX_SAFE after the expenses (the old Number accumulator threw here); b pays a back one MAX_SAFE.
+    s.payments.set(pad('p'), { id: pad('p'), from: b, to: a, amount: big, currency: '', date: '2026-02-16', addedBy: b, addedAt: T0 });
+    expect([...nets(s)]).toEqual([
+      [a, big],
+      [b, -big],
+    ]);
+  });
 });
 
 describe('simplify', () => {

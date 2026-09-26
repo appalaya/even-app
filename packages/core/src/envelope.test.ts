@@ -3,7 +3,7 @@ import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './constants.js';
 import { b64urlDecode, b64urlEncode, utf8Encode } from './encoding.js';
-import { aadFor, EnvelopeError, envelopeStoredSize, isEnvelope, open, pad, seal, unpad } from './envelope.js';
+import { aadFor, EnvelopeError, envelopeShape, envelopeStoredSize, isEnvelope, open, pad, seal, unpad } from './envelope.js';
 import type { EnvelopeErrorCode } from './envelope.js';
 import { newId, randomBytes } from './ids.js';
 import { deriveLocal, deriveServer } from './keys.js';
@@ -249,11 +249,19 @@ describe('open', () => {
       expectCode(() => open({ key: randomBytes(32), groupId: GROUP, envelope: env }), 'undecryptable');
     });
 
-    it('v relabelled to another integer -> unsupported_envelope, before any decryption', () => {
-      for (const v of [0, 2, 99]) {
+    it('v relabelled to another positive integer -> unsupported_envelope, before any decryption', () => {
+      for (const v of [2, 99]) {
         const relabelled = { ...env, v } as unknown as Envelope;
         // Even with the wrong key: the version check happens first.
         expectCode(() => open({ key: randomBytes(32), groupId: GROUP, envelope: relabelled }), 'unsupported_envelope');
+      }
+    });
+
+    // Changed in the integration review: v = 0 used to be unsupported_envelope. `open` now shares envelopeShape with
+    // the sync engine, whose rule is "any positive integer v"; no envelope version is ≤ 0, so such a v is malformed.
+    it('v relabelled to 0 or a negative integer -> malformed', () => {
+      for (const v of [0, -1]) {
+        expectCode(() => open({ key: KEY, groupId: GROUP, envelope: { ...env, v } as unknown as Envelope }), 'malformed');
       }
     });
   });
@@ -365,6 +373,48 @@ describe('isEnvelope', () => {
   it('accepts a null-prototype object with the right fields (e.g. from a JSON reviver)', () => {
     const bare = Object.assign(Object.create(null) as object, real);
     expect(isEnvelope(bare)).toBe(true);
+  });
+});
+
+describe('envelopeShape', () => {
+  const real = seal({ key: KEY, groupId: GROUP, body: BODY });
+
+  it('accepts a v1 envelope and reports its version', () => {
+    expect(envelopeShape(real)).toEqual({ ok: true, v: 1 });
+    expect(envelopeShape(VECTOR)).toEqual({ ok: true, v: 1 });
+  });
+
+  it('accepts any positive integer v, so the sync engine can keep unknown versions (PROTOCOL §10)', () => {
+    for (const v of [2, 3, 99, Number.MAX_SAFE_INTEGER]) {
+      expect(envelopeShape({ ...real, v })).toEqual({ ok: true, v });
+      expect(isEnvelope({ ...real, v })).toBe(false); // isEnvelope stays strict for v = 1
+    }
+  });
+
+  it('rejects a v that is not a positive safe integer', () => {
+    for (const v of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, '1', null, undefined, true]) {
+      expect(envelopeShape({ ...real, v })).toEqual({ ok: false });
+    }
+  });
+
+  it('applies the same structural rules as isEnvelope, whatever the version', () => {
+    const { id, n, c } = real;
+    for (const v of [1, 2]) {
+      expect(envelopeShape({ id, v, n, c, seq: 1 })).toEqual({ ok: false });
+      expect(envelopeShape({ id: id.slice(1), v, n, c })).toEqual({ ok: false });
+      expect(envelopeShape({ id, v, n: n.slice(1), c })).toEqual({ ok: false });
+      expect(envelopeShape({ id, v, n, c: b64urlEncode(new Uint8Array(16)) })).toEqual({ ok: false });
+      expect(envelopeShape({ id, v, n, c: b64urlEncode(new Uint8Array(8193)) })).toEqual({ ok: false });
+      expect(envelopeShape({ id, v, n, c: b64urlEncode(new Uint8Array(17)) })).toEqual({ ok: true, v });
+    }
+  });
+
+  it('never throws on weird input', () => {
+    const hostile = new Proxy({}, { ownKeys: () => { throw new Error('boom'); } });
+    const getterThrows = { id: real.id, n: real.n, c: real.c, get v(): number { throw new Error('boom'); } };
+    for (const value of [null, undefined, 0, 'x', [], () => real, Symbol('x'), new Map(), hostile, getterThrows]) {
+      expect(envelopeShape(value)).toEqual({ ok: false });
+    }
   });
 });
 

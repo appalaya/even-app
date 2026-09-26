@@ -57,7 +57,7 @@ export interface EventBase {
 }
 
 export type EventPayload =
-  | { type: 'group.created'; name: string; currency: string }
+  | { type: 'group.created'; name: string; currency: string }        // name: 1..LIMITS.groupNameMax, trimmed
   | { type: 'group.renamed'; name: string }
   | { type: 'group.closed'; reason: 'rotated'; to?: string }         // written into the OLD group; `to` = new localId
   | { type: 'group.rotated'; from: string }                          // written into the NEW group; `from` = old localId
@@ -124,9 +124,9 @@ export interface HistoryEntry {
   at: number;
   by: string;
   dev: string;
-  kind: 'added' | 'updated' | 'deleted';
+  kind: 'added' | 'updated' | 'deleted';   // 'deleted' is the last entry of an expense in GroupState.deletedExpenses
   changes?: ExpenseChanges;   // for 'updated'
-  snapshot: Expense;          // the expense as it stood AFTER this entry was applied
+  snapshot: Expense;          // the expense as it stood AFTER this entry was applied (for 'deleted': as it stood when deleted)
 }
 
 export interface ExpenseState extends Expense {
@@ -168,6 +168,7 @@ export interface GroupState {
   movedTo: string | null;                 // server from the latest group.moved, or null
   members: Map<string, MemberState>;
   expenses: Map<string, ExpenseState>;    // live (non-deleted) expenses only
+  deletedExpenses: Map<string, ExpenseState>; // tombstoned expenses, history ending in a 'deleted' entry; never in balances or totals
   payments: Map<string, PaymentState>;    // live only
   activity: ActivityItem[];               // every applied event, in (ts, id) order
   totalsByCategory: Map<Category, number>; // over non-flagged live expenses

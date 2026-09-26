@@ -34,7 +34,7 @@ including the parts the server never sees.
 │   derived state = reduce(decrypt(envelopes)), memoised│
 ├──────────────────────────────────────────────────────┤
 │                     packages/core                     │
-│  events · validate · reduce · balances · simplify     │
+│  events · schema · reduce · balances · simplify       │
 │  keys · envelope (seal/open) · invite · hlc · money   │
 ├───────────────────────┬──────────────────────────────┤
 │   SQLite (envelopes,  │   Sync engine                │
@@ -147,8 +147,8 @@ Common fields on every event:
 
 | `type` | Payload | Notes |
 |---|---|---|
-| `group.created` | `{ name, currency }` | The one with the smallest `(ts, id)` wins; others are ignored. `currency` is an ISO 4217 code and is immutable for the life of the group. |
-| `group.renamed` | `{ name }` | |
+| `group.created` | `{ name, currency }` | The one with the smallest `(ts, id)` wins; others are ignored. `name` is 1..80 characters (`LIMITS.groupNameMax`). `currency` is an ISO 4217 code and is immutable for the life of the group. |
+| `group.renamed` | `{ name }` | `name` as in `group.created`. |
 | `group.closed` | `{ reason: 'rotated', to?: localId }` | Written into the **old** group by whoever rotates. Reducer marks the group read-only with "ask a member for the new invite." |
 | `group.rotated` | `{ from: localId }` | Written into the **new** group by whoever rotates. Any such event, not necessarily the first, links the groups. |
 | `group.moved` | `{ server: string }` | Written into the group before the writer switches servers. Receivers are offered "follow to <host>". |
@@ -282,28 +282,43 @@ use integer basis points and `floor(amount × bp / 10000)`, computed in
 `BigInt` because `amount` may reach 10¹² and the product exceeds 2⁵³. In both
 cases the remaining units are distributed one each, starting at an index
 derived from a hash of the expense id and proceeding in member-id order, so
-the leftover unit does not always land on the same person. `core` has a
+the leftover unit does not always land on the same person. For percent splits
+the remainder goes only to members with bp > 0 (the start index is taken over
+that subset), so a member at 0% never owes a unit. `core` has a
 property test: for any amount and any member set, splits sum to the amount.
-Before sealing, the client checks the padded body fits the event size limit;
-with members capped at 50, an expense never exceeds it, and the UI refuses a
-note that would.
+Before sealing, the client checks the padded body fits the event size limit
+(`pad` throws `too_large`). With members capped at 50, an expense never
+exceeds it: the largest valid `expense.added` (80-character title and
+500-character note of characters JSON escapes to 6 bytes each, 50 members,
+maximum amount and timestamps) is 5,656 bytes of the 8,175 allowed, sealing to
+5,888; `core/integration.test.ts` pins this.
 
 ### Validation
 
-`core/validate.ts` exports `parseEvent(json: unknown): Event | null` built on
-Zod. It enforces every bound above plus:
+`core/schema.ts` exports `parseEvent(json: unknown): Event | null` built on
+Zod. It never throws. It enforces every bound above plus:
 
 - `by`, `dev`, member ids, expense ids, and payment ids are 22-char base64url.
 - `ts` and `at` are integers in the absolute range `[1_704_067_200_000, 4_102_444_800_000)`
   (2024-01-01 to 2100-01-01). Never relative to "now", so a valid event can
   never become invalid later.
-- `split` is non-empty, every value ≥ 0, values sum to `amount`.
+- Group names (`group.created`, `group.renamed`) are 1..80 code points
+  (`LIMITS.groupNameMax`), member names 1..40 (`LIMITS.nameMax`); both
+  without leading or trailing whitespace. The invite's `g` shares the 80
+  bound: `makeInvite` enforces the group-name rule, `decodeInvite` accepts any
+  string up to 80 code points, since `g` is display-only and must never make a
+  valid secret unusable.
+- `split` is non-empty, every value ≥ 0, values sum to `amount`. A value of
+  `-0` (the JSON text `-0`) is normalised to `0`.
 - `changes` is non-empty, contains both `amount` and `split` or neither, and
   if both, the sum rule holds. `changes` is strict: `id`, `currency`, or any
   key that is not an `Expense` field rejects the event.
 - `from ≠ to` on payments.
 - `emoji`, when present, is a single grapheme cluster of emoji code points.
-- `group.moved.server` is a canonical `https` origin (protocol §8.1).
+- `group.moved.server` is a canonical `https` origin (protocol §8.1), meaning
+  exactly `canonicalOrigin(server) === server` with `core/keys.ts`'s
+  canonicaliser, the same function invites and `deriveServer` use, so the
+  three can never disagree about what a server is.
 - Unknown `type` → null. Unknown `sv` → null. Unknown **fields** on a known
   `sv` in `expense.added`, `payment.added`, and group/member events are
   stripped, not rejected, so additive changes do not orphan old clients.
@@ -341,7 +356,12 @@ into the group clock.
 
 If the device clock is outside the validator's absolute range, the app
 refuses to write and shows a "check your phone's date" message rather than
-producing events that fail validation everywhere.
+producing events that fail validation everywhere. The same applies when the
+computed `ts` would reach the top of the range: an entity whose latest event
+sits at `tsMax − 1` (only a far-future clock can put it there) cannot be
+edited, because its edit would need `ts = tsMax`. Every write is therefore
+gated on `canWrite(nowMs, log, targetId?)` from `core/hlc.ts`, which is
+`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`.
 
 `at` is the plain wall clock and is what the activity feed shows. `ts` is
 never displayed.
@@ -355,23 +375,33 @@ Server `seq` is never used for ordering state. It is only a sync cursor.
 
 ### Reducer
 
-`core/reduce.ts` exports `reduce(events: Event[]): GroupState`. It sorts by
-`(ts, id)` and folds:
+`core/reduce.ts` exports `reduce(log: LogEntry[], options?): GroupState`,
+where each `LogEntry` is `{ id: envelopeId, event }`. It sorts by `(ts, id)`,
+replays each envelope id once, and folds:
 
 - `expense.updated` applies each field only if the event's `(ts, id)` is newer
   than the last write to that field; `amount`+`split` is one field.
   `expense.deleted` sets a tombstone that subsequent updates cannot clear.
 - An expense or payment whose currency differs from the group's, or whose
-  split does not sum to its amount, is **excluded** from balances and counted
-  in `flaggedItems`, with the reason. These cannot be produced by a correct
+  split does not sum to its amount, is **excluded** from balances and listed
+  in `flagged`, with the reason. These cannot be produced by a correct
   client; they are defence against old or hostile ones.
 - `member.archived` sets a flag; the member stays in every map.
-- `member.claimed` adds `dev` to the member's device set. A name collision
-  among non-archived members sets `nameCollisions`.
+- `member.claimed` adds `dev` to the member's device set. When it only
+  confirms a self-join (the member added itself from this same device), it
+  produces no activity item, since the self-add already reads "Maya joined".
+  A name collision among non-archived members sets `nameCollisions`.
 - Every event targeting an expense is kept in that expense's `history`, in
   order, so the detail screen can show versions and restore one. A restore is
   an ordinary `expense.updated` carrying that version's fields (`amount` and
-  `split` together).
+  `split` together). A deleted expense leaves `expenses` for
+  `deletedExpenses`, its history ending in a `deleted` entry, so the activity
+  feed can still open it; it never counts in balances or totals.
+- An actor (`by`) that is not a member at that point in the fold is named
+  from the first `member.added` for that id anywhere in the log, so summaries
+  say "Someone" only for an id that is never added. A `format` callback that
+  throws (for example `formatMinor` on a shape-valid but unknown currency)
+  falls back to the plain integer for that summary; the fold never aborts.
 - Unknown member references create a placeholder member named "Unknown" with
   the raw id, flagged, so the UI can show it.
 - All maps keyed by ids are `Map`s, never plain objects, so an id such as
@@ -383,11 +413,13 @@ Server `seq` is never used for ordering state. It is only a sync cursor.
   `server` differs from the group's current `server_url`.
 
 `GroupState` contains the group meta, members (with device sets and
-avatars), live expenses (each with its history), live payments, spend totals
-by category, the activity list (every event, in order, with a human summary
-such as "Maya changed Nathan's Food from 100.00 to 10.00"), and counters:
-`skipped: { undecryptable, invalid, unsupportedEnvelope, unsupportedBody }`,
-`flaggedItems`, `unknownMembers`.
+avatars), live expenses (each with its history), deleted expenses (with their
+history), live payments, spend totals by category, the activity list (every
+applied event, in order, with a human summary such as "Maya changed Nathan's
+Food from 100.00 to 10.00"), `flagged`, `unknownMembers`, and
+`nameCollisions`. The skipped counts (`undecryptable`, `invalid`,
+`unsupported_envelope`, `unsupported_body`) are not reducer output, since the
+reducer only sees valid events; they come from the `events.status` column.
 
 ### Balances and simplification
 
@@ -396,7 +428,11 @@ net[m] = Σ paid[m] − Σ share[m] + Σ paymentsSent[m] − Σ paymentsReceived
 ```
 
 Σ net over all members is zero by construction over the non-flagged set;
-`core` asserts it in tests.
+`core` asserts it in tests. `nets` accumulates in `BigInt` and converts at
+the end, so only a final net outside the safe-integer range throws
+(`RangeError`). That takes a hostile log (10,000 events of 10¹² minor units
+owed by one member); the app wraps `nets` and shows "balances unavailable"
+for that group rather than crashing.
 
 `simplify(net)` is greedy: sort creditors and debtors descending by amount,
 ties broken by member id, repeatedly match the largest debtor with the largest
@@ -509,10 +545,14 @@ under Rotation.
    the batch `acked = 1` (accepted or duplicate). Apply the epoch rule below to
    the response.
 2. **Pull**: `GET …?since=cursor` while `more`. Apply the epoch rule **before**
-   committing the page. For each envelope: check `v` (unknown →
-   `unsupported_envelope`); open with AAD for this server's group id (fail →
-   `undecryptable`); `parseEvent` (fail → `invalid`, unknown `sv`/`type` →
-   `unsupported_body`); else `ok`, cache `ts`. Insert with `acked = 1`,
+   committing the page. For each envelope: check its structure and `v` with
+   `envelopeShape` from `core/envelope.ts`, which accepts any positive
+   integer `v` (not ok → `undecryptable`: junk a conforming server never
+   returns; ok with `v ≠ 1` → `unsupported_envelope`, kept per protocol §10);
+   `isEnvelope` is the strict v1 check and is not used for this step. Then
+   open with AAD for this server's group id (fail → `undecryptable`);
+   `parseEvent` (fail → `invalid`, unknown `sv`/`type` → `unsupported_body`);
+   else `ok`, cache `ts`. Insert with `acked = 1`,
    `origin = 'remote'`, ignore if present; on conflict set `acked = 1` and
    `seq`. Commit each page **and** the cursor update in one SQLite
    transaction. Update `name_cache` from any `group.created`/`group.renamed`.
@@ -711,7 +751,11 @@ checksum, and canonicalises the server URL.
   a duplicate.
 - **Create**: name, currency, your name, and an "Advanced: sync server" field
   that defaults to `https://sync.even.appalaya.com`. This is where a
-  self-hoster points a new group at their own server.
+  self-hoster points a new group at their own server. The create flow writes,
+  in this order, the creator's `member.added` (with `by` = their new member
+  id), their `member.claimed`, then `group.created`, each with its `ts` from
+  `nextTs`, so the log reads "Maya joined", "Maya created the group" in order
+  even without the reducer's actor-name fallback.
 
 ## Landing page (`web/`)
 

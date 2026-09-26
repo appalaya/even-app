@@ -2,13 +2,14 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { canonicalOrigin, InvalidServerUrlError } from './keys.js';
+import { isGroupName } from './schema.js';
 import type { Invite } from './types.js';
 
 export type InviteErrorCode = 'malformed' | 'version' | 'checksum' | 'server' | 'secret';
 export class InviteError extends Error { constructor(public readonly code: InviteErrorCode, message?: string) { super(message ?? code); } }
 
-/** Longest group name an invite carries, in code points. */
-const GROUP_NAME_MAX = 80;
+/** Longest group name an invite carries, in code points: the same bound as group.created / group.renamed. */
+const GROUP_NAME_MAX = LIMITS.groupNameMax;
 const CURRENCY = /^[A-Z]{3}$/;
 /** 32 bytes → 43 base64url characters. */
 const SECRET_CHARS = Math.ceil((LIMITS.secretLength * 4) / 3);
@@ -37,7 +38,12 @@ export function inviteChecksum(secret: Uint8Array): string {
   return b64urlEncode(sha256(secret).subarray(0, LIMITS.inviteChecksumBytes));
 }
 
-/** Builds a complete invite; `server` is canonicalised. */
+/**
+ * Builds a complete invite; `server` is canonicalised. `g`, when given, must satisfy the group-name rule of
+ * group.created / group.renamed (`isGroupName`: 1..groupNameMax code points, trimmed), since it is the group's name.
+ * decodeInvite is deliberately looser (any string up to groupNameMax): `g` is display-only and must never make a
+ * valid secret unusable.
+ */
 export function makeInvite(secret: Uint8Array, server: string, extras?: { g?: string; cur?: string }): Invite {
   if (!(secret instanceof Uint8Array) || secret.length !== LIMITS.secretLength) {
     throw new InviteError('secret', `secret must be ${LIMITS.secretLength} bytes`);
@@ -46,6 +52,9 @@ export function makeInvite(secret: Uint8Array, server: string, extras?: { g?: st
   const g = extras?.g;
   const cur = extras?.cur;
   checkExtras(g, cur, g !== undefined, cur !== undefined);
+  if (g !== undefined && !isGroupName(g)) {
+    throw new InviteError('malformed', `group name must be 1 to ${GROUP_NAME_MAX} characters without surrounding spaces`);
+  }
   const invite: Invite = { v: 1, s, k: b64urlEncode(secret), h: inviteChecksum(secret) };
   if (g !== undefined) invite.g = g;
   if (cur !== undefined) invite.cur = cur;

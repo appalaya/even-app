@@ -307,6 +307,7 @@ describe('splitByBasisPoints', () => {
           const floor = (BigInt(amount) * BigInt(bp)) / 10_000n;
           const got = BigInt(split[id] ?? -1);
           expect(got >= floor && got <= floor + 1n).toBe(true);
+          if (bp === 0) expect(got).toBe(0n); // a member at 0% never owes a unit
         }
         expect(isValidSplit(amount, split)).toBe(true);
       }),
@@ -336,14 +337,28 @@ describe('splitByBasisPoints', () => {
     expect(lopsided).toEqual({ a: 999_900_000_000, b: 100_000_000 });
   });
 
-  it('distributes the remainder over all keys, including a 0-bp key', () => {
-    // 1 unit, floors are all 0; the unit goes to sorted[hash(seed) % 3], which may be the 0-bp member.
+  // Changed in the integration review: the remainder used to be spread over ALL keys, so a 0-bp member could owe a
+  // unit. It now goes only to members with bp > 0 (design.md "Rounding").
+  it('never gives a remainder unit to a 0-bp member', () => {
     const recipients = new Set<string>();
     for (let i = 0; i < 50; i++) {
+      // 1 unit, floors are all 0; before the fix the unit landed on 'zero' for some seeds.
       const split = splitByBasisPoints(1, { a: 5000, b: 5000, zero: 0 }, `s${i}`);
+      expect(split.zero).toBe(0);
+      expect(split.a! + split.b!).toBe(1);
       recipients.add(Object.entries(split).find(([, v]) => v === 1)?.[0] ?? '');
     }
-    expect(recipients.has('zero')).toBe(true);
+    expect([...recipients].sort()).toEqual(['a', 'b']); // the seed still rotates it among the positive members
+  });
+
+  it('places the remainder among positive-bp members at hash(seed) % k in ascending-id order', () => {
+    // bps 0/3333/0/3333/3334 over ids a..e: positive ids [b, d, e]; 10 units → floors 3,3,3 → remainder 1.
+    for (const seed of ['x', 'y', 'z', 'seed-4']) {
+      const split = splitByBasisPoints(10, { a: 0, b: 3333, c: 0, d: 3333, e: 3334 }, seed);
+      const positive = ['b', 'd', 'e'];
+      const lucky = positive[fnvRef(seed) % positive.length] ?? '';
+      expect(split).toEqual({ a: 0, b: lucky === 'b' ? 4 : 3, c: 0, d: lucky === 'd' ? 4 : 3, e: lucky === 'e' ? 4 : 3 });
+    }
   });
 
   it('is deterministic and matches splitEqual for equal bps', () => {
@@ -399,5 +414,12 @@ describe('isValidSplit', () => {
     expect(isValidSplit(100, [100] as unknown as Record<string, number>)).toBe(false);
     // Sum computed in BigInt: two safe values whose Number sum rounds to the amount must not pass.
     expect(isValidSplit(2 ** 53 - 1, { a: 2 ** 53 - 1, b: 1 })).toBe(false);
+  });
+
+  it('returns false for a hostile object instead of throwing', () => {
+    const getter = { get a(): number { throw new Error('boom'); } };
+    const proxy = new Proxy({}, { ownKeys: () => { throw new Error('boom'); } });
+    expect(isValidSplit(1, getter as unknown as Record<string, number>)).toBe(false);
+    expect(isValidSplit(1, proxy as Record<string, number>)).toBe(false);
   });
 });

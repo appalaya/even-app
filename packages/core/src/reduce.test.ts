@@ -98,7 +98,14 @@ const summaries = (s: GroupState): string[] => s.activity.map((a) => a.summary);
 
 /** Maps → entry arrays, so strict equality also checks Map insertion order. */
 function canon(s: GroupState): unknown {
-  return { ...s, members: [...s.members], expenses: [...s.expenses], payments: [...s.payments], totalsByCategory: [...s.totalsByCategory] };
+  return {
+    ...s,
+    members: [...s.members],
+    expenses: [...s.expenses],
+    deletedExpenses: [...s.deletedExpenses],
+    payments: [...s.payments],
+    totalsByCategory: [...s.totalsByCategory],
+  };
 }
 
 function deepFreeze<T>(value: T): T {
@@ -205,6 +212,7 @@ describe('emptyState', () => {
       movedTo: null,
       members: new Map(),
       expenses: new Map(),
+      deletedExpenses: new Map(),
       payments: new Map(),
       activity: [],
       totalsByCategory: new Map(),
@@ -275,10 +283,11 @@ describe('reduce: Banff walkthrough', () => {
     ]);
   });
 
+  // Changed in the integration review: "Someone created the group" now names Maya from the pre-scan of member.added
+  // events, and Maya's own member.claimed (same device as her self-add) no longer repeats "Maya joined".
   it('narrates activity', () => {
     expect(summaries(s)).toEqual([
-      'Someone created the group',
-      'Maya joined',
+      'Maya created the group',
       'Maya joined',
       'Maya added Jordan',
       'Maya added Nathan',
@@ -288,7 +297,7 @@ describe('reduce: Banff walkthrough', () => {
       'Maya changed Dinner from 90.00 to 96.00',
       'Nathan paid Jordan 8.00',
     ]);
-    expect(s.activity[9]).toEqual({
+    expect(s.activity[8]).toEqual({
       eventId: eid(10),
       type: 'payment.added',
       ts: T0 + 10000,
@@ -300,7 +309,7 @@ describe('reduce: Banff walkthrough', () => {
   });
 
   it('defaults format to String', () => {
-    expect(summaries(reduce(banff()))[6]).toBe('Maya added Dinner · 9000');
+    expect(summaries(reduce(banff()))[5]).toBe('Maya added Dinner · 9000');
   });
 });
 
@@ -487,6 +496,39 @@ describe('reduce: tombstones', () => {
     expect(s.expenses.has(DINNER)).toBe(false);
     expect(summaries(s).slice(4)).toEqual(['Maya added Dinner · 9000', 'Jordan deleted Dinner']);
     expect(canon(reduce(shuffled(log, 7)))).toStrictEqual(canon(s));
+  });
+
+  it('keeps a deleted expense reachable in deletedExpenses, its history ending in a deleted entry', () => {
+    const s = reduce([
+      ...base(),
+      entry(10, { type: 'expense.added', expense: expense(DINNER) }),
+      entry(11, { type: 'expense.updated', id: DINNER, changes: { title: 'Supper' } }),
+      entry(12, { type: 'expense.deleted', id: DINNER, by: JORDAN, at: T0 + 99_000 }),
+      entry(13, { type: 'expense.updated', id: DINNER, changes: { title: 'Zombie' } }),
+    ]);
+    expect(s.expenses.has(DINNER)).toBe(false);
+    const gone = s.deletedExpenses.get(DINNER);
+    expect(gone?.title).toBe('Supper');
+    expect(gone?.updatedAt).toBe(T0 + 99_000);
+    expect(gone?.history.map((h) => [h.kind, h.eventId, h.snapshot.title])).toEqual([
+      ['added', eid(10), 'Dinner'],
+      ['updated', eid(11), 'Supper'],
+      ['deleted', eid(12), 'Supper'],
+    ]);
+    expect(gone?.history[2]).toEqual({
+      eventId: eid(12),
+      ts: T0 + 12_000,
+      at: T0 + 99_000,
+      by: JORDAN,
+      dev: DEV[JORDAN],
+      kind: 'deleted',
+      snapshot: { ...expense(DINNER), title: 'Supper' },
+    });
+    // The activity item for the delete names the entry whose history the feed can open.
+    expect(s.activity.at(-1)).toMatchObject({ eventId: eid(12), type: 'expense.deleted', summary: 'Jordan deleted Supper' });
+    expect(s.totalsByCategory.size).toBe(0);
+    // A delete of an id never seen leaves nothing to show.
+    expect(reduce([...base(), entry(10, { type: 'expense.deleted', id: GAS })]).deletedExpenses.size).toBe(0);
   });
 
   it('a delete for an unseen id is remembered (equal-ts add sorting after it is ignored)', () => {
@@ -756,6 +798,82 @@ describe('reduce: group events', () => {
     const s = reduce([created(1, { by: GHOST })]);
     expect(summaries(s)).toEqual(['Someone created the group']);
     expect(s.members.has(GHOST)).toBe(false);
+  });
+
+  it('names an actor added only later in the log from its first member.added', () => {
+    const s = reduce([
+      created(1, { by: NATHAN }),
+      entry(2, { type: 'group.renamed', name: 'Jasper', by: NATHAN }),
+      added(5, NATHAN, 'Nathan', { by: NATHAN }),
+      added(6, NATHAN, 'Imposter', { by: MAYA }), // ignored by the fold, and not the name used
+    ]);
+    expect(summaries(s)).toEqual(['Nathan created the group', 'Nathan renamed the group to Jasper', 'Nathan joined']);
+    expect(s.members.has(NATHAN)).toBe(true);
+  });
+
+  it('names an actor that is still a placeholder from its later member.added', () => {
+    const s = reduce([
+      ...base(),
+      entry(10, { type: 'payment.added', payment: payment(PAY1, { from: GHOST, to: MAYA }) }), // creates the placeholder
+      entry(11, { type: 'group.renamed', name: 'Jasper', by: GHOST }),
+      added(12, GHOST, 'Casey', { by: MAYA }),
+    ]);
+    expect(summaries(s).slice(4)).toEqual(['Unknown paid Maya 800', 'Casey renamed the group to Jasper', 'Maya added Casey']);
+  });
+});
+
+describe('reduce: self-join claims', () => {
+  const self = pad('dev-self');
+
+  it('the create flow (member.added, member.claimed, group.created) reads as one join and one create', () => {
+    const s = reduce([
+      added(1, MAYA, 'Maya', { dev: self }),
+      entry(2, { type: 'member.claimed', id: MAYA, dev: self }),
+      created(3, { dev: self }),
+    ]);
+    expect(summaries(s)).toEqual(['Maya joined', 'Maya created the group']);
+    expect(s.members.get(MAYA)?.devices).toEqual([self]); // the device set is still updated
+  });
+
+  it('keeps the item for a claim from another device, and for a member someone else added', () => {
+    const other = pad('dev-other-phone');
+    const s = reduce([
+      ...base(), // Jordan and Nathan are added by Maya
+      entry(10, { type: 'member.claimed', id: MAYA, dev: other }), // Maya's self-add used DEV[MAYA]
+      entry(11, { type: 'member.claimed', id: JORDAN, by: JORDAN }),
+    ]);
+    expect(summaries(s).slice(4)).toEqual(['Maya joined', 'Jordan joined']);
+  });
+
+  it('a later second device still reads "joined on a new device"', () => {
+    const s = reduce([
+      added(1, MAYA, 'Maya', { dev: self }),
+      entry(2, { type: 'member.claimed', id: MAYA, dev: self }),
+      entry(3, { type: 'member.claimed', id: MAYA, dev: pad('dev-tablet') }),
+    ]);
+    expect(summaries(s)).toEqual(['Maya joined', 'Maya joined on a new device']);
+    expect(s.members.get(MAYA)?.devices).toEqual([self, pad('dev-tablet')].sort());
+  });
+
+  it('suppresses a self-join claim that sorts before its member.added (placeholder path)', () => {
+    const s = reduce([
+      entry(1, { type: 'member.claimed', id: MAYA, dev: self }),
+      added(2, MAYA, 'Maya', { dev: self }),
+    ]);
+    expect(summaries(s)).toEqual(['Maya joined']);
+    expect(s.members.get(MAYA)).toMatchObject({ unknown: false, devices: [self] });
+  });
+});
+
+describe('reduce: caller-supplied format', () => {
+  it('falls back to String(minor) when format throws, instead of aborting the fold', () => {
+    const boom = (): string => {
+      throw new RangeError('Unknown ISO 4217 currency code: XYZ');
+    };
+    const log = [...base(), entry(10, { type: 'expense.added', expense: expense(DINNER) }), entry(11, { type: 'payment.added', payment: payment(PAY1) })];
+    const s = reduce(log, { format: boom });
+    expect(summaries(s).slice(4)).toEqual(['Maya added Dinner · 9000', 'Nathan paid Jordan 800']);
+    expect(canon(s)).toStrictEqual(canon(reduce(log)));
   });
 });
 

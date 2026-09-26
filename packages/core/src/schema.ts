@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import { LIMITS } from './constants.js';
+import { canonicalOrigin } from './keys.js';
 import { CATEGORIES, type Event } from './types.js';
 
 // ---------- Primitive rules ----------
@@ -37,6 +38,11 @@ function codePointLength(text: string): number {
 function isTrimmedText(text: string, max: number): boolean {
   const n = codePointLength(text);
   return n >= 1 && n <= max && !EDGE_WHITESPACE_RE.test(text);
+}
+
+/** The group-name rule (group.created, group.renamed; makeInvite's `g`): 1..LIMITS.groupNameMax code points, trimmed. Never throws. */
+export function isGroupName(text: string): boolean {
+  return typeof text === 'string' && isTrimmedText(text, LIMITS.groupNameMax);
 }
 
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
@@ -104,24 +110,16 @@ export function isSingleEmoji(text: string): boolean {
 }
 
 /**
- * Canonical https origin (PROTOCOL.md §8.1): lowercase ASCII host, optional port (never :443, 1..65535, no leading
- * zero), optional path with no trailing slash, no `.`/`..` segments, no query, no fragment, no userinfo.
- * A deliberate local copy of the shape check so this module does not depend on keys.ts; it must accept every string
- * keys.ts's canonicaliser produces.
+ * Canonical https origin (PROTOCOL.md §8.1), by the one definition the package has: a string is canonical iff
+ * keys.ts's `canonicalOrigin` maps it to itself. So `group.moved.server`, the invite's `s`, and the `origin` fed to
+ * `deriveServer` can never disagree. Never throws.
  */
-const ORIGIN_RE = /^https:\/\/[a-z0-9.-]+(?::([0-9]{1,5}))?((?:\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*)$/;
-
-function isCanonicalHttpsOrigin(text: string): boolean {
-  const m = ORIGIN_RE.exec(text);
-  if (m === null) return false;
-  const port = m[1];
-  if (port !== undefined) {
-    if (port.startsWith('0')) return false;
-    const n = Number(port);
-    if (n === 443 || n > 65535) return false;
+function isCanonicalOrigin(text: string): boolean {
+  try {
+    return canonicalOrigin(text) === text;
+  } catch {
+    return false;
   }
-  const path = m[2] ?? '';
-  return path.split('/').every((segment) => segment !== '.' && segment !== '..');
 }
 
 /** Non-empty, at most LIMITS.membersMax entries, values sum exactly to `amount`. Never throws. */
@@ -152,13 +150,17 @@ const Amount = z.int().gte(LIMITS.amountMin).lte(LIMITS.amountMax);
 const Currency = z.string().regex(CURRENCY_RE);
 const IsoDate = z.string().refine(isIsoDate);
 const Name = z.string().refine((s) => isTrimmedText(s, LIMITS.nameMax));
+const GroupName = z.string().refine(isGroupName);
 const Title = z.string().refine((s) => isTrimmedText(s, LIMITS.titleMax));
 const Note = z.string().refine((s) => codePointLength(s) <= LIMITS.noteMax);
 const Emoji = z.string().refine(isSingleEmoji);
 const Category = z.enum(CATEGORIES);
-const Server = z.string().refine(isCanonicalHttpsOrigin);
-/** Member id → non-negative safe-integer minor units. Sum and size are checked by the enclosing object. */
-const Split = z.record(Id, z.int().gte(0));
+const Server = z.string().refine(isCanonicalOrigin);
+/**
+ * Member id → non-negative safe-integer minor units. Sum and size are checked by the enclosing object.
+ * `-0` (JSON text "-0" parses to it) is normalised to 0, so every device holds the identical value.
+ */
+const Split = z.record(Id, z.int().gte(0).transform((v) => (v === 0 ? 0 : v)));
 
 const MemberSchema = z.object({
   id: Id,
@@ -233,8 +235,8 @@ const base = {
  * strict. Unknown `sv` or `type` fails.
  */
 export const EventSchema = z.discriminatedUnion('type', [
-  z.object({ ...base, type: z.literal('group.created'), name: Name, currency: Currency }),
-  z.object({ ...base, type: z.literal('group.renamed'), name: Name }),
+  z.object({ ...base, type: z.literal('group.created'), name: GroupName, currency: Currency }),
+  z.object({ ...base, type: z.literal('group.renamed'), name: GroupName }),
   z.object({ ...base, type: z.literal('group.closed'), reason: z.literal('rotated'), to: LocalId.exactOptional() }),
   z.object({ ...base, type: z.literal('group.rotated'), from: LocalId }),
   z.object({ ...base, type: z.literal('group.moved'), server: Server }),

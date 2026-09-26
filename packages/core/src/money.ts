@@ -193,10 +193,12 @@ export function splitEqual(amount: number, memberIds: readonly string[], seed: s
 const BPS_TOTAL = 10_000;
 
 /**
- * bps values sum to 10000; floor(amount × bp / 10000) in BigInt, remainder distributed as in splitEqual.
+ * bps values sum to 10000; floor(amount × bp / 10000) in BigInt, remainder distributed as in splitEqual but only
+ * among the members with bp > 0: a member at 0% never owes a unit.
  *
- * The remainder (< number of keys) is spread over ALL keys in ascending-id order from hash(seed) % n, including keys
- * with bp = 0 — the same rule as splitEqual, so a 0-bp member can receive one minor unit.
+ * The remainder is the sum of the fractional parts of the positive shares, so it is < k (the number of bp > 0 keys)
+ * and nobody gets more than one extra unit. It goes one unit each to consecutive bp > 0 keys in ascending-id order,
+ * starting at hash(seed) % k. With every bp positive this is exactly splitEqual's rule.
  */
 export function splitByBasisPoints(amount: number, bps: Readonly<Record<string, number>>, seed: string): Record<string, number> {
   const total = toAmount(amount, 'splitByBasisPoints');
@@ -217,7 +219,13 @@ export function splitByBasisPoints(amount: number, bps: Readonly<Record<string, 
   const ids = sortedIds([...byId.keys()]);
   const shares = ids.map((id) => (total * BigInt(byId.get(id) ?? 0)) / BigInt(BPS_TOTAL));
   const allocated = shares.reduce((a, b) => a + b, 0n);
-  distributeRemainder(shares, total - allocated, seed);
+  // Distribute over the positive-bp members only, then write their shares back in place.
+  const positive = ids.flatMap((id, i) => ((byId.get(id) ?? 0) > 0 ? [i] : []));
+  const positiveShares = positive.map((i) => shares[i] ?? 0n);
+  distributeRemainder(positiveShares, total - allocated, seed);
+  positive.forEach((i, j) => {
+    shares[i] = positiveShares[j] ?? 0n;
+  });
   return toRecord(ids, shares);
 }
 
@@ -236,14 +244,18 @@ export function splitSum(split: Readonly<Record<string, number>>): number {
 
 /** Non-empty, every value a non-negative safe integer, sum === amount. Total: returns false, never throws, on bad input. */
 export function isValidSplit(amount: number, split: Readonly<Record<string, number>>): boolean {
-  if (!Number.isSafeInteger(amount) || amount < 0) return false;
-  if (typeof split !== 'object' || split === null || Array.isArray(split)) return false;
-  const values: unknown[] = Object.values(split);
-  if (values.length === 0) return false;
-  let sum = 0n;
-  for (const v of values) {
-    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) return false;
-    sum += BigInt(v);
+  try {
+    if (!Number.isSafeInteger(amount) || amount < 0) return false;
+    if (typeof split !== 'object' || split === null || Array.isArray(split)) return false;
+    const values: unknown[] = Object.values(split);
+    if (values.length === 0) return false;
+    let sum = 0n;
+    for (const v of values) {
+      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) return false;
+      sum += BigInt(v);
+    }
+    return sum === BigInt(amount);
+  } catch {
+    return false; // hostile getters / proxies
   }
-  return sum === BigInt(amount);
 }

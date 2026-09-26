@@ -5,6 +5,7 @@ import {
   decodeInvite, encodeInvite, InviteError, inviteChecksum, inviteLink, makeInvite, secretFromInvite,
 } from './invite.js';
 import type { InviteErrorCode } from './invite.js';
+import { LIMITS } from './constants.js';
 import { newSecret } from './keys.js';
 import type { Invite } from './types.js';
 
@@ -63,8 +64,13 @@ describe('makeInvite', () => {
   });
 
   it('rejects extras that decodeInvite would reject', () => {
-    expectCode(() => makeInvite(SECRET, SERVER, { g: 'x'.repeat(81) }), 'malformed');
+    expectCode(() => makeInvite(SECRET, SERVER, { g: 'x'.repeat(LIMITS.groupNameMax + 1) }), 'malformed');
     expectCode(() => makeInvite(SECRET, SERVER, { cur: 'cad' }), 'malformed');
+  });
+
+  it('requires g to be a valid group name (the group.created / group.renamed rule)', () => {
+    expect(makeInvite(SECRET, SERVER, { g: 'x'.repeat(LIMITS.groupNameMax) }).g).toHaveLength(LIMITS.groupNameMax);
+    for (const g of ['', '   ', ' Banff', 'Banff\n']) expectCode(() => makeInvite(SECRET, SERVER, { g }), 'malformed');
   });
 });
 

@@ -102,7 +102,8 @@ describe('inferCategory', () => {
     ['Café', 'food'],
     ["Tim Horton's", 'coffee'],
     ['Coffee and donuts', 'coffee'], // tie at 6 chars: earliest wins
-    ['Lattes', 'other'], // no stemming: only listed forms match
+    ['Lattes', 'coffee'], // listed plural (was 'other' before the integration review added plural forms)
+    ['Parkades', 'other'], // no stemming: only listed forms match
     // Groceries and drinks
     ['Groceries at Safeway', 'groceries'],
     ["Trader Joe's run", 'groceries'],
@@ -192,5 +193,42 @@ describe('inferCategory', () => {
 
   it('returns other for a non-string', () => {
     expect(inferCategory(undefined as unknown as string)).toBe('other');
+  });
+
+  it.each<[string, Category]>([
+    ['Lattes for everyone', 'coffee'],
+    ['Two coffees', 'coffee'],
+    ['Cappuccinos', 'coffee'],
+    ['Beers at the lake', 'drinks'],
+    ['Wines', 'drinks'],
+    ['Burgers', 'food'],
+    ['Pizzas', 'food'],
+    ['Lunches', 'food'],
+    ['Cabs home', 'transit'],
+    ['Taxis', 'transit'],
+    ['Buses to Jasper', 'transit'],
+    ['Trains', 'transit'],
+    ['Bridge tolls', 'fees'],
+    ['Tips', 'fees'],
+    ['Gifts for the hosts', 'gifts'],
+  ])('matches the listed plural %j → %s', (title, expected) => {
+    expect(inferCategory(title)).toBe(expected);
+  });
+
+  it('degrades without String.prototype.normalize (Hermes without Intl): no diacritic folding, no throw', () => {
+    const proto = String.prototype as unknown as { normalize: unknown };
+    const original = proto.normalize;
+    for (const replacement of [undefined, () => { throw new RangeError('unsupported'); }]) {
+      proto.normalize = replacement;
+      try {
+        expect(inferCategory('Parking')).toBe('parking');
+        expect(inferCategory('Tim Horton’s')).toBe('coffee');
+        expect(() => inferCategory('Café au lait')).not.toThrow();
+        expect(inferCategory('Hôtel Le Germain')).toBe('other'); // "ô" is a separator when it cannot be folded
+      } finally {
+        proto.normalize = original;
+      }
+    }
+    expect(inferCategory('Hôtel Le Germain')).toBe('lodging');
   });
 });

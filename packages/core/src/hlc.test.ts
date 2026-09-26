@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './constants.js';
-import { entityIdOf, isClockSane, nextTs } from './hlc.js';
+import { canWrite, entityIdOf, isClockSane, nextTs } from './hlc.js';
 import type { Event, EventPayload, LogEntry } from './types.js';
 
 const id = (seed: string): string => seed.padEnd(22, '0');
@@ -186,5 +186,35 @@ describe('isClockSane', () => {
     expect(isClockSane(NOW + 0.5)).toBe(false);
     expect(isClockSane(Number.NaN)).toBe(false);
     expect(isClockSane(Number.POSITIVE_INFINITY)).toBe(false);
+  });
+});
+
+describe('canWrite', () => {
+  it('allows a normal write', () => {
+    expect(canWrite(NOW, [])).toBe(true);
+    expect(canWrite(NOW, [expenseAdded(NOW - DAY)], EXPENSE)).toBe(true);
+  });
+
+  it('refuses when the clock is outside the validator range', () => {
+    expect(canWrite(LIMITS.tsMin - 1, [])).toBe(false);
+    expect(canWrite(LIMITS.tsMax, [])).toBe(false);
+    expect(canWrite(NOW + 0.5, [])).toBe(false);
+  });
+
+  it('refuses to edit an entity whose latest event sits at tsMax − 1 (nextTs would be tsMax)', () => {
+    const top = expenseAdded(LIMITS.tsMax - 1);
+    expect(nextTs(NOW, [top], EXPENSE)).toBe(LIMITS.tsMax);
+    expect(canWrite(NOW, [top], EXPENSE)).toBe(false);
+    // Group-level writes are unaffected: an event that far ahead is not absorbed into the group clock.
+    expect(canWrite(NOW, [top])).toBe(true);
+    // An entity at tsMax − 2 can still take exactly one more edit.
+    const almost = expenseAdded(LIMITS.tsMax - 2, OTHER_EXPENSE);
+    expect(nextTs(NOW, [almost], OTHER_EXPENSE)).toBe(LIMITS.tsMax - 1);
+    expect(canWrite(NOW, [almost], OTHER_EXPENSE)).toBe(true);
+  });
+
+  it('refuses when the absorbed group clock would reach tsMax', () => {
+    const clock = LIMITS.tsMax - 1 - HOUR;
+    expect(canWrite(clock, [entry(LIMITS.tsMax - 1, { type: 'group.renamed', name: 'A' })])).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ Even's pure core. No React Native, no Expo, no I/O. Runs in Node under Vitest an
 | `hlc.ts` | Hybrid timestamps. |
 | `reduce.ts` | Log → `GroupState`. |
 | `balances.ts` | Nets and greedy simplification. |
+| `integration.test.ts` | Cross-module paths (keys → seal → open → parseEvent → reduce → balances) and the size budget. |
 
 ```bash
 npm install
@@ -23,3 +24,17 @@ npm run check    # typecheck + tests
 ```
 
 Randomness comes from `globalThis.crypto.getRandomValues`; the app polyfills it at entry from `expo-crypto`.
+
+## Verify on device
+
+Node runs these tests on V8 with full ICU. Hermes (React Native) may differ, so check these on a real iOS and
+Android build before relying on them:
+
+- **`String.prototype.normalize('NFD')`** (`categories.ts`, diacritic folding in `inferCategory`). Hermes support depends
+  on its version and build. If it is missing or throws, `inferCategory` skips folding instead of throwing, so
+  "Café" no longer matches "cafe"; check that "Café au lait" infers `coffee` on device.
+- **`Intl.NumberFormat.prototype.formatToParts`** (`money.ts`, `formatMinor` for amounts at or above 10¹⁵ minor
+  units). If it is missing, `formatMinor` falls back to the nearest double (off by at most one minor unit, only above
+  10¹⁵). Also check that `formatMinor(150, 'CAD')`, `formatMinor(1234, 'KWD')` and `formatMinor(-5, 'JPY')` render
+  with the ISO exponent in the device locale, since the fraction digits come from `Intl`.
+

@@ -59,6 +59,9 @@ export function isCategory(value: unknown): value is Category {
  * "ticket" (activities), "bbq supplies" (groceries) beats "bbq" (food), "uber to" beats "hotel" in "Uber to hotel".
  * Deliberately absent: "airport" (it would turn "Uber to airport" and "Airport parking" into flights), "rental"
  * alone (it would turn "Canoe rental" into a rental car), "birthday" (it would beat "dinner").
+ *
+ * No stemming: plural and variant forms are listed explicitly ("lattes", "buses", "taxis"), so the table stays the
+ * whole truth and every phone infers the same thing. Add a form here rather than a rule.
  */
 const KEYWORDS_BY_CATEGORY: { readonly [C in Exclude<Category, 'other'>]: readonly string[] } = {
   food: [
@@ -66,6 +69,8 @@ const KEYWORDS_BY_CATEGORY: { readonly [C in Exclude<Category, 'other'>]: readon
     'pizza', 'sushi', 'burger', 'burgers', 'taco', 'tacos', 'ramen', 'pho', 'bbq', 'barbecue', 'poutine', 'sandwich',
     'takeout', 'uber eats', 'doordash', 'skip the dishes', 'mcdonalds', 'snacks', 'dessert', 'ice cream', 'bakery',
     'donuts', 'steak', 'fish and chips',
+    'dinners', 'lunches', 'breakfasts', 'brunches', 'restaurants', 'pizzas', 'sandwiches', 'steaks', 'desserts',
+    'snack', 'donut',
   ],
   groceries: [
     'grocery', 'groceries', 'supermarket', 'safeway', 'costco', 'walmart', 'trader joe', 'trader joes', 'whole foods',
@@ -75,9 +80,11 @@ const KEYWORDS_BY_CATEGORY: { readonly [C in Exclude<Category, 'other'>]: readon
   drinks: [
     'drinks', 'beer', 'wine', 'bar', 'pub', 'brewery', 'cocktail', 'cocktails', 'liquor', 'liquor store', 'lcbo',
     'saq', 'beer store', 'happy hour',
+    'beers', 'wines', 'pubs', 'breweries',
   ],
   coffee: [
     'coffee', 'latte', 'espresso', 'cappuccino', 'flat white', 'cafe au lait', 'starbucks', 'tim hortons', 'tea',
+    'coffees', 'lattes', 'espressos', 'cappuccinos', 'flat whites', 'teas',
   ],
   lodging: [
     'hotel', 'hotels', 'motel', 'hostel', 'airbnb', 'vrbo', 'lodge', 'inn', 'resort', 'cabin', 'campsite',
@@ -91,6 +98,7 @@ const KEYWORDS_BY_CATEGORY: { readonly [C in Exclude<Category, 'other'>]: readon
     'uber', 'lyft', 'taxi', 'cab', 'bus', 'train', 'subway', 'metro', 'transit', 'shuttle', 'ferry', 'gondola',
     'via rail', 'greyhound', 'bus ticket', 'bus tickets', 'train ticket', 'train tickets', 'ferry ticket',
     'bc ferries', 'uber to', 'lyft to', 'taxi to', 'cab to',
+    'ubers', 'lyfts', 'taxis', 'cabs', 'buses', 'trains', 'shuttles', 'ferries', 'gondolas',
   ],
   fuel: [
     'gas', 'fuel', 'petrol', 'diesel', 'shell', 'esso', 'petro canada', 'chevron', 'husky', 'gas station',
@@ -111,7 +119,7 @@ const KEYWORDS_BY_CATEGORY: { readonly [C in Exclude<Category, 'other'>]: readon
     'gear', 'canadian tire', 'ikea', 'target', 'best buy',
   ],
   fees: [
-    'fee', 'fees', 'toll', 'tip', 'tips', 'gratuity', 'service charge', 'atm', 'bank fee', 'visa', 'visa fee',
+    'fee', 'fees', 'toll', 'tolls', 'tip', 'tips', 'gratuity', 'service charge', 'atm', 'bank fee', 'visa', 'visa fee',
     'insurance', 'permit', 'tax', 'taxes', 'currency exchange', 'cancellation fee', 'resort fee', 'sim card',
   ],
   health: [
@@ -136,13 +144,26 @@ const APOSTROPHES = /['`‘’ʼ]/g;
 const NON_WORD = /[^a-z0-9]+/g;
 
 /**
+ * Canonical decomposition, used only to fold diacritics. Hermes may lack `String.prototype.normalize`, depending on
+ * its version and build (README "Verify on device"); then titles are matched unfolded and an accented letter acts as a word separator
+ * ("Café" no longer reads as "cafe"), instead of inference throwing on every keystroke.
+ */
+function decompose(text: string): string {
+  if (typeof text.normalize !== 'function') return text;
+  try {
+    return text.normalize('NFD');
+  } catch {
+    return text;
+  }
+}
+
+/**
  * NFD, drop combining marks, lowercase (locale-independent `toLowerCase`), drop apostrophes, "&" → "and", every run
  * of other characters → one space, trim. "Café au lait" → "cafe au lait", "Tim Horton's" → "tim hortons",
  * "Petro-Canada" → "petro canada". Characters outside a–z/0–9 that do not decompose (ø, ß, CJK) act as separators.
  */
 function normalize(text: string): string {
-  return text
-    .normalize('NFD')
+  return decompose(text)
     .replace(COMBINING_MARKS, '')
     .toLowerCase()
     .replace(APOSTROPHES, '')

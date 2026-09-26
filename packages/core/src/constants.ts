@@ -2,7 +2,8 @@
 export const LIMITS = {
   titleMax: 80,
   noteMax: 500,
-  nameMax: 40,
+  nameMax: 40, // member names
+  groupNameMax: 80, // group.created / group.renamed names and the invite's `g`
   membersMax: 50,
   amountMin: 1,
   amountMax: 1_000_000_000_000, // integer minor units; split math uses BigInt

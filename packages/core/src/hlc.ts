@@ -7,9 +7,9 @@ import type { Event, LogEntry } from './types.js';
  * If `targetId` is given (the entity this event edits/deletes), ts is also ≥ maxTs(events targeting that entity) + 1,
  * regardless of how far ahead those are. "Targeting" includes the `*.added` event that created the entity.
  *
- * Stateless, one pass over `log`. Not clamped to the validator range: callers check `isClockSane(nowMs)` first, and should
- * also refuse to write if the returned value is ≥ LIMITS.tsMax (only possible when a target sits at the very top of
- * the range). A fractional `nowMs` is floored so the result is always an integer.
+ * Stateless, one pass over `log`. Not clamped to the validator range: callers gate every write on `canWrite`, which
+ * refuses when the clock is insane or when the result would be ≥ LIMITS.tsMax (an entity whose latest event sits at
+ * tsMax − 1 can no longer be edited). A fractional `nowMs` is floored so the result is always an integer.
  */
 export function nextTs(nowMs: number, log: readonly LogEntry[], targetId?: string): number {
   const now = Math.floor(nowMs);
@@ -71,4 +71,13 @@ function createdIdOf(event: Event): string | null {
 /** True if the device clock is inside the validator's absolute range; the app refuses to write otherwise. */
 export function isClockSane(nowMs: number): boolean {
   return Number.isInteger(nowMs) && nowMs >= LIMITS.tsMin && nowMs < LIMITS.tsMax;
+}
+
+/**
+ * The write gate (design.md "Ordering"): true iff the device clock is sane AND the timestamp the new event would get,
+ * `nextTs(nowMs, log, targetId)`, is inside the validator's range. The app refuses to write otherwise, so it never
+ * produces an event that fails validation on every phone. Pass the same `targetId` the write will use.
+ */
+export function canWrite(nowMs: number, log: readonly LogEntry[], targetId?: string): boolean {
+  return isClockSane(nowMs) && nextTs(nowMs, log, targetId) < LIMITS.tsMax;
 }

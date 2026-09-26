@@ -18,35 +18,41 @@ function decodedLength(chars: number): number {
   return Math.floor((chars * 3) / 4);
 }
 
+export type EnvelopeShape = { ok: true; v: number } | { ok: false };
+
 /**
- * §4 structure with any integer `v`. Separate from `isEnvelope` so `open` can tell a well-formed envelope of an
- * unknown version (unsupported_envelope) from a broken one (malformed), as the server does (§6.2: 400 before 415).
+ * PROTOCOL.md §4 structure with any positive integer `v`: exactly the four fields id, v, n, c; id 22 and n 32
+ * base64url characters; c base64url with a decoded length in [17, 8192]. Never throws.
+ *
+ * This is the check the sync engine runs first on every pulled envelope (design.md "Sync engine"), because §10 requires
+ * keeping envelopes of an unknown version: `{ ok: false }` → junk, stored as `undecryptable`; `ok` with `v ≠ 1` →
+ * `unsupported_envelope`, kept for a future client; `ok` with `v = 1` → `open`. `isEnvelope` is the strict v1 check.
  */
-function isEnvelopeShape(value: unknown): value is Omit<Envelope, 'v'> & { v: number } {
+export function envelopeShape(value: unknown): EnvelopeShape {
   try {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return { ok: false };
     const keys = Object.keys(value).sort();
-    if (keys.length !== ENVELOPE_KEYS.length || keys.some((k, i) => k !== ENVELOPE_KEYS[i])) return false;
+    if (keys.length !== ENVELOPE_KEYS.length || keys.some((k, i) => k !== ENVELOPE_KEYS[i])) return { ok: false };
     const { id, v, n, c } = value as Record<string, unknown>;
-    if (typeof id !== 'string' || !isId(id)) return false;
-    if (typeof v !== 'number' || !Number.isSafeInteger(v)) return false;
-    if (typeof n !== 'string' || !isB64url(n, LIMITS.nonceEncodedLength)) return false;
-    if (typeof c !== 'string' || c.length > MAX_C_CHARS || !isB64url(c)) return false;
+    if (typeof id !== 'string' || !isId(id)) return { ok: false };
+    if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1) return { ok: false };
+    if (typeof n !== 'string' || !isB64url(n, LIMITS.nonceEncodedLength)) return { ok: false };
+    if (typeof c !== 'string' || c.length > MAX_C_CHARS || !isB64url(c)) return { ok: false };
     const bytes = decodedLength(c.length);
-    return bytes >= MIN_C_BYTES && bytes <= LIMITS.maxEventBytes;
+    return bytes >= MIN_C_BYTES && bytes <= LIMITS.maxEventBytes ? { ok: true, v } : { ok: false };
   } catch {
-    return false; // hostile getters / proxies
+    return { ok: false }; // hostile getters / proxies
   }
 }
 
 /**
- * Structural check per PROTOCOL.md §4 (exactly the four fields, lengths, charset, decoded c length in [17, 8192]).
- * Also requires `v === 1`, since that is what the `Envelope` type promises; an envelope with another integer `v`
- * is structurally valid on the wire but returns false here, and `open` reports it as `unsupported_envelope`.
- * Never throws.
+ * Strict structural check for a v1 envelope: `envelopeShape` plus `v === 1`, since that is what the `Envelope` type
+ * promises. An envelope with another positive integer `v` is structurally valid on the wire but returns false here;
+ * use `envelopeShape` to classify it (`unsupported_envelope`), as `open` does. Never throws.
  */
 export function isEnvelope(value: unknown): value is Envelope {
-  return isEnvelopeShape(value) && value.v === PROTOCOL.version;
+  const shape = envelopeShape(value);
+  return shape.ok && shape.v === PROTOCOL.version;
 }
 
 /** Stored size per §4: decoded length of c + 64. */
@@ -101,17 +107,22 @@ export function seal(args: { key: Uint8Array; groupId: string; body: Event; id?:
   return { id, v, n: b64urlEncode(nonce), c: b64urlEncode(ciphertext) };
 }
 
-/** Decrypts and JSON-parses; returns the raw parsed value (run parseEvent on it). Throws EnvelopeError. */
+/**
+ * Decrypts and JSON-parses; returns the raw parsed value (run parseEvent on it). Throws EnvelopeError:
+ * `malformed` (envelopeShape fails, checked first, as the server checks 400 before 415), `unsupported_envelope`
+ * (well-formed, v ≠ 1), `undecryptable` (AEAD, padding, UTF-8 or JSON failure).
+ */
 export function open(args: { key: Uint8Array; groupId: string; envelope: Envelope }): unknown {
   checkKey(args.key);
-  const envelope: unknown = args.envelope;
-  if (!isEnvelopeShape(envelope)) throw new EnvelopeError('malformed', 'not a structurally valid envelope');
-  if (envelope.v !== PROTOCOL.version) {
-    throw new EnvelopeError('unsupported_envelope', `envelope version ${envelope.v} is not supported`);
+  const shape = envelopeShape(args.envelope);
+  if (!shape.ok) throw new EnvelopeError('malformed', 'not a structurally valid envelope');
+  if (shape.v !== PROTOCOL.version) {
+    throw new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`);
   }
+  const envelope = args.envelope;
   let padded: Uint8Array;
   try {
-    const cipher = xchacha20poly1305(args.key, b64urlDecode(envelope.n), aadFor(args.groupId, envelope.v, envelope.id));
+    const cipher = xchacha20poly1305(args.key, b64urlDecode(envelope.n), aadFor(args.groupId, shape.v, envelope.id));
     padded = cipher.decrypt(b64urlDecode(envelope.c));
   } catch {
     throw new EnvelopeError('undecryptable', 'authentication failed');

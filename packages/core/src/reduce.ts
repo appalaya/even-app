@@ -12,8 +12,18 @@
  *   `member.claimed` for the same device, a rename to the current name, an update whose every field
  *   equals the current value or loses last-writer-wins, re-archiving an archived member, deleting an
  *   id never seen) produce no activity item and no history entry.
+ * - One applied event produces no activity item: a `member.claimed` that merely confirms a self-join
+ *   (the claim's `by` is the member, and its `dev` is the device whose self-add `member.added` created
+ *   the member). The device set is still updated; the self-add already reads "X joined".
  * - Entries sharing an envelope id are replayed once (first in (ts, id) order).
- * - `by` never creates a placeholder member; an unknown actor reads as "Someone".
+ * - `by` never creates a placeholder member. An actor not (yet) a real member at that point in the fold
+ *   is named from a pre-scan of the whole log (the name in its first `member.added`), so the creator's
+ *   `group.created` reads "Maya created the group" even if her `member.added` sorts after it. Only an
+ *   actor never added anywhere reads as "Someone" (or "Unknown" if a reference made a placeholder).
+ * - A deleted expense moves from `expenses` to `deletedExpenses` with a final `deleted` history entry,
+ *   so the activity feed can still open its history. It never counts in balances or totals.
+ * - `format` is caller code (the app binds `formatMinor` to the group currency, which the validator only
+ *   checks for shape); if it throws, the summary falls back to `String(minor)` rather than the fold.
  * - `member.added` over a placeholder takes the record's name and emoji (it is the newer write) and
  *   keeps the placeholder's devices and archived flag.
  * - An empty-string note is stored as "no note" (the only way an `ExpenseChanges` can clear a note).
@@ -43,7 +53,10 @@ import {
 } from './types.js';
 
 export interface ReduceOptions {
-  /** Formats minor units for activity summaries; defaults to String(n). The app passes formatMinor bound to the group currency. */
+  /**
+   * Formats minor units for activity summaries; defaults to String(n). The app passes formatMinor bound to the group
+   * currency. If it throws (e.g. a shape-valid but unknown currency code), that summary uses String(n) instead.
+   */
   format?: (minor: number) => string;
   /** This group's own localId; a group.closed whose `to` equals it is ignored. */
   selfLocalId?: string;
@@ -59,6 +72,7 @@ export function emptyState(): GroupState {
     movedTo: null,
     members: new Map(),
     expenses: new Map(),
+    deletedExpenses: new Map(),
     payments: new Map(),
     activity: [],
     totalsByCategory: new Map(),
@@ -181,6 +195,23 @@ function hostOf(server: string): string {
   return server.startsWith('https://') ? server.slice('https://'.length) : server;
 }
 
+/** What the first `member.added` for a member id (in fold order) says: the name it gave and who wrote it from where. */
+interface FirstAdd {
+  name: string;
+  by: string;
+  dev: string;
+}
+
+/** Pre-scan of the sorted, de-duplicated log: the first `member.added` per member id (the one the fold applies). */
+function firstAdds(log: readonly LogEntry[]): Map<string, FirstAdd> {
+  const out = new Map<string, FirstAdd>();
+  for (const { event } of log) {
+    if (event.type !== 'member.added' || out.has(event.member.id)) continue;
+    out.set(event.member.id, { name: event.member.name, by: event.by, dev: event.dev });
+  }
+  return out;
+}
+
 class Fold {
   readonly state: GroupState = emptyState();
   private readonly lastWrite = new Map<string, Map<ExpenseField, Stamp>>();
@@ -188,12 +219,37 @@ class Fold {
   private readonly paymentTombstones = new Set<string>();
 
   constructor(
-    private readonly format: (minor: number) => string,
+    private readonly formatter: (minor: number) => string,
     private readonly selfLocalId: string | undefined,
+    private readonly firstAdded: ReadonlyMap<string, FirstAdd>,
   ) {}
 
+  /** Caller-supplied formatting must not be able to abort the fold. */
+  private format(minor: number): string {
+    try {
+      const text = this.formatter(minor);
+      return typeof text === 'string' ? text : String(minor);
+    } catch {
+      return String(minor);
+    }
+  }
+
+  /** A member's current name; for use on targets, which are always ensured first. */
   private nameOf(memberId: string): string {
     return this.state.members.get(memberId)?.name ?? 'Someone';
+  }
+
+  /** The actor (`by`) of an event: the real member's name, else the name it is first added with anywhere in the log. */
+  private actorName(memberId: string): string {
+    const m = this.state.members.get(memberId);
+    if (m !== undefined && !m.unknown) return m.name;
+    return this.firstAdded.get(memberId)?.name ?? m?.name ?? 'Someone';
+  }
+
+  /** True if this claim only confirms a self-join: the member added itself from this very device. */
+  private confirmsSelfJoin(ev: EventOf<'member.claimed'>): boolean {
+    const add = this.firstAdded.get(ev.id);
+    return ev.by === ev.id && add !== undefined && add.by === ev.id && add.dev === ev.dev;
   }
 
   /** Returns the member, creating an "Unknown" placeholder for a dangling reference. */
@@ -222,7 +278,7 @@ class Fold {
   /** Applies one entry and records an activity item unless the event was ignored or changed nothing. */
   apply(entry: LogEntry): void {
     const ev = entry.event;
-    const actor = this.nameOf(ev.by);
+    const actor = this.actorName(ev.by);
     const summary = this.dispatch(entry, ev, actor);
     if (summary !== null) this.emit(entry, summary);
   }
@@ -269,6 +325,7 @@ class Fold {
         if (m.devices.includes(ev.dev)) return null;
         const hadDevice = m.devices.length > 0;
         m.devices = [...m.devices, ev.dev].sort(compareCodeUnits);
+        if (this.confirmsSelfJoin(ev)) return null; // the self-add already said "X joined"
         return hadDevice ? `${m.name} joined on a new device` : `${m.name} joined`;
       }
       case 'member.archived': {
@@ -294,6 +351,9 @@ class Fold {
         if (e === undefined) return null;
         s.expenses.delete(ev.id);
         this.lastWrite.delete(ev.id);
+        e.updatedAt = Math.max(e.updatedAt, ev.at);
+        e.history.push(this.history(entry, 'deleted', toExpense(e)));
+        s.deletedExpenses.set(ev.id, e);
         return `${actor} deleted ${e.title}`;
       }
       case 'payment.added': {
@@ -536,12 +596,13 @@ class Fold {
 
 /** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
 export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState {
-  const fold = new Fold(options?.format ?? ((n: number) => String(n)), options?.selfLocalId);
   const seen = new Set<string>();
-  for (const entry of sortLog(log)) {
-    if (seen.has(entry.id)) continue;
+  const entries = sortLog(log).filter((entry) => {
+    if (seen.has(entry.id)) return false;
     seen.add(entry.id);
-    fold.apply(entry);
-  }
+    return true;
+  });
+  const fold = new Fold(options?.format ?? ((n: number) => String(n)), options?.selfLocalId, firstAdds(entries));
+  for (const entry of entries) fold.apply(entry);
   return fold.finish();
 }

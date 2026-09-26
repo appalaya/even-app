@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { EVENT_TYPES, LIMITS } from './constants.js';
-import { isIsoDate, isSingleEmoji, parseEvent } from './schema.js';
+import { isGroupName, isIsoDate, isSingleEmoji, parseEvent } from './schema.js';
 import type { EventType } from './types.js';
 
 // ---------- Fixtures ----------
@@ -255,10 +255,10 @@ describe('parseEvent: names, titles, notes, currency', () => {
     expect(setName('Maya O Neil')).not.toBeNull(); // inner whitespace is fine
   });
 
+  // Changed in the integration review: group names now have their own bound, LIMITS.groupNameMax (80), so the
+  // "too long" cases moved to the member-only and group-only tests below.
   it.each([
     ['empty', ''],
-    ['too long', 'a'.repeat(LIMITS.nameMax + 1)],
-    ['too long in code points', '😀'.repeat(LIMITS.nameMax + 1)],
     ['whitespace only', '   '],
     ['leading space', ' Maya'],
     ['trailing space', 'Maya '],
@@ -271,6 +271,28 @@ describe('parseEvent: names, titles, notes, currency', () => {
   ])('rejects a %s name', (_label, name) => {
     expect(setName(name)).toBeNull();
     expect(setMemberName(name)).toBeNull();
+  });
+
+  it('bounds member names at nameMax code points', () => {
+    expect(setMemberName('a'.repeat(LIMITS.nameMax + 1))).toBeNull();
+    expect(setMemberName('😀'.repeat(LIMITS.nameMax + 1))).toBeNull();
+  });
+
+  it('bounds group names at groupNameMax code points, separately from member names', () => {
+    expect(LIMITS.groupNameMax).toBe(80);
+    const setCreated = (name: unknown) => parseEdited('group.created', (e) => (e.name = name));
+    for (const set of [setName, setCreated]) {
+      expect(set('a'.repeat(LIMITS.nameMax + 1))).not.toBeNull(); // longer than a member name is fine
+      expect(set('a'.repeat(LIMITS.groupNameMax))).not.toBeNull();
+      expect(set('😀'.repeat(LIMITS.groupNameMax))).not.toBeNull(); // 80 code points, 160 UTF-16 units
+      expect(set('a'.repeat(LIMITS.groupNameMax + 1))).toBeNull();
+      expect(set('😀'.repeat(LIMITS.groupNameMax + 1))).toBeNull();
+      expect(set(' Banff')).toBeNull();
+    }
+    expect(isGroupName('Banff 2026')).toBe(true);
+    expect(isGroupName('a'.repeat(LIMITS.groupNameMax + 1))).toBe(false);
+    expect(isGroupName('Banff ')).toBe(false);
+    expect(isGroupName(7 as unknown as string)).toBe(false);
   });
 
   it('applies the name rule to group.created and member.updated', () => {
@@ -435,6 +457,16 @@ describe('parseEvent: amounts and splits', () => {
   it('rejects a missing split', () => {
     expect(withExpense((x) => delete x.split)).toBeNull();
   });
+
+  it('normalises a -0 share (JSON text "-0") to 0 in added expenses and in changes', () => {
+    const text = JSON.stringify(FIXTURES['expense.added']).replace('"split":{', `"split":{"${PRIYA}":-0,`);
+    const parsed = parseEvent(JSON.parse(text)) as { expense: { split: Record<string, number> } } | null;
+    expect(parsed).not.toBeNull();
+    expect(Object.is(parsed?.expense.split[PRIYA], 0)).toBe(true);
+    const changed = withChanges({ amount: 5, split: { [MAYA]: 5, [NATHAN]: -0 } }) as { changes: { split: Record<string, number> } } | null;
+    expect(Object.is(changed?.changes.split[NATHAN], 0)).toBe(true);
+    expect(changed?.changes.split[MAYA]).toBe(5);
+  });
 });
 
 // ---------- expense.updated ----------
@@ -518,6 +550,13 @@ describe('parseEvent: group.moved server', () => {
     'https://',
     'sync.even.appalaya.com',
     '',
+    // Accepted by the old local regex, rejected by canonicalOrigin (keys.ts), which is now the one definition:
+    'https://a..example.com',
+    'https://-bad.example.com',
+    'https://example.com/%65ven',
+    'https://127.1',
+    'https://1.2.3.4.5',
+    ' https://sync.even.appalaya.com',
   ])('rejects %j', (server) => {
     expect(setServer(server)).toBeNull();
   });

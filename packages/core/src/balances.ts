@@ -1,18 +1,24 @@
 /**
  * Balances and settle-up simplification. See design.md "Balances and simplification".
  * Honours `state.flagged`: flagged expenses and payments are excluded from every net.
+ *
+ * `nets` sums in BigInt, so the order of accumulation never matters, and throws RangeError only if a FINAL net is
+ * not a safe integer. That is reachable only through a hostile log (e.g. 10,000 events of 10^12 minor units, all
+ * owed by one member). The app wraps `nets` (and so `simplify`/`myNet`) and shows "balances unavailable" for the
+ * group instead of crashing.
  */
 import type { GroupState, Transfer } from './types.js';
 
-function add(map: Map<string, number>, memberId: string, delta: number): void {
-  const next = (map.get(memberId) ?? 0) + delta;
-  if (!Number.isSafeInteger(next)) {
-    throw new RangeError(`net for member ${memberId} is not a safe integer`);
-  }
-  map.set(memberId, next);
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+function add(map: Map<string, bigint>, memberId: string, delta: number): void {
+  map.set(memberId, (map.get(memberId) ?? 0n) + BigInt(delta));
 }
 
-/** net[m] = Σpaid − Σshare + Σsent − Σreceived over non-flagged live expenses and payments. Includes every member (0 if none). Σ over all = 0. */
+/**
+ * net[m] = Σpaid − Σshare + Σsent − Σreceived over non-flagged live expenses and payments. Includes every member
+ * (0 if none). Σ over all = 0. Throws RangeError if a final net is outside the safe-integer range (see the header).
+ */
 export function nets(state: GroupState): Map<string, number> {
   const flaggedExpenses = new Set<string>();
   const flaggedPayments = new Set<string>();
@@ -20,18 +26,24 @@ export function nets(state: GroupState): Map<string, number> {
     (f.kind === 'expense' ? flaggedExpenses : flaggedPayments).add(f.id);
   }
 
-  const out = new Map<string, number>();
-  for (const memberId of state.members.keys()) out.set(memberId, 0);
+  const sums = new Map<string, bigint>();
+  for (const memberId of state.members.keys()) sums.set(memberId, 0n);
 
   for (const e of state.expenses.values()) {
     if (flaggedExpenses.has(e.id)) continue;
-    add(out, e.paidBy, e.amount);
-    for (const [memberId, share] of Object.entries(e.split)) add(out, memberId, -share);
+    add(sums, e.paidBy, e.amount);
+    for (const [memberId, share] of Object.entries(e.split)) add(sums, memberId, -share);
   }
   for (const p of state.payments.values()) {
     if (flaggedPayments.has(p.id)) continue;
-    add(out, p.from, p.amount);
-    add(out, p.to, -p.amount);
+    add(sums, p.from, p.amount);
+    add(sums, p.to, -p.amount);
+  }
+
+  const out = new Map<string, number>();
+  for (const [memberId, net] of sums) {
+    if (net > MAX_SAFE || net < -MAX_SAFE) throw new RangeError(`net for member ${memberId} is not a safe integer`);
+    out.set(memberId, Number(net));
   }
   return out;
 }
