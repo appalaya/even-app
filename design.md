@@ -847,6 +847,15 @@ src/app/
 Three primary screens: **Groups**, **Group**, **Add expense**. Everything else
 is a sheet or a settings sub-page.
 
+## Screens
+
+**Visual source of truth:** the design canvas at
+https://claude.ai/artifact/HqwMHUvww8bGQqPSLckPir. It holds every screen,
+state, and sheet in light and dark, the icon, and the empty-state keyframes.
+The one-line descriptions below are an index, not a spec; where they and the
+canvas differ, the canvas wins, and the difference is a doc bug to fix here.
+Deviating from the canvas in implementation is a no-go.
+
 ## Screens, in one line each
 
 - **Brand mark**: a lowercase "e" whose crossbar runs into an equals sign,
