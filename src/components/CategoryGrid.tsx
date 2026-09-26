@@ -5,12 +5,9 @@ import { emojiType, radii, strokes, useTheme } from '@/theme';
 
 import { AppText } from './AppText';
 
-/**
- * The grid's tile labels. The category picker board labels `rental` "Rental" (core's label is "Rental car",
- * which the canvas uses nowhere); every other tile uses core's label. See the kit report.
- */
+/** The grid's tile label: core's label (core labels `rental` "Rental", as the category picker board draws it). */
 export function gridLabel(category: Category): string {
-  return category === 'rental' ? 'Rental' : CATEGORY_LABEL[category];
+  return CATEGORY_LABEL[category];
 }
 
 export interface CategoryGridProps {

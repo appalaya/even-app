@@ -1,27 +1,38 @@
 import { StyleSheet, View } from 'react-native';
+import Svg, { G, Path } from 'react-native-svg';
 
 import { useTheme } from '@/theme';
 
 import { AppText } from './AppText';
-import { StrokeCanvas, type Prim } from './Icon';
 
 /**
- * The brand mark (AppIcon board, "C"): a lowercase "e" whose crossbar runs on into the top bar of an equals sign.
- * Transcribed from the 100-unit SVG, stroke 8, butt caps:
- *   M20 50H84 · M64 50A22 22 0 1 0 56.14 66.85 · M66 63H86
- * The arc is the circle of radius 22 about (42, 50), from the crossbar (0°) the long way round to 50° below it.
+ * The brand mark (IconOptions board, "C · e =", chosen; AppIcon board): a lowercase "e" whose crossbar runs on
+ * into the top bar of an equals sign. The board's 100-unit SVG, verbatim: stroke 8, no fill, butt caps (the
+ * boards set no `stroke-linecap`), the accent colour.
  */
-export const MARK_PRIMS: readonly Prim[] = [
-  { k: 'line', a: [20, 50], b: [84, 50], cap: 'butt' },
-  { k: 'arc', c: [42, 50], r: 22, from: 50, to: 360, cap: 'butt' },
-  { k: 'line', a: [66, 63], b: [86, 63], cap: 'butt' },
-];
-
+export const MARK_PATHS = ['M20 50H84', 'M64 50A22 22 0 1 0 56.14 66.85', 'M66 63H86'] as const;
 export const MARK_VIEWBOX = 100;
 export const MARK_STROKE = 8;
 
+/** The mark's paths as SVG children, for a caller that places them in its own `Svg` (the empty state). */
+export function MarkPaths({
+  color,
+  paths = MARK_PATHS,
+}: {
+  color: string;
+  paths?: readonly string[];
+}) {
+  return (
+    <G fill="none" stroke={color} strokeWidth={MARK_STROKE}>
+      {paths.map((d) => (
+        <Path key={d} d={d} />
+      ))}
+    </G>
+  );
+}
+
 export interface MarkProps {
-  /** Side of the square the 100-unit mark is drawn in (the icon board uses 240, 60, 52, 44). */
+  /** Side of the square the 100-unit mark is drawn in (the boards use 240, 60, 52, 44). */
   size: number;
   /** A resolved token colour; the accent by default. */
   color?: string;
@@ -31,13 +42,9 @@ export function Mark({ size, color }: MarkProps) {
   const { tokens } = useTheme();
   return (
     <View accessible accessibilityRole="image" accessibilityLabel="Even">
-      <StrokeCanvas
-        prims={MARK_PRIMS}
-        viewBox={MARK_VIEWBOX}
-        size={size}
-        stroke={MARK_STROKE}
-        color={color ?? tokens.accent}
-      />
+      <Svg width={size} height={size} viewBox={`0 0 ${MARK_VIEWBOX} ${MARK_VIEWBOX}`}>
+        <MarkPaths color={color ?? tokens.accent} />
+      </Svg>
     </View>
   );
 }

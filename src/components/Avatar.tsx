@@ -18,7 +18,7 @@ export interface AvatarProps {
   color?: number;
   memberId?: string;
   /**
-   * Still adding (the done-adding row and sheet): a 1.5 pt dashed outline in `glyph`, no fill, initials in
+   * Still adding (the done-adding row and sheet): a 1.5 pt dashed outline in `iconMuted`, no fill, initials in
    * `textMuted`.
    */
   outlined?: boolean;
@@ -87,7 +87,7 @@ export function Avatar({
         outlined && {
           borderWidth: strokes.dashed,
           borderStyle: 'dashed',
-          borderColor: tokens.glyph,
+          borderColor: tokens.iconMuted,
         },
         ring !== undefined && { boxShadow: `0 0 0 ${strokes.ring}px ${ring}` },
         dimmed && styles.dimmed,
@@ -151,8 +151,9 @@ export function AddAvatar({ size = 36 }: { size?: 36 }) {
 }
 
 /**
- * "✓ joined" (and "✓ joined · this phone", "✓ done"): a check and a caption in `textMuted`. The canvas shows a
- * member's joined state beside the name, never as a mark on the avatar.
+ * The joined mark as the States board draws it: a check (stroke 2.8) 4 pt before a 13/18 caption, both in
+ * `textMuted`, at the trailing edge of a row or under a name, never on the avatar. 13 pt beside a 17/22 name (Join,
+ * States); 12 pt under a 16/21 name or in a 16/21 row (Group settings "joined · this phone", Done adding "done").
  */
 export function JoinedMark({ label = 'joined', size = 12 }: { label?: string; size?: 12 | 13 }) {
   const { tokens } = useTheme();

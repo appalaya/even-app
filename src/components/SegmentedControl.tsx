@@ -25,7 +25,7 @@ export interface SegmentedControlProps<K extends string> {
 
 /**
  * The canvas's segmented control: `segmentTrack` with 2 pt between segments; the selected one on
- * `surfaceRaised` (with a `0 1px 3px` shadow in light) at 14/18 semibold, the others 14/18 medium in
+ * `segmentThumb` (with a `0 1px 3px` shadow in light) at 14/18 semibold, the others 14/18 medium in
  * `textSecondary`. Each segment extends to a 44 pt target vertically.
  */
 export function SegmentedControl<K extends string>({
@@ -67,7 +67,7 @@ export function SegmentedControl<K extends string>({
                 borderRadius: compact ? radii.segmentCompact : radii.segment,
               },
               selected && {
-                backgroundColor: tokens.surfaceRaised,
+                backgroundColor: tokens.segmentThumb,
                 boxShadow: `0 1px 3px ${tokens.segmentShadow}`,
               },
             ]}

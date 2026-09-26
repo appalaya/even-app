@@ -21,8 +21,8 @@ export interface SwitchProps {
 }
 
 /**
- * The switch as drawn on App settings: 51 × 31, fully round, the accent when on; a 27 pt `switchThumb` 2 in from
- * the edge with a `0 1px 3px` shadow. The off track (`switchOff`) is not drawn on the canvas.
+ * The switch as the States board draws it: 51 × 31, radius 16; the track the accent when on and `switchOff` when
+ * off; a 27 pt `switchThumb` 2 in from the edge (left 2 off, left 22 on) with a `0 1px 3px` `switchShadow`.
  */
 export function Switch({
   value,

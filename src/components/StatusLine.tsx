@@ -16,11 +16,11 @@ import { AppText } from './AppText';
 import { Icon } from './Icon';
 
 /**
- * - `synced`: accent dot, "Synced 2 min ago", the sync glyph in `glyph` (tap to sync now).
- * - `syncing`: accent dot, "Syncing…", the glyph in the accent turning once per 1.1 s (held at 40° under Reduce
- *   Motion), not tappable.
- * - `stale`: a hollow dot and the caller's error line ("Not synced since 9:41"). Not drawn on the canvas: the
- *   hollow dot is the Groups list's "waiting to sync" mark; see the kit report.
+ * - `synced` (Group): a 6 pt accent dot, "Synced 2 min ago", the sync glyph in `iconMuted` (tap to sync now).
+ * - `syncing` (Group, syncing): accent dot, "Syncing…", the glyph in the accent turning once per 1.1 s (held at 40°
+ *   under Reduce Motion), not tappable.
+ * - `stale` (States): a 7 pt hollow dot (1.5 pt `iconMuted` ring), "Not synced since 2:10 pm" (`notSyncedLabel`),
+ *   the sync glyph in `iconMuted`.
  */
 export type SyncState = 'synced' | 'syncing' | 'stale';
 
@@ -30,6 +30,14 @@ export interface StatusLineProps {
   label: string;
   /** Manual sync (debounced by the caller). */
   onSyncNow?: () => void;
+}
+
+/**
+ * The stale line as the States board words it: "Not synced since 2:10 pm". `time` is the caller's formatted time of
+ * the last successful sync.
+ */
+export function notSyncedLabel(time: string): string {
+  return `Not synced since ${time}`;
 }
 
 /**
@@ -46,12 +54,11 @@ export function StatusLine({ state, label, onSyncNow }: StatusLineProps) {
       accessibilityLiveRegion="polite"
     >
       <View
-        style={[
-          styles.dot,
+        style={
           state === 'stale'
-            ? { borderWidth: strokes.dashed, borderColor: tokens.glyph }
-            : { backgroundColor: tokens.accent },
-        ]}
+            ? [styles.hollowDot, { borderColor: tokens.iconMuted }]
+            : [styles.dot, { backgroundColor: tokens.accent }]
+        }
       />
       <AppText variant="caption" color="textMuted" style={styles.label}>
         {label}
@@ -64,7 +71,7 @@ export function StatusLine({ state, label, onSyncNow }: StatusLineProps) {
         accessibilityState={{ disabled: syncing, busy: syncing }}
         style={styles.button}
       >
-        <SyncGlyph spinning={syncing} color={syncing ? tokens.accent : tokens.glyph} />
+        <SyncGlyph spinning={syncing} color={syncing ? tokens.accent : tokens.iconMuted} />
       </Pressable>
     </View>
   );
@@ -94,7 +101,7 @@ export function SyncGlyph({ spinning, color }: { spinning: boolean; color: strin
 }
 
 /**
- * The 7 pt dot beside a group's name on Groups: filled accent when synced, a 1.5 pt `glyph` ring when waiting.
+ * The 7 pt dot beside a group's name on Groups: filled accent when synced, a 1.5 pt `iconMuted` ring when waiting.
  */
 export function SyncDot({ waiting = false }: { waiting?: boolean }) {
   const { tokens } = useTheme();
@@ -104,7 +111,7 @@ export function SyncDot({ waiting = false }: { waiting?: boolean }) {
       style={[
         styles.groupDot,
         waiting
-          ? { borderWidth: strokes.dashed, borderColor: tokens.glyph }
+          ? { borderWidth: strokes.dashed, borderColor: tokens.iconMuted }
           : { backgroundColor: tokens.accent },
       ]}
     />
@@ -114,6 +121,13 @@ export function SyncDot({ waiting = false }: { waiting?: boolean }) {
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
+  hollowDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: strokes.dashed,
+    flexShrink: 0,
+  },
   label: { flexShrink: 1 },
   button: {
     width: 44,

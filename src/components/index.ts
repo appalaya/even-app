@@ -6,7 +6,8 @@ export { AmountDisplay, type AmountDisplayProps } from './AmountDisplay';
 export { AppText, Strong, type AppTextProps, type TextColor } from './AppText';
 export { AddAvatar, Avatar, JoinedMark, type AvatarProps } from './Avatar';
 export { AvatarStack, type AvatarStackProps, type StackMember } from './AvatarStack';
-export { Banner, type BannerProps, type BannerVariant } from './Banner';
+export { AVATAR_STACK_MAX, stackLayout, type StackLayout } from './avatarStackLogic';
+export { Banner, movedMessage, type BannerProps, type BannerVariant } from './Banner';
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button';
 export { Card, Separator, type CardProps, type CardTone } from './Card';
 export {
@@ -30,10 +31,19 @@ export {
   MARK_DRAW_IN,
   type EmptyStateMarkProps,
 } from './EmptyStateMark';
-export { Icon, StrokeCanvas, type IconName, type IconProps, type Prim } from './Icon';
+export { Icon, ICON_NAMES, type IconName, type IconProps } from './Icon';
 export { Keypad, type KeypadKey, type KeypadProps } from './Keypad';
 export { CategoryTile, ListRow, type ListRowProps, type ListRowVariant } from './ListRow';
-export { Mark, MARK_PRIMS, Wordmark, type MarkProps, type WordmarkProps } from './Mark';
+export {
+  Mark,
+  MARK_PATHS,
+  MARK_STROKE,
+  MARK_VIEWBOX,
+  MarkPaths,
+  Wordmark,
+  type MarkProps,
+  type WordmarkProps,
+} from './Mark';
 export { MoneyText, type MoneyTextProps } from './MoneyText';
 export {
   BackButton,
@@ -53,6 +63,13 @@ export {
   type SheetPanelProps,
   type SheetProps,
 } from './Sheet';
-export { StatusLine, SyncDot, SyncGlyph, type StatusLineProps, type SyncState } from './StatusLine';
+export {
+  notSyncedLabel,
+  StatusLine,
+  SyncDot,
+  SyncGlyph,
+  type StatusLineProps,
+  type SyncState,
+} from './StatusLine';
 export { SearchField, TextField, type TextFieldProps, type TextFieldVariant } from './TextField';
 export { Switch, ToggleRow, type SwitchProps, type ToggleRowProps } from './Toggle';

@@ -1,33 +1,50 @@
 import type { AvatarPalette, Theme } from './tokens';
 
 /**
- * Avatar palette: twelve hues 30° apart in OKLCH (L ≈ 0.52, C ≤ 0.11), anchored so that clay (index 0) and
- * steel (index 7) sit on the wheel exactly. Every entry passes 4.5:1 with white text (lowest: 5.22, index 4).
- * Shared by light and dark: the contrast that matters is with the white initials, not with the canvas.
+ * Avatar palette, exactly as the Palette board draws it: twelve colours 30° apart in OKLCH hue at lightness 0.515
+ * and chroma 0.10 (Teal and Lagoon 0.09, the sRGB limit); Clay and Steel keep their earlier hexes, within 5° of
+ * their slots. Each passes 4.5:1 with white initials. A member's colour is the same hex in light and dark.
  *
- * Canvas check: clay and steel match the boards exactly. The boards also draw eight other avatar fills that are
- * near-hue variants of this wheel rather than its entries (rose #9E4A5A, mustard #8A6A1F, moss #4E7038, lagoon
- * #2B6C70, indigo #4B56A0, violet #6A539A, plum #85508A and a second plum #9A4876). They do not add up to twelve
- * (two sit on the plum slot), so the palette is left as designed; the owner decides (see the kit report).
+ * FROZEN ORDER. Core `memberColor(memberId)` (FNV-1a mod `AVATAR_COLOR_COUNT`) yields an index into this tuple and
+ * that index is what every device stores and shows, so the order below IS everyone's colour. Reordering, inserting
+ * or removing an entry changes the colour of every member of every group. Change a hex if you must (the member
+ * keeps their slot); never the order. `avatarPalette.test.ts` pins it.
  */
-const avatar: AvatarPalette = [
-  '#A0553B', // clay
-  '#945912', // ochre
-  '#7C6702', // mustard
-  '#5B7323', // moss
-  '#277B4C', // fern
-  '#08796F', // teal
-  '#087689', // lagoon
-  '#336A8E', // steel
-  '#5762A8', // indigo
-  '#78579C', // violet
-  '#8F4F82', // plum
-  '#9C4B61', // rose
+export const avatarPalette: AvatarPalette = [
+  '#964D60', // 0 Rose
+  '#A0553B', // 1 Clay
+  '#8E5A1F', // 2 Ochre
+  '#7A6610', // 3 Olive
+  '#5B712B', // 4 Moss
+  '#2F784D', // 5 Pine
+  '#04786E', // 6 Teal
+  '#047487', // 7 Lagoon
+  '#336A8E', // 8 Steel
+  '#5762A1', // 9 Indigo
+  '#755896', // 10 Violet
+  '#8A507E', // 11 Plum
 ];
 
+/** The Palette board's names for `avatarPalette`, index for index. */
+export const avatarNames = [
+  'Rose',
+  'Clay',
+  'Ochre',
+  'Olive',
+  'Moss',
+  'Pine',
+  'Teal',
+  'Lagoon',
+  'Steel',
+  'Indigo',
+  'Violet',
+  'Plum',
+] as const;
+
 /**
- * v1's only theme: spruce on warm neutrals. Every neutral below is the value the canvas boards use (light boards
- * and their dark twins, compared position by position), so the kit renders what is drawn.
+ * v1's only theme: spruce on warm neutrals. Every value below is the Palette board's token table, or where that
+ * table is silent, the value the screen boards draw (light boards and their dark twins, compared position by
+ * position), so the kit renders what is drawn.
  */
 export const even: Theme = {
   id: 'even',
@@ -35,7 +52,7 @@ export const even: Theme = {
   light: {
     background: '#F6F5F1',
     surface: '#FFFFFF',
-    surfaceRaised: '#FFFFFF',
+    segmentThumb: '#FFFFFF',
     surfaceInset: '#F6F5F1',
     fill: '#F3F2EE',
     fillMuted: '#EFEEE9',
@@ -48,7 +65,7 @@ export const even: Theme = {
     textMuted: '#6B6D67',
     textDisabled: '#A3A59F',
     onDisabledFill: '#8A8C86',
-    glyph: '#8A8C86',
+    iconMuted: '#8A8C86',
     border: '#E3E2DC',
     outline: '#DEDDD7',
     outlineDashed: '#CFCEC8',
@@ -57,21 +74,24 @@ export const even: Theme = {
     grabber: '#D6D5CF',
     scrim: 'rgba(22,23,21,0.34)',
     accent: '#1F6B5A',
+    accentPressed: '#17574A',
     onAccent: '#FFFFFF',
     accentSoft: '#1F6B5A1A',
     accentBar: '#1F6B5A8C',
     attention: '#9A5A0B',
+    rowPressed: '#ECEBE6',
+    fillPressed: '#E3E2DC',
     onAvatar: '#FFFFFF',
     switchThumb: '#FFFFFF',
-    switchOff: '#E7E6E0',
+    switchOff: '#DEDDD7',
     segmentShadow: 'rgba(22,23,21,0.10)',
     switchShadow: 'rgba(0,0,0,0.20)',
-    avatar,
+    avatar: avatarPalette,
   },
   dark: {
     background: '#0E100F',
     surface: '#1A1C1B',
-    surfaceRaised: '#3A3D3B',
+    segmentThumb: '#3A3D3B',
     surfaceInset: '#232625',
     fill: '#252827',
     fillMuted: '#2A2D2B',
@@ -84,7 +104,7 @@ export const even: Theme = {
     textMuted: '#8F928C',
     textDisabled: '#5E615C',
     onDisabledFill: '#6E716C',
-    glyph: '#7E817B',
+    iconMuted: '#7E817B',
     border: '#2E3230',
     outline: '#3A3D3B',
     outlineDashed: '#464A47',
@@ -93,16 +113,19 @@ export const even: Theme = {
     grabber: '#4A4D4B',
     scrim: 'rgba(0,0,0,0.60)',
     accent: '#74C1AB',
+    accentPressed: '#5FA893',
     onAccent: '#0B1A16',
     accentSoft: '#74C1AB29',
     accentBar: '#74C1AB8C',
     attention: '#E3A857',
+    rowPressed: '#2A2D2B',
+    fillPressed: '#3A3D3B',
     onAvatar: '#FFFFFF',
     switchThumb: '#FFFFFF',
     switchOff: '#3A3D3B',
     segmentShadow: 'rgba(0,0,0,0)',
     switchShadow: 'rgba(0,0,0,0.30)',
-    avatar,
+    avatar: avatarPalette,
   },
 };
 

@@ -1,509 +1,214 @@
-import type { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import Svg, { Circle, G, Path, Rect } from 'react-native-svg';
 
 /**
- * Stroke icons drawn with plain Views, because the app has no vector library (react-native-svg and expo-symbols
- * are not installed). Each icon is the canvas's 24-unit SVG path re-expressed as primitives in the same
- * coordinates: straight segments (round caps and joins, as `stroke-linecap/linejoin: round`), circles, rounded
- * rectangles, and circular arcs. Arcs are a ring clipped by rotated half-planes, which gives the radial (butt)
- * ends SVG draws; round-capped arcs add a dot at each end.
+ * The canvas's glyphs as vector paths. Every entry below is copied from the board SVG that draws it (24-unit
+ * viewBox, `fill="none"`, `stroke="currentColor"`, `stroke-linecap="round"`), with the board's stroke width and
+ * line join, so an icon here is the board's icon, not a redrawing of it. Nothing is approximated: arcs, rounded
+ * corners and joins are the SVG's own.
  */
 
-type Pt = readonly [number, number];
+type Shape =
+  | { k: 'path'; d: string }
+  | { k: 'circle'; cx: number; cy: number; r: number }
+  | { k: 'rect'; x: number; y: number; w: number; h: number; rx: number };
 
-export type Prim =
-  | { k: 'line'; a: Pt; b: Pt; cap?: 'round' | 'butt' }
-  | { k: 'poly'; pts: readonly Pt[]; closed?: boolean }
-  | { k: 'ring'; c: Pt; r: number }
-  | { k: 'rect'; x: number; y: number; w: number; h: number; rx: number }
-  /** Angles in degrees, clockwise from +x on screen (SVG's y-down convention), `from` < `to`. */
-  | { k: 'arc'; c: Pt; r: number; from: number; to: number; cap?: 'round' | 'butt' };
-
-interface StrokeCanvasProps {
-  prims: readonly Prim[];
-  /** Side of the square coordinate space the primitives are written in (24 for icons, 100 for the mark). */
-  viewBox: number;
-  /** Rendered side, in points. */
-  size: number;
-  /** Stroke width in viewBox units. */
+interface Glyph {
+  /** `stroke-width` as the boards draw this glyph (24-unit viewBox). */
   stroke: number;
-  color: string;
+  /** `stroke-linejoin` as drawn: `round` on most glyphs; the boards leave it at the default (miter) on a few. */
+  join: 'round' | 'miter';
+  /** A filled glyph with no stroke (the share sheet's "More"). */
+  filled?: boolean;
+  shapes: readonly Shape[];
 }
 
-/** Renders stroke primitives written in a `viewBox`-unit square, scaled to `size` points. */
-export function StrokeCanvas({ prims, viewBox, size, stroke, color }: StrokeCanvasProps) {
-  const k = size / viewBox;
-  const w = stroke * k;
-  const nodes: ReactNode[] = [];
-  const s = (p: Pt): Pt => [p[0] * k, p[1] * k];
+const path = (d: string): Shape => ({ k: 'path', d });
+const circle = (cx: number, cy: number, r: number): Shape => ({ k: 'circle', cx, cy, r });
+const rect = (x: number, y: number, w: number, h: number, rx: number): Shape => ({
+  k: 'rect',
+  x,
+  y,
+  w,
+  h,
+  rx,
+});
 
-  prims.forEach((p, i) => {
-    switch (p.k) {
-      case 'line':
-        nodes.push(segment(`${i}`, s(p.a), s(p.b), w, color, p.cap ?? 'round'));
-        break;
-      case 'poly': {
-        const pts = p.closed === true ? [...p.pts, p.pts[0] as Pt] : p.pts;
-        for (let j = 0; j < pts.length - 1; j++) {
-          nodes.push(segment(`${i}.${j}`, s(pts[j] as Pt), s(pts[j + 1] as Pt), w, color, 'round'));
-        }
-        break;
-      }
-      case 'ring':
-        nodes.push(ring(`${i}`, s(p.c), p.r * k, w, color));
-        break;
-      case 'rect':
-        nodes.push(
-          <View
-            key={i}
-            style={{
-              position: 'absolute',
-              left: p.x * k - w / 2,
-              top: p.y * k - w / 2,
-              width: p.w * k + w,
-              height: p.h * k + w,
-              borderRadius: p.rx * k + w / 2,
-              borderWidth: w,
-              borderColor: color,
-            }}
-          />,
-        );
-        break;
-      case 'arc':
-        nodes.push(arc(`${i}`, s(p.c), p.r * k, p.from, p.to, w, color, p.cap ?? 'butt', size));
-        break;
-    }
-  });
+const GEAR =
+  'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z';
 
-  return (
-    <View pointerEvents="none" style={{ width: size, height: size }}>
-      {nodes}
-    </View>
-  );
-}
-
-function segment(key: string, a: Pt, b: Pt, w: number, color: string, cap: 'round' | 'butt') {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const length = Math.hypot(dx, dy) + (cap === 'round' ? w : 0);
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-  return (
-    <View
-      key={key}
-      style={{
-        position: 'absolute',
-        left: (a[0] + b[0]) / 2 - length / 2,
-        top: (a[1] + b[1]) / 2 - w / 2,
-        width: length,
-        height: w,
-        borderRadius: cap === 'round' ? w / 2 : 0,
-        backgroundColor: color,
-        transform: [{ rotate: `${angle}deg` }],
-      }}
-    />
-  );
-}
-
-function ring(key: string, c: Pt, r: number, w: number, color: string) {
-  return (
-    <View
-      key={key}
-      style={{
-        position: 'absolute',
-        left: c[0] - r - w / 2,
-        top: c[1] - r - w / 2,
-        width: 2 * r + w,
-        height: 2 * r + w,
-        borderRadius: r + w / 2,
-        borderWidth: w,
-        borderColor: color,
-      }}
-    />
-  );
-}
-
-function dot(key: string, c: Pt, d: number, color: string) {
-  return (
-    <View
-      key={key}
-      style={{
-        position: 'absolute',
-        left: c[0] - d / 2,
-        top: c[1] - d / 2,
-        width: d,
-        height: d,
-        borderRadius: d / 2,
-        backgroundColor: color,
-      }}
-    />
-  );
-}
-
-/**
- * Keeps only the half-plane of angles [angle, angle + 180] around `c`: a large box whose top edge runs through
- * `c`, rotated about `c`, clipping a canvas-sized frame counter-rotated so its content stays put.
- */
-function HalfPlane({
-  angle,
-  c,
-  size,
-  children,
-}: {
-  angle: number;
-  c: Pt;
-  size: number;
-  children: ReactNode;
-}) {
-  const S = size * 2;
-  return (
-    <View
-      collapsable={false}
-      style={{
-        position: 'absolute',
-        left: c[0] - S,
-        top: c[1],
-        width: 2 * S,
-        height: S,
-        overflow: 'hidden',
-        transformOrigin: [S, 0, 0],
-        transform: [{ rotate: `${angle}deg` }],
-      }}
-    >
-      <View
-        collapsable={false}
-        style={{
-          position: 'absolute',
-          left: S - c[0],
-          top: -c[1],
-          width: size,
-          height: size,
-          transformOrigin: [c[0], c[1], 0],
-          transform: [{ rotate: `${-angle}deg` }],
-        }}
-      >
-        {children}
-      </View>
-    </View>
-  );
-}
-
-function arc(
-  key: string,
-  c: Pt,
-  r: number,
-  from: number,
-  to: number,
-  w: number,
-  color: string,
-  cap: 'round' | 'butt',
-  size: number,
-) {
-  // Pieces of at most 179°, each but the last running 1° past its end so the next one overlaps it: the clip
-  // edges are not antialiased, and butting two pieces exactly leaves a hairline seam.
-  const pieces: [number, number][] = [];
-  for (let start = from; start < to; start += 179) {
-    const end = Math.min(start + 179, to);
-    pieces.push([start, end < to ? end + 1 : end]);
-  }
-  const rad = (deg: number) => (deg * Math.PI) / 180;
-  const end = (deg: number): Pt => [c[0] + r * Math.cos(rad(deg)), c[1] + r * Math.sin(rad(deg))];
-  return (
-    <View key={key} pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {pieces.map(([a, b], j) => (
-        <HalfPlane key={j} angle={a} c={c} size={size}>
-          <HalfPlane angle={b - 180} c={c} size={size}>
-            {ring('r', c, r, w, color)}
-          </HalfPlane>
-        </HalfPlane>
-      ))}
-      {cap === 'round' && dot('a', end(from), w, color)}
-      {cap === 'round' && dot('b', end(to), w, color)}
-    </View>
-  );
-}
-
-// ---------- The icon set (paths from the canvas boards, 24-unit viewBox) ----------
-
-/** Feather's cog as the canvas draws it: eight semicircular teeth at radius 9, straight flanks to valleys at 7.9. */
-function gear(): Prim[] {
-  const out: Prim[] = [{ k: 'ring', c: [12, 12], r: 3 }];
-  const at = (deg: number, r: number): Pt => [
-    12 + r * Math.cos((deg * Math.PI) / 180),
-    12 + r * Math.sin((deg * Math.PI) / 180),
-  ];
-  const offset = (p: Pt, deg: number, d: number): Pt => [
-    p[0] + d * Math.cos((deg * Math.PI) / 180),
-    p[1] + d * Math.sin((deg * Math.PI) / 180),
-  ];
-  for (let t = 0; t < 8; t++) {
-    const axis = -90 + t * 45;
-    const tip = at(axis, 9);
-    out.push({ k: 'arc', c: tip, r: 2, from: axis - 90, to: axis + 90 });
-    const next = at(axis + 45, 9);
-    out.push({
-      k: 'poly',
-      pts: [offset(tip, axis + 90, 2), at(axis + 22.5, 7.9), offset(next, axis + 45 - 90, 2)],
-    });
-  }
-  return out;
-}
-
+/** Board glyphs, keyed by name. The comment names the board(s) and the size(s) they are drawn at. */
 const ICONS = {
-  chevronLeft: {
-    stroke: 2.2,
-    prims: [
-      {
-        k: 'poly',
-        pts: [
-          [15, 5],
-          [8, 12],
-          [15, 19],
-        ],
-      },
-    ],
-  },
-  chevronRight: {
-    stroke: 2.4,
-    prims: [
-      {
-        k: 'poly',
-        pts: [
-          [9, 5],
-          [16, 12],
-          [9, 19],
-        ],
-      },
-    ],
-  },
-  chevronDown: {
-    stroke: 2.6,
-    prims: [
-      {
-        k: 'poly',
-        pts: [
-          [6, 9],
-          [12, 15],
-          [18, 9],
-        ],
-      },
-    ],
-  },
-  plus: {
-    stroke: 2.4,
-    prims: [
-      { k: 'line', a: [12, 5], b: [12, 19] },
-      { k: 'line', a: [5, 12], b: [19, 12] },
-    ],
-  },
-  minus: { stroke: 2.6, prims: [{ k: 'line', a: [5, 12], b: [19, 12] }] },
-  close: {
-    stroke: 3,
-    prims: [
-      { k: 'line', a: [6, 6], b: [18, 18] },
-      { k: 'line', a: [18, 6], b: [6, 18] },
-    ],
-  },
-  check: {
-    stroke: 2.6,
-    prims: [
-      {
-        k: 'poly',
-        pts: [
-          [5, 12.5],
-          [9.5, 17],
-          [19, 7.5],
-        ],
-      },
-    ],
-  },
-  arrowRight: {
-    stroke: 2,
-    prims: [
-      { k: 'line', a: [5, 12], b: [19, 12] },
-      {
-        k: 'poly',
-        pts: [
-          [13, 6],
-          [19, 12],
-          [13, 18],
-        ],
-      },
-    ],
-  },
+  /** Back buttons, every nav bar · 24. */
+  chevronLeft: { stroke: 2.2, join: 'round', shapes: [path('M15 5l-7 7 7 7')] },
+  /** Settle rows, settings rows, the Split row · 16. */
+  chevronRight: { stroke: 2.4, join: 'round', shapes: [path('M9 5l7 7-7 7')] },
+  /** Select pills (Add expense), "Archived · 2" · 14. */
+  chevronDown: { stroke: 2.6, join: 'round', shapes: [path('M6 9l6 6 6-6')] },
+  /** "Add expense" 20, "Add member" 16 (stroke 2.4); the add-a-name button 16 and a stepper 12 draw it at 2.6. */
+  plus: { stroke: 2.4, join: 'miter', shapes: [path('M12 5v14M5 12h14')] },
+  /** The shares stepper (Split, equal) · 12. */
+  minus: { stroke: 2.6, join: 'miter', shapes: [path('M5 12h14')] },
+  /** A sheet's close button 12, a member chip's remove button 10. */
+  close: { stroke: 3, join: 'miter', shapes: [path('M6 6l12 12M18 6L6 18')] },
+  /** "You're even" 16 (2.6); the joined / done mark 12 and 13 draw it at 2.8. */
+  check: { stroke: 2.6, join: 'round', shapes: [path('M5 12.5l4.5 4.5L19 7.5')] },
+  /** Settle ("You pay Maya →"), the "moved" banner · 20. */
+  arrowRight: { stroke: 2, join: 'round', shapes: [path('M5 12h14'), path('M13 6l6 6-6 6')] },
+  /** The sync button on Group and the not-synced line · 16. */
   sync: {
     stroke: 2,
-    prims: [
-      { k: 'arc', c: [12, 12], r: 8, from: 0, to: 135.5, cap: 'round' },
-      { k: 'arc', c: [12, 12], r: 8, from: 180, to: 315.5, cap: 'round' },
-      {
-        k: 'poly',
-        pts: [
-          [17.7, 2.6],
-          [17.7, 6.6],
-          [13.7, 6.6],
-        ],
-      },
-      {
-        k: 'poly',
-        pts: [
-          [6.3, 21.4],
-          [6.3, 17.4],
-          [10.3, 17.4],
-        ],
-      },
+    join: 'round',
+    shapes: [
+      path('M20 12a8 8 0 0 1-13.7 5.6'),
+      path('M4 12a8 8 0 0 1 13.7-5.6'),
+      path('M17.7 2.6v4h-4'),
+      path('M6.3 21.4v-4h4'),
     ],
   },
+  /** The "couldn't be read" banner (Group · dark) · 20. */
   info: {
     stroke: 2,
-    prims: [
-      { k: 'ring', c: [12, 12], r: 9 },
-      { k: 'line', a: [12, 11], b: [12, 16] },
-      { k: 'line', a: [12, 7.6], b: [12, 8] },
-    ],
+    join: 'miter',
+    shapes: [circle(12, 12, 9), path('M12 11v5'), path('M12 7.6v.4')],
   },
+  /** The "update required" banner (States) · 20. */
+  update: {
+    stroke: 2,
+    join: 'round',
+    shapes: [circle(12, 12, 9), path('M12 16V8'), path('M8.5 11.5L12 8l3.5 3.5')],
+  },
+  /** The "group closed" banner (States) 20; the server line on Join 13 (stroke 2.2). */
+  lock: {
+    stroke: 2,
+    join: 'round',
+    shapes: [rect(5, 11, 14, 10, 2), path('M8 11V8a4 4 0 0 1 8 0v3')],
+  },
+  /** "Archived · 2" 18, the archived banner and Group settings' Archive row 20. */
   archive: {
     stroke: 2,
-    prims: [
-      { k: 'rect', x: 3, y: 4, w: 18, h: 5, rx: 1.5 },
-      { k: 'line', a: [5, 9], b: [5, 18] },
-      { k: 'arc', c: [7, 18], r: 2, from: 90, to: 180 },
-      { k: 'line', a: [7, 20], b: [17, 20] },
-      { k: 'arc', c: [17, 18], r: 2, from: 0, to: 90 },
-      { k: 'line', a: [19, 18], b: [19, 9] },
-      { k: 'line', a: [10, 13], b: [14, 13] },
+    join: 'round',
+    shapes: [
+      rect(3, 4, 18, 5, 1.5),
+      path('M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9'),
+      path('M10 13h4'),
     ],
   },
-  gear: { stroke: 1.8, prims: gear() },
+  /** Settings beside a large title 24, group settings in a nav bar 22. */
+  gear: { stroke: 1.8, join: 'round', shapes: [circle(12, 12, 3), path(GEAR)] },
+  /** "Share invite" in Group's nav bar · 22. */
   share: {
     stroke: 2,
-    prims: [
-      { k: 'line', a: [12, 3], b: [12, 15] },
-      {
-        k: 'poly',
-        pts: [
-          [8, 7],
-          [12, 3],
-          [16, 7],
-        ],
-      },
-      { k: 'line', a: [7, 10], b: [6, 10] },
-      { k: 'arc', c: [6, 12], r: 2, from: 180, to: 270 },
-      { k: 'line', a: [4, 12], b: [4, 19] },
-      { k: 'arc', c: [6, 19], r: 2, from: 90, to: 180 },
-      { k: 'line', a: [6, 21], b: [18, 21] },
-      { k: 'arc', c: [18, 19], r: 2, from: 0, to: 90 },
-      { k: 'line', a: [20, 19], b: [20, 12] },
-      { k: 'arc', c: [18, 12], r: 2, from: 270, to: 360 },
-      { k: 'line', a: [18, 10], b: [17, 10] },
+    join: 'round',
+    shapes: [
+      path('M12 3v12'),
+      path('M8 7l4-4 4 4'),
+      path('M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1'),
     ],
   },
-  search: {
-    stroke: 2.2,
-    prims: [
-      { k: 'ring', c: [11, 11], r: 6.5 },
-      { k: 'line', a: [16, 16], b: [20.5, 20.5] },
-    ],
-  },
-  device: {
-    stroke: 2.2,
-    prims: [
-      { k: 'rect', x: 7, y: 2.5, w: 10, h: 19, rx: 2.5 },
-      { k: 'line', a: [11, 18.5], b: [13, 18.5] },
-    ],
-  },
-  pencil: {
-    stroke: 3,
-    prims: [
-      {
-        k: 'poly',
-        closed: true,
-        pts: [
-          [4, 20],
-          [8, 19],
-          [19, 8],
-          [16, 5],
-          [5, 16],
-        ],
-      },
-    ],
-  },
+  /** The emoji picker's search field · 18. */
+  search: { stroke: 2.2, join: 'miter', shapes: [circle(11, 11, 6.5), path('M16 16l4.5 4.5')] },
+  /** "on this phone" in Activity · 12. */
+  device: { stroke: 2.2, join: 'round', shapes: [rect(7, 2.5, 10, 19, 2.5), path('M11 18.5h2')] },
+  /** The avatar's edit badge (App settings, Create group) · 12. */
+  pencil: { stroke: 3, join: 'round', shapes: [path('M4 20l4-1 11-11-3-3L5 16z')] },
+  /** The keypad's delete key · 26. */
   backspace: {
     stroke: 1.8,
-    prims: [
-      { k: 'line', a: [9, 5], b: [19, 5] },
-      { k: 'arc', c: [19, 7], r: 2, from: 270, to: 360 },
-      { k: 'line', a: [21, 7], b: [21, 17] },
-      { k: 'arc', c: [19, 17], r: 2, from: 0, to: 90 },
-      { k: 'line', a: [19, 19], b: [9, 19] },
-      {
-        k: 'poly',
-        pts: [
-          [9, 19],
-          [3, 12],
-          [9, 5],
-        ],
-      },
-      { k: 'line', a: [12.5, 9.5], b: [17.5, 14.5] },
-      { k: 'line', a: [17.5, 9.5], b: [12.5, 14.5] },
+    join: 'round',
+    shapes: [
+      path('M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6-7z'),
+      path('M12.5 9.5l5 5M17.5 9.5l-5 5'),
     ],
   },
+  /** The Paste button on Join with code · 16. */
   paste: {
     stroke: 2,
-    prims: [
-      { k: 'rect', x: 7, y: 4, w: 10, h: 4, rx: 1.5 },
-      { k: 'line', a: [7, 6], b: [6, 6] },
-      { k: 'arc', c: [6, 8], r: 2, from: 180, to: 270 },
-      { k: 'line', a: [4, 8], b: [4, 19] },
-      { k: 'arc', c: [6, 19], r: 2, from: 90, to: 180 },
-      { k: 'line', a: [6, 21], b: [18, 21] },
-      { k: 'arc', c: [18, 19], r: 2, from: 0, to: 90 },
-      { k: 'line', a: [20, 19], b: [20, 8] },
-      { k: 'arc', c: [18, 8], r: 2, from: 270, to: 360 },
-      { k: 'line', a: [18, 6], b: [17, 6] },
+    join: 'round',
+    shapes: [
+      rect(7, 4, 10, 4, 1.5),
+      path('M7 6H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1'),
     ],
   },
-  /** Rounded triangle: corner arcs of radius 2 (centres solved from the canvas path's endpoints). */
+  /** An unreadable code 20 (JoinCodeError); a field error 16 at stroke 2.2 (States). */
   warning: {
     stroke: 2,
-    prims: [
-      { k: 'line', a: [10.3, 4.2], b: [2.6, 17.5] },
-      { k: 'arc', c: [4.33, 18.5], r: 2, from: 90.9, to: 210 },
-      { k: 'line', a: [4.3, 20.5], b: [19.7, 20.5] },
-      { k: 'arc', c: [19.67, 18.5], r: 2, from: -30, to: 89.1 },
-      { k: 'line', a: [21.4, 17.5], b: [13.7, 4.2] },
-      { k: 'arc', c: [12, 5.254], r: 2, from: -148.2, to: -31.8 },
-      { k: 'line', a: [12, 9.5], b: [12, 14] },
-      { k: 'line', a: [12, 17.2], b: [12, 17.5] },
+    join: 'round',
+    shapes: [
+      path('M10.3 4.2L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z'),
+      path('M12 9.5v4.5'),
+      path('M12 17.2v.3'),
     ],
   },
+  /** "Import group file" (Groups 18, App settings 20). */
   import: {
     stroke: 2,
-    prims: [
-      { k: 'line', a: [12, 4], b: [12, 14] },
-      {
-        k: 'poly',
-        pts: [
-          [8, 10],
-          [12, 14],
-          [16, 10],
-        ],
-      },
-      { k: 'line', a: [4, 15], b: [4, 18] },
-      { k: 'arc', c: [6, 18], r: 2, from: 90, to: 180 },
-      { k: 'line', a: [6, 20], b: [18, 20] },
-      { k: 'arc', c: [18, 18], r: 2, from: 0, to: 90 },
-      { k: 'line', a: [20, 18], b: [20, 15] },
+    join: 'round',
+    shapes: [
+      path('M12 4v10'),
+      path('M8 10l4 4 4-4'),
+      path('M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3'),
     ],
   },
-} as const satisfies Record<string, { stroke: number; prims: readonly Prim[] }>;
+  /** "Anyone with this link…" (Group settings) · 18. */
+  key: {
+    stroke: 2,
+    join: 'round',
+    shapes: [circle(7.5, 15.5, 4.5), path('M10.7 12.3L20 3'), path('M16 7l3 3')],
+  },
+  /** "Regenerate invite link" (Group settings) · 20. */
+  regenerate: {
+    stroke: 2,
+    join: 'round',
+    shapes: [path('M20 11a8 8 0 1 0-2.3 5.7'), path('M20 5v6h-6')],
+  },
+  /** "Leave group" (Group settings) · 20. */
+  leave: {
+    stroke: 2,
+    join: 'round',
+    shapes: [
+      path('M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4'),
+      path('M9 8l-4 4 4 4'),
+      path('M5 12h10'),
+    ],
+  },
+  /** Share sheet (the system sheet as drawn): Messages · 26. */
+  message: { stroke: 1.8, join: 'round', shapes: [path('M4 5h16v10H9l-5 4z')] },
+  /** Share sheet: Mail · 26. */
+  mail: { stroke: 1.8, join: 'round', shapes: [rect(3, 6, 18, 12, 2), path('M3 7l9 6 9-6')] },
+  /** Share sheet: Notes · 26. */
+  notes: {
+    stroke: 1.8,
+    join: 'round',
+    shapes: [rect(5, 3, 14, 18, 2), path('M8 8h8M8 12h8M8 16h5')],
+  },
+  /** Share sheet: More (filled dots) · 26. */
+  more: {
+    stroke: 0,
+    join: 'round',
+    filled: true,
+    shapes: [circle(5, 12, 1.8), circle(12, 12, 1.8), circle(19, 12, 1.8)],
+  },
+  /** Share sheet: Copy · 20. */
+  copy: {
+    stroke: 1.8,
+    join: 'round',
+    shapes: [
+      rect(8, 8, 12, 12, 2),
+      path('M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2'),
+    ],
+  },
+} as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof ICONS;
 
+/** Every glyph name, in the order above (the kit gallery lists them). */
+export const ICON_NAMES = Object.keys(ICONS) as IconName[];
+
 export interface IconProps {
   name: IconName;
-  /** Rendered size in points (the canvas uses 12, 14, 16, 18, 20, 22, 24, 26). */
+  /** Rendered size in points (the canvas uses 10, 12, 13, 14, 16, 18, 20, 22, 24, 26). */
   size: number;
-  /** A resolved token colour (`tokens.glyph`, `tokens.accent`, …). */
+  /** A resolved token colour (`tokens.iconMuted`, `tokens.accent`, …). */
   color: string;
   /** Stroke width in 24-unit viewBox units; defaults to the width the canvas draws this glyph with. */
   strokeWidth?: number;
@@ -511,14 +216,35 @@ export interface IconProps {
 
 /** A canvas glyph. Decorative: wrap it in a labelled control, never rely on it for meaning alone. */
 export function Icon({ name, size, color, strokeWidth }: IconProps) {
-  const icon = ICONS[name];
+  const glyph: Glyph = ICONS[name];
+  const filled = glyph.filled === true;
   return (
-    <StrokeCanvas
-      prims={icon.prims}
-      viewBox={24}
-      size={size}
-      stroke={strokeWidth ?? icon.stroke}
-      color={color}
-    />
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <G
+        fill={filled ? color : 'none'}
+        stroke={filled ? 'none' : color}
+        strokeWidth={filled ? 0 : (strokeWidth ?? glyph.stroke)}
+        strokeLinecap="round"
+        strokeLinejoin={glyph.join}
+      >
+        {glyph.shapes.map((s, i) => {
+          switch (s.k) {
+            case 'path':
+              return <Path key={i} d={s.d} />;
+            case 'circle':
+              return <Circle key={i} cx={s.cx} cy={s.cy} r={s.r} />;
+            case 'rect':
+              return <Rect key={i} x={s.x} y={s.y} width={s.w} height={s.h} rx={s.rx} />;
+          }
+        })}
+      </G>
+    </Svg>
   );
 }

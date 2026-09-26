@@ -8,7 +8,11 @@ import { AppText, type TextColor } from './AppText';
 import { Icon, type IconName } from './Icon';
 
 /**
- * - `primary`: accent fill, `onAccent` label ("Create group", "Add expense", "Save", "Share link").
+ * - `primary`: accent fill, `onAccent` label ("Create group", "Add expense", "Save", "Share link"); `accentPressed`
+ *   while pressed (States board).
+ *
+ * The States board draws the pressed state of `primary` only; the other variants keep a 0.7 opacity while pressed
+ * until a board draws theirs.
  * - `secondary`: soft accent fill, accent label ("Join with code", "Copy code", "Settle up", "I'm done").
  * - `neutral`: `fill`, text label ("Cancel" under Regenerate, "Add more", "Use initials").
  * - `quiet`: no fill, accent label ("Cancel" and "Done" in a sheet header, "Details", "Unarchive").
@@ -55,6 +59,8 @@ export interface ButtonProps {
   selected?: boolean;
   /** Haptic on press: `impact` (light) or `success` (Save, Record payment). */
   haptic?: 'impact' | 'success';
+  /** Draws the pressed state without a touch (the kit gallery's States page). */
+  showPressed?: boolean;
   accessibilityLabel?: string;
   accessibilityHint?: string;
   style?: StyleProp<ViewStyle>;
@@ -74,6 +80,7 @@ export function Button({
   fullWidth,
   selected,
   haptic,
+  showPressed = false,
   accessibilityLabel,
   accessibilityHint,
   style,
@@ -123,20 +130,24 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled, selected }}
-      style={({ pressed }) => [
-        styles.base,
-        {
-          minHeight: variant === 'quiet' ? Math.max(spec.height, layout.tapTarget) : spec.height,
-          borderRadius: spec.height / 2,
-          paddingHorizontal: variant === 'quiet' ? 10 : spec.paddingHorizontal,
-          backgroundColor: background,
-          alignSelf: stretch ? 'stretch' : 'center',
-          // "Use initials" puts 10 between its avatar and label; the plus on "Add expense" sits 8 away.
-          gap: leading !== undefined ? 10 : 8,
-        },
-        pressed && !disabled && styles.pressed,
-        style,
-      ]}
+      style={({ pressed }) => {
+        const down = (pressed || showPressed) && !disabled;
+        const primary = variant === 'primary' && !disabled;
+        return [
+          styles.base,
+          {
+            minHeight: variant === 'quiet' ? Math.max(spec.height, layout.tapTarget) : spec.height,
+            borderRadius: spec.height / 2,
+            paddingHorizontal: variant === 'quiet' ? 10 : spec.paddingHorizontal,
+            backgroundColor: down && primary ? tokens.accentPressed : background,
+            alignSelf: stretch ? 'stretch' : 'center',
+            // "Use initials" puts 10 between its avatar and label; the plus on "Add expense" sits 8 away.
+            gap: leading !== undefined ? 10 : 8,
+          },
+          down && !primary && styles.pressed,
+          style,
+        ];
+      }}
     >
       {icon !== undefined && <Icon name={icon} size={20} color={tokens[labelColor]} />}
       {leading !== undefined && <View>{leading}</View>}

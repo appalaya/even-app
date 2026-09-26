@@ -54,6 +54,8 @@ export function Card({
         {
           borderRadius: radii[radius],
           backgroundColor: bg === null ? undefined : (tokens[bg] as string),
+          // Clips a pressed row's fill to the card's corners, as the States board's list does.
+          overflow: 'hidden',
         },
         tone === 'outline' && { borderWidth: strokes.hairline, borderColor: tokens.border },
         style,

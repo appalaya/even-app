@@ -6,7 +6,11 @@
  * where the canvas uses it, so a later theme knows what it is recolouring.
  */
 
-/** Twelve avatar backgrounds. `MemberState.color` from @even/core is an index into this tuple. */
+/**
+ * Twelve avatar backgrounds. `MemberState.color` (core `memberColor`, FNV-1a mod 12) is an index into this tuple,
+ * so the ORDER IS FROZEN: reordering, inserting or removing an entry recolours every member of every group on
+ * every device. A theme may change a hex (a member keeps their slot); it may never move one.
+ */
 export type AvatarPalette = readonly [
   string,
   string,
@@ -27,11 +31,14 @@ export interface ThemeTokens {
   background: string;
   /** Cards, list groups, sheets, banners. */
   surface: string;
-  /** Raised above a track: the selected segment of a segmented control. */
-  surfaceRaised: string;
+  /**
+   * The selected segment of a segmented control, and nothing else (Palette board: `segmentThumb`). #3A3D3B in
+   * dark is this thumb only; dark fields and chips are `fill` (#252827).
+   */
+  segmentThumb: string;
   /** Grouped list inside a sheet (Done adding, Join). Equals `background` in light. */
   surfaceInset: string;
-  /** Inputs, pills, category tiles, member chips, the list inside the Split sheet. */
+  /** Fields, chips, pills, category tiles, keypad-sheet rows, the list inside the Split sheet. */
   fill: string;
   /** The round close button in a sheet header. */
   fillMuted: string;
@@ -47,14 +54,14 @@ export interface ThemeTokens {
   text: string;
   /** Subtitles, field labels, section headers, unselected segments, "You owe". */
   textSecondary: string;
-  /** Captions: dates, currency code, footnotes, the sync line, "settled". */
+  /** Captions: dates, currency code, footnotes, the sync line, "settled"; placeholder text in every field. */
   textMuted: string;
   /** A disabled text action ("Done" in Split while the split is unbalanced). */
   textDisabled: string;
   /** Label on `disabledFill`. */
   onDisabledFill: string;
-  /** Chevrons, the sync glyph at rest, the dashed "not done" outline, the hollow sync dot, placeholders. */
-  glyph: string;
+  /** Chevrons, the sync glyph at rest, the dashed "not done" outline, the hollow sync dot (Palette: `iconMuted`). */
+  iconMuted: string;
 
   /** Outlined rows, cards and banners ("Archived · 2", the archive offer, a read code). */
   border: string;
@@ -72,6 +79,9 @@ export interface ThemeTokens {
   scrim: string;
 
   accent: string;
+  /** The primary button while pressed (States board). */
+  accentPressed: string;
+  /** Label and glyph on `accent` (and on `accentPressed`). */
   onAccent: string;
   /** Soft accent: tinted buttons, chips, the "I'm done" pill, selected tiles (the canvas's `accentTint`). */
   accentSoft: string;
@@ -80,18 +90,23 @@ export interface ThemeTokens {
   /** Banners. Never used for money. (No canvas board uses it yet; banners there are neutral.) */
   attention: string;
 
+  /** A pressable list row while pressed, on `surface` (States board: the settle row). */
+  rowPressed: string;
+  /** A pill or chip on `fill` while pressed (States board: "Paid by You"). */
+  fillPressed: string;
+
   /** Initials on an avatar colour. */
   onAvatar: string;
   /** Switch thumb. */
   switchThumb: string;
-  /** Switch track when off. Not drawn on the canvas (only the on state is); see the kit report. */
+  /** Switch track when off (States board). */
   switchOff: string;
   /** Shadow under the selected segment (`0 1px 3px`). Transparent in dark, where the canvas draws none. */
   segmentShadow: string;
   /** Shadow under the switch thumb (`0 1px 3px`). */
   switchShadow: string;
 
-  /** Every entry carries white initials at 4.5:1 or better. */
+  /** Every entry carries white initials at 4.5:1 or better. Frozen order: see `AvatarPalette`. */
   avatar: AvatarPalette;
 }
 

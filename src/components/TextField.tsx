@@ -18,13 +18,18 @@ import { FieldLabel } from './SectionHeader';
  * Field shapes as drawn (all on `fill` unless noted):
  * - `large`  52 · radius 16 · 20/25 semibold (Create group: Name).
  * - `title`  56 · radius 16 · 17/22, a trailing accessory (Add expense: the title with its category chip).
- * - `row`    48 · radius 16 · 17/22, a trailing 36 pt add button (Create group: "Add a name").
+ * - `row`    48 · radius 16 · 17/22, a trailing 36 pt add button (Create group: "Add a name"); without the button,
+ *            padding 16 at both ends (States: "Add a name", the Name field in error).
  * - `inline` 44 · radius 12 · 17/22 ("Your name", "Name"); on `surface` when the card around it is `fill`.
  * - `pill`   44 · radius 22 · 15/20 (Settle: "Note (optional)").
  * - `cell`   40 · radius 10 · 16/21 medium, right-aligned tabular, on `surface`; a 2 pt accent ring while focused
  *            (Split amounts and percentages).
- * - `code`   208 · radius 18 · 15/22 mono, multiline, a Paste button in the corner; an error draws a 1.5 pt
- *            inset ring in `text` and the message under it (Join with code).
+ * - `code`   208 · radius 18 · 15/22 mono, multiline, a Paste button in the corner (Join with code).
+ *
+ * Placeholder text is `textMuted` (Palette, States). An `error` draws a 1.5 pt inset ring in `text` on any shape
+ * and the message under it: on `code` a 20 pt warning glyph, 10 pt gap, 16/22 semibold, 14 below the field
+ * (JoinCodeError); on every other shape a 16 pt glyph (stroke 2.2), 8 pt gap, 14/19 semibold, 8 below, inset 4
+ * (States: "Someone here is already called Maya. Try Maya K.").
  */
 export type TextFieldVariant = 'large' | 'title' | 'row' | 'inline' | 'pill' | 'cell' | 'code';
 
@@ -99,7 +104,10 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   onAdd?: () => void;
   /** `code`: the Paste button's action. */
   onPaste?: () => void;
-  /** `code`: the message under an unreadable code ("That code isn't complete. Copy it again."). */
+  /**
+   * The error line under the field; also rings the field. `code`: "That code isn't complete. Copy it again.";
+   * a name: "Someone here is already called Maya. Try Maya K."
+   */
   error?: string;
   /** `inline` inside a `fill` card sits on `surface` (Create group's You card). */
   on?: 'surface' | 'fill';
@@ -110,7 +118,7 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   containerStyle?: ViewProps['style'];
 }
 
-/** A text field in one of the canvas shapes. Placeholder text is `glyph`, the caret and selection the accent. */
+/** A text field in one of the canvas shapes. Placeholder text is `textMuted`, the caret and selection the accent. */
 export function TextField({
   variant = 'inline',
   label,
@@ -133,11 +141,13 @@ export function TextField({
   const background =
     variant === 'cell' || (variant === 'inline' && on === 'fill') ? tokens.surface : tokens.fill;
   const ring =
-    variant === 'cell' && (focused || active)
-      ? `0 0 0 ${strokes.ring}px ${tokens.accent}`
-      : variant === 'code' && error !== undefined
-        ? `inset 0 0 0 ${strokes.selected}px ${tokens.text}`
+    error !== undefined
+      ? `inset 0 0 0 ${strokes.selected}px ${tokens.text}`
+      : variant === 'cell' && (focused || active)
+        ? `0 0 0 ${strokes.ring}px ${tokens.accent}`
         : undefined;
+  const paddingRight =
+    variant === 'row' && onAdd === undefined ? spec.paddingLeft : spec.paddingRight;
 
   const field = (
     <View
@@ -147,7 +157,7 @@ export function TextField({
           minHeight: spec.minHeight,
           borderRadius: spec.radius,
           paddingLeft: variant === 'code' ? 0 : spec.paddingLeft,
-          paddingRight: variant === 'code' ? 0 : spec.paddingRight,
+          paddingRight: variant === 'code' ? 0 : paddingRight,
           backgroundColor: background,
           width,
           boxShadow: ring,
@@ -160,7 +170,7 @@ export function TextField({
         multiline={variant === 'code' ? true : input.multiline}
         accessibilityLabel={input.accessibilityLabel ?? label}
         accessibilityHint={error ?? input.accessibilityHint}
-        placeholderTextColor={tokens.glyph}
+        placeholderTextColor={tokens.textMuted}
         selectionColor={tokens.accent}
         cursorColor={tokens.accent}
         onFocus={(e) => {
@@ -219,16 +229,26 @@ export function TextField({
           {helper}
         </AppText>
       )}
-      {error !== undefined && (
-        <View style={styles.error} accessibilityRole="alert">
-          <View style={styles.errorIcon}>
-            <Icon name="warning" size={20} color={tokens.text} />
+      {error !== undefined &&
+        (variant === 'code' ? (
+          <View style={styles.codeError} accessibilityRole="alert">
+            <View style={styles.errorIcon}>
+              <Icon name="warning" size={20} color={tokens.text} />
+            </View>
+            <AppText weight="semibold" style={styles.codeErrorText}>
+              {error}
+            </AppText>
           </View>
-          <AppText weight="semibold" style={styles.errorText}>
-            {error}
-          </AppText>
-        </View>
-      )}
+        ) : (
+          <View style={styles.fieldError} accessibilityRole="alert">
+            <View style={styles.errorIcon}>
+              <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
+            </View>
+            <AppText variant="footnote" weight="semibold" style={styles.flex}>
+              {error}
+            </AppText>
+          </View>
+        ))}
     </View>
   );
 }
@@ -248,7 +268,7 @@ export function SearchField({
         {...input}
         accessibilityLabel={input.accessibilityLabel ?? input.placeholder}
         returnKeyType="search"
-        placeholderTextColor={tokens.glyph}
+        placeholderTextColor={tokens.textMuted}
         selectionColor={tokens.accent}
         cursorColor={tokens.accent}
         style={[typography.callout, { color: tokens.text }, styles.input]}
@@ -288,15 +308,25 @@ const styles = StyleSheet.create({
     paddingRight: 16,
     borderRadius: 20,
   },
-  error: {
+  /** JoinCodeError: 14 below the field (6 group gap + 8), inset 4 from the field's edge. */
+  codeError: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
     marginTop: 8,
     marginHorizontal: 4,
   },
+  codeErrorText: { flex: 1, fontSize: 16, lineHeight: 22 },
+  /** States: 8 below the field (6 group gap + 2), padding 0 4. */
+  fieldError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 2,
+    paddingHorizontal: 4,
+  },
   errorIcon: { paddingTop: 1 },
-  errorText: { flex: 1, fontSize: 16, lineHeight: 22 },
+  flex: { flex: 1 },
   search: {
     flexDirection: 'row',
     alignItems: 'center',

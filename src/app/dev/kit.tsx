@@ -21,12 +21,16 @@ import {
   FieldLabel,
   Footnote,
   HeaderButton,
+  Icon,
+  ICON_NAMES,
   JoinedMark,
   Keypad,
   ListRow,
   Mark,
   MemberChip,
   MoneyText,
+  movedMessage,
+  notSyncedLabel,
   Screen,
   SearchField,
   SectionHeader,
@@ -44,7 +48,9 @@ import {
 } from '@/components';
 import {
   ThemeProvider,
+  avatarNames,
   layout,
+  monoFamily,
   typography,
   useTheme,
   type AppearancePreference,
@@ -57,7 +63,8 @@ import {
  * Reached by long-pressing the wordmark on Groups in a development build; production builds redirect home.
  *
  * Parameters: `section` (one section), `scheme` (light | dark), `sheet=1` (open the modal sheet), `tour=1` (the
- * screenshot tour below), e.g. `even://dev/kit?section=buttons&scheme=dark`.
+ * screenshot tour below), `quiet=1` (no LogBox toasts over a screenshot), `y` (scroll offset in points), e.g.
+ * `even://dev/kit?section=buttons&scheme=dark&y=600`.
  */
 export default function KitRoute() {
   if (!__DEV__) return <Redirect href="/" />;
@@ -71,9 +78,11 @@ const LOC = 'en-CA';
 const SECTIONS = [
   { key: 'type', label: 'Type' },
   { key: 'colors', label: 'Colours' },
+  { key: 'palette', label: 'Palette' },
   { key: 'buttons', label: 'Buttons' },
   { key: 'avatars', label: 'Avatars' },
   { key: 'status', label: 'Money · status · banners' },
+  { key: 'states', label: 'States' },
   { key: 'lists', label: 'Lists' },
   { key: 'more-lists', label: 'More lists' },
   { key: 'controls', label: 'Controls' },
@@ -91,12 +100,26 @@ function KitGallery() {
     scheme?: string;
     sheet?: string;
     tour?: string;
+    quiet?: string;
+    y?: string;
   }>();
   const initialScheme: AppearancePreference =
     params.scheme === 'dark' || params.scheme === 'light' ? params.scheme : 'system';
   const [appearance, setAppearance] = useState<AppearancePreference>(initialScheme);
+  // A later link to the gallery (same screen, new parameters) switches the scheme too.
+  const [linkedScheme, setLinkedScheme] = useState(initialScheme);
+  if (linkedScheme !== initialScheme) {
+    setLinkedScheme(initialScheme);
+    setAppearance(initialScheme);
+  }
   const chosen = SECTIONS.find((s) => s.key === params.section)?.key;
   const tour = useTour(params.tour === '1');
+  const quiet = params.quiet === '1';
+  useEffect(() => {
+    if (!quiet) return;
+    LogBox.ignoreAllLogs(true);
+    LogBox.clearAllLogs();
+  }, [quiet]);
 
   return (
     <ThemeProvider appearance={tour.active ? tour.scheme : appearance}>
@@ -105,7 +128,7 @@ function KitGallery() {
         onAppearance={setAppearance}
         only={tour.active ? tour.section : chosen}
         sheetOpen={params.sheet === '1'}
-        scrollY={tour.active ? tour.scrollY : undefined}
+        scrollY={tour.active ? tour.scrollY : params.y !== undefined ? Number(params.y) : undefined}
         caption={tour.active ? tour.caption : undefined}
         onMeasure={tour.onMeasure}
       />
@@ -175,7 +198,10 @@ function KitScreen({
   const scroll = useRef<ScrollViewInstance>(null);
   const measured = useRef({ content: 0, viewport: 0 });
   useEffect(() => {
-    if (scrollY !== undefined) scroll.current?.scrollTo({ y: scrollY, animated: false });
+    if (scrollY === undefined) return;
+    // After the first layout, so a link's offset is not clamped to an empty content height.
+    const timer = setTimeout(() => scroll.current?.scrollTo({ y: scrollY, animated: false }), 300);
+    return () => clearTimeout(timer);
   }, [scrollY, only]);
   const show = (key: SectionKey) => only === undefined || only === key;
   return (
@@ -213,9 +239,11 @@ function KitScreen({
         </View>
         {show('type') && <TypeSection />}
         {show('colors') && <ColorSection />}
+        {show('palette') && <PaletteSection />}
         {show('buttons') && <ButtonSection />}
         {show('avatars') && <AvatarSection />}
         {show('status') && <StatusSection />}
+        {show('states') && <StatesSection />}
         {show('lists') && <ListSection />}
         {show('more-lists') && <MoreListSection />}
         {show('controls') && <ControlSection />}
@@ -253,12 +281,13 @@ function Row({ children, gap = 10 }: { children: ReactNode; gap?: number }) {
   return <View style={[styles.row, { gap }]}>{children}</View>;
 }
 
+/** The boards' people and their palette slots: Sam Violet, Maya Clay, Nathan Steel, Priya Rose, J Ochre. */
 const MEMBERS = {
-  you: { id: 'you', name: 'Sam', initials: 'S', color: 9 },
-  maya: { id: 'maya', name: 'Maya', initials: 'M', color: 0 },
+  you: { id: 'you', name: 'Sam', initials: 'S', color: 10 },
+  maya: { id: 'maya', name: 'Maya', initials: 'M', color: 1 },
   jordan: { id: 'jordan', name: 'Jordan', emoji: '🏂' },
-  nathan: { id: 'nathan', name: 'Nathan', initials: 'N', color: 7 },
-  priya: { id: 'priya', name: 'Priya', initials: 'P', color: 11 },
+  nathan: { id: 'nathan', name: 'Nathan', initials: 'N', color: 8 },
+  priya: { id: 'priya', name: 'Priya', initials: 'P', color: 0 },
 } as const;
 
 // ---------- Sections ----------
@@ -308,13 +337,123 @@ function ColorSection() {
           </View>
         ))}
       </Gutter>
-      <Note>Avatar palette 0–11 (clay … rose)</Note>
+      <Note>Avatar palette 0–11 (Rose … Plum; the Palette page names them)</Note>
       <Gutter>
         <Row gap={6}>
           {tokens.avatar.map((_, i) => (
             <Avatar key={i} size={26} initials={`${i}`} color={i} />
           ))}
         </Row>
+      </Gutter>
+    </>
+  );
+}
+
+/** The Palette board's letters on each swatch, index for index. */
+const PALETTE_LETTERS = ['P', 'M', 'D', 'L', 'H', 'K', 'A', 'C', 'N', 'B', 'S', 'O'] as const;
+
+/** The Palette board's token table, in its order (plus the States board's pressed and switch tokens). */
+const PALETTE_TOKENS: readonly (keyof ThemeTokens)[] = [
+  'background',
+  'surface',
+  'fill',
+  'segmentThumb',
+  'segmentTrack',
+  'text',
+  'textSecondary',
+  'textMuted',
+  'iconMuted',
+  'border',
+  'separator',
+  'separatorInset',
+  'accent',
+  'accentPressed',
+  'onAccent',
+  'accentSoft',
+  'accentBar',
+  'scrim',
+  'disabledFill',
+  'onDisabledFill',
+  'rowPressed',
+  'fillPressed',
+  'switchOff',
+];
+
+/** The Palette board: the twelve avatar colours with names and hexes, then the theme tokens in both schemes. */
+function PaletteSection() {
+  const { tokens, theme } = useTheme();
+  return (
+    <>
+      <Title>Palette</Title>
+      <Gutter gap={16}>
+        <AppText variant="caption" weight="semibold" color="textSecondary">
+          Avatar colours · same hex in both schemes
+        </AppText>
+        <View style={styles.paletteGrid}>
+          {tokens.avatar.map((hex, i) => (
+            <View key={hex} style={styles.paletteCell}>
+              <Avatar size={36} initials={PALETTE_LETTERS[i]} color={i} />
+              <AppText variant="subhead" weight="semibold">
+                {avatarNames[i]}
+              </AppText>
+              <AppText variant="caption" color="textSecondary" style={styles.mono}>
+                {hex}
+              </AppText>
+            </View>
+          ))}
+        </View>
+      </Gutter>
+      <Title>Theme tokens</Title>
+      <Gutter>
+        <Card radius="group" separatorInset={16}>
+          <View style={styles.tokenRow}>
+            <AppText variant="caption" weight="semibold" color="textSecondary" style={styles.flex}>
+              Token
+            </AppText>
+            <AppText
+              variant="caption"
+              weight="semibold"
+              color="textSecondary"
+              style={styles.tokenCol}
+            >
+              Light
+            </AppText>
+            <AppText
+              variant="caption"
+              weight="semibold"
+              color="textSecondary"
+              style={styles.tokenCol}
+            >
+              Dark
+            </AppText>
+          </View>
+          {PALETTE_TOKENS.map((name) => (
+            <View key={name} style={styles.tokenRow}>
+              <AppText variant="caption" style={styles.flex} numberOfLines={1}>
+                {name}
+              </AppText>
+              {([theme.light, theme.dark] as const).map((t, i) => (
+                <View key={i} style={[styles.tokenCol, styles.tokenValue]}>
+                  <View
+                    style={[
+                      styles.tokenSwatch,
+                      { backgroundColor: t[name] as string, borderColor: tokens.border },
+                    ]}
+                  />
+                  <AppText
+                    variant="caption"
+                    color="textMuted"
+                    style={[styles.mono, styles.flex]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    {t[name] as string}
+                  </AppText>
+                </View>
+              ))}
+            </View>
+          ))}
+        </Card>
       </Gutter>
     </>
   );
@@ -353,7 +492,7 @@ function ButtonSection() {
         <Button
           label="Use initials"
           variant="neutral"
-          leading={<Avatar size={28} initials="S" color={9} />}
+          leading={<Avatar size={28} initials="S" color={MEMBERS.you.color} />}
         />
         <Button label="Join" disabled />
         <Note>Quiet: Cancel (regular) · Done (semibold) · Done disabled · Details</Note>
@@ -370,6 +509,7 @@ function ButtonSection() {
 
 function AvatarSection() {
   const { tokens } = useTheme();
+  // Given in any order: AvatarStack sorts still adding (outlined) first, then done (filled).
   const group: StackMember[] = [
     { ...MEMBERS.maya, done: true },
     { ...MEMBERS.jordan, done: true },
@@ -377,12 +517,12 @@ function AvatarSection() {
     { ...MEMBERS.you, done: false },
   ];
   const many: StackMember[] = [
+    ...Array.from({ length: 7 }, (_, i) => ({ id: `d${i}`, initials: 'X', color: i, done: true })),
     { ...MEMBERS.you, done: false },
     { ...MEMBERS.priya, done: false },
     { id: 'leo', initials: 'L', done: false },
     { id: 'ben', initials: 'B', done: false },
     { id: 'diego', initials: 'D', done: false },
-    ...Array.from({ length: 7 }, (_, i) => ({ id: `d${i}`, initials: 'X', color: i, done: true })),
   ];
   const fresh: StackMember[] = [
     { ...MEMBERS.you, done: true },
@@ -397,9 +537,9 @@ function AvatarSection() {
         <Note>Initials at 24 · 26 · 28 · 30 · 32 · 36 · 72</Note>
         <Row gap={8}>
           {([24, 26, 28, 30, 32, 36] as const).map((s) => (
-            <Avatar key={s} size={s} initials="M" color={0} />
+            <Avatar key={s} size={s} initials="M" color={MEMBERS.maya.color} />
           ))}
-          <Avatar size={72} initials="S" color={9} />
+          <Avatar size={72} initials="S" color={MEMBERS.you.color} />
         </Row>
         <Note>Emoji on surface · on inset/fill list · outlined (still adding) · dimmed</Note>
         <Row gap={8}>
@@ -408,24 +548,24 @@ function AvatarSection() {
           ))}
           <Avatar size={32} emoji="🏂" on="inset" />
           <Avatar size={30} initials="S" outlined />
-          <Avatar size={32} initials="N" color={7} dimmed />
+          <Avatar size={32} initials="N" color={MEMBERS.nathan.color} dimmed />
         </Row>
         <Note>You card: pencil badge (initials on surface; emoji on surface; emoji on fill)</Note>
         <Row gap={24}>
-          <Avatar size={72} initials="S" color={9} badge="pencil" />
+          <Avatar size={72} initials="S" color={MEMBERS.you.color} badge="pencil" />
           <Avatar size={72} emoji="🌲" badge="pencil" />
           <View style={[styles.fillBox, { backgroundColor: tokens.fill }]}>
             <Avatar size={72} emoji="🌲" on="fill" badge="pencil" badgeRing={tokens.fill} />
           </View>
         </Row>
-        <Note>Add member · joined marks</Note>
+        <Note>Add member · joined marks (12 under a name, 13 beside a 17/22 name)</Note>
         <Row gap={16}>
           <AddAvatar />
           <JoinedMark />
           <JoinedMark label="joined · this phone" />
           <JoinedMark label="joined" size={13} />
         </Row>
-        <Note>Done-adding row, 4 members (3 of 4)</Note>
+        <Note>Done-adding row, 4 members given done-first; drawn still-adding first (3 of 4)</Note>
         <Card radius="group" style={styles.doneRow}>
           <AvatarStack members={group} />
           <AppText variant="subhead" style={styles.flex}>
@@ -433,7 +573,7 @@ function AvatarSection() {
           </AppText>
           <Button label="I'm done" size="pill" variant="secondary" />
         </Card>
-        <Note>12 members: five, then +7 (26 pt)</Note>
+        <Note>12 members, 5 still adding: those five, then +7 (26 pt)</Note>
         <Card radius="group" style={[styles.doneRow, styles.doneRowMany]}>
           <AvatarStack members={many} size={26} />
           <AppText variant="subhead" style={styles.flex}>
@@ -464,7 +604,7 @@ function StatusSection() {
         <MoneyText amount={5200} currency={CUR} locale={LOC} size="big" />
         <StatusLine state="synced" label="Synced 2 min ago" onSyncNow={() => {}} />
         <StatusLine state="syncing" label="Syncing…" />
-        <StatusLine state="stale" label="Not synced since 9:41" onSyncNow={() => {}} />
+        <StatusLine state="stale" label={notSyncedLabel('2:10 pm')} onSyncNow={() => {}} />
         <Note>Inline: 16 semibold · 16 medium · 17 semibold · 15 medium</Note>
         <Row gap={16}>
           <MoneyText amount={4400} currency={CUR} locale={LOC} />
@@ -480,14 +620,122 @@ function StatusSection() {
       </Gutter>
       <Title>Banners</Title>
       <Gutter gap={8}>
-        <Banner variant="unreadable" message="2 entries couldn't be read" actionLabel="Details" />
-        <Banner variant="archived" message="Archived · read-only" actionLabel="Unarchive" />
-        <Note>Not on the canvas (anatomy reused; copy provisional)</Note>
-        <Banner variant="updateRequired" message="Update Even to see new entries" />
-        <Banner variant="closed" message="This group was closed" />
-        <Banner variant="moved" message="This group moved to a new link" actionLabel="Details" />
+        <Banner variant="unreadable" message="2 entries couldn't be read" />
+        <Banner variant="archived" message="Archived · read-only" />
+        <Banner variant="updateRequired" />
+        <Banner variant="closed" />
+        <Banner variant="moved" message={movedMessage('Maya', 'sync.example.net')} />
       </Gutter>
     </>
+  );
+}
+
+/**
+ * The States board, top to bottom: the three Group banners, the not-synced line, the switch on and off, a field's
+ * placeholder and error, and the pressed primary button, list row and chip, then the joined mark.
+ */
+function StatesSection() {
+  const [on, setOn] = useState(true);
+  const [off, setOff] = useState(false);
+  return (
+    <>
+      <Title>States</Title>
+      <Gutter gap={8}>
+        <StateLabel>Banner · update required</StateLabel>
+        <Banner variant="updateRequired" />
+        <StateLabel>Banner · group closed</StateLabel>
+        <Banner variant="closed" />
+        <StateLabel>Banner · group moved</StateLabel>
+        <Banner variant="moved" message={movedMessage('Maya', 'sync.example.net')} />
+        <StateLabel>Status line · not synced</StateLabel>
+        <View style={styles.statusFrame}>
+          <StatusLine state="stale" label={notSyncedLabel('2:10 pm')} onSyncNow={() => {}} />
+        </View>
+        <StateLabel>Switch · on, off</StateLabel>
+        <Card radius="group" separatorInset={16}>
+          <ToggleRow label="On" value={on} onValueChange={setOn} />
+          <ToggleRow label="Off" value={off} onValueChange={setOff} />
+        </Card>
+        <StateLabel>Text field · placeholder</StateLabel>
+        <TextField variant="row" accessibilityLabel="Name" placeholder="Add a name" />
+        <StateLabel>Text field · error</StateLabel>
+        <TextField
+          variant="row"
+          accessibilityLabel="Name"
+          defaultValue="Maya"
+          error="Someone here is already called Maya. Try Maya K."
+        />
+        <StateLabel>Pressed · primary button</StateLabel>
+        <Row>
+          <View style={styles.pressedCell}>
+            <Button label="Save" />
+            <AppText variant="caption" color="textMuted">
+              Default
+            </AppText>
+          </View>
+          <View style={styles.pressedCell}>
+            <Button label="Save" showPressed />
+            <AppText variant="caption" color="textMuted">
+              Pressed
+            </AppText>
+          </View>
+        </Row>
+        <StateLabel>Pressed · list row</StateLabel>
+        <Card separatorInset={60}>
+          <ListRow
+            variant="settle"
+            paddingRight={16}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
+            title="You pay Maya"
+            trailing={
+              <AppText variant="caption" color="textMuted">
+                Default
+              </AppText>
+            }
+            onPress={() => {}}
+          />
+          <ListRow
+            variant="settle"
+            paddingRight={16}
+            leading={<Avatar size={32} initials="N" color={MEMBERS.nathan.color} />}
+            title="Nathan pays Maya"
+            trailing={
+              <AppText variant="caption" color="textSecondary">
+                Pressed
+              </AppText>
+            }
+            onPress={() => {}}
+            showPressed
+          />
+        </Card>
+        <StateLabel>Pressed · chip</StateLabel>
+        <Row gap={8}>
+          <SelectPill label="Paid by" value="You" />
+          <SelectPill label="Paid by" value="You" showPressed />
+          <AppText variant="caption" color="textMuted">
+            Default, pressed
+          </AppText>
+        </Row>
+        <StateLabel>Joined mark</StateLabel>
+        <Card>
+          <ListRow
+            variant="choice"
+            leading={<Avatar size={36} initials="M" color={MEMBERS.maya.color} />}
+            title="Maya"
+            trailing={<JoinedMark size={13} />}
+          />
+        </Card>
+      </Gutter>
+    </>
+  );
+}
+
+/** A States-board heading: 13/18 semibold `textSecondary`, 14 above, inset 4. */
+function StateLabel({ children }: { children: ReactNode }) {
+  return (
+    <AppText variant="caption" weight="semibold" color="textSecondary" style={styles.stateLabel}>
+      {children}
+    </AppText>
   );
 }
 
@@ -520,7 +768,7 @@ function ListSection() {
         <Card separatorInset={60}>
           <ListRow
             variant="settle"
-            leading={<Avatar size={32} initials="M" color={0} />}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
             title="You pay Maya"
             detail={<MoneyText amount={4400} currency={CUR} locale={LOC} />}
             chevron
@@ -538,7 +786,7 @@ function ListSection() {
         <Card tone="tint">
           <ListRow
             variant="settle"
-            leading={<Avatar size={32} initials="M" color={0} />}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
             title="You pay Maya"
             detail={<MoneyText amount={4400} currency={CUR} locale={LOC} />}
             chevron="accent"
@@ -549,7 +797,7 @@ function ListSection() {
         <Card separatorInset={60}>
           <ListRow
             variant="balance"
-            leading={<Avatar size={32} initials="S" color={9} />}
+            leading={<Avatar size={32} initials="S" color={MEMBERS.you.color} />}
             title={
               <AppText variant="callout">
                 <Strong>You</Strong> owe
@@ -559,7 +807,7 @@ function ListSection() {
           />
           <ListRow
             variant="balance"
-            leading={<Avatar size={32} initials="M" color={0} />}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
             title={
               <AppText variant="callout">
                 <Strong>Maya</Strong> is owed
@@ -572,7 +820,7 @@ function ListSection() {
         <Card separatorInset={60}>
           <ListRow
             variant="activity"
-            leading={<Avatar size={32} initials="M" color={0} />}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
             title={
               <AppText variant="subheadLoose">
                 <Strong>Maya</Strong> is done adding expenses
@@ -582,7 +830,7 @@ function ListSection() {
           />
           <ListRow
             variant="activity"
-            leading={<Avatar size={32} initials="M" color={0} />}
+            leading={<Avatar size={32} initials="M" color={MEMBERS.maya.color} />}
             title={
               <AppText variant="subheadLoose" tabular>
                 <Strong>Maya</Strong> changed Nathan&apos;s lift tickets from $400.00 to $420.00
@@ -606,7 +854,7 @@ function MoreListSection() {
         <Card radius="group" separatorInset={64}>
           <ListRow
             variant="member"
-            leading={<Avatar size={36} initials="S" color={9} />}
+            leading={<Avatar size={36} initials="S" color={MEMBERS.you.color} />}
             title={
               <AppText variant="callout" weight="medium">
                 Sam{' '}
@@ -619,7 +867,7 @@ function MoreListSection() {
           />
           <ListRow
             variant="member"
-            leading={<Avatar size={36} initials="N" color={7} />}
+            leading={<Avatar size={36} initials="N" color={MEMBERS.nathan.color} />}
             title="Nathan"
             subtitle="not joined yet"
           />
@@ -683,14 +931,14 @@ function MoreListSection() {
         <Card tone="inset" separatorInset={62}>
           <ListRow
             variant="choice"
-            leading={<Avatar size={36} initials="M" color={0} />}
+            leading={<Avatar size={36} initials="M" color={MEMBERS.maya.color} />}
             title="Maya"
             trailing={<JoinedMark size={13} />}
             onPress={() => {}}
           />
           <ListRow
             variant="choice"
-            leading={<Avatar size={36} initials="N" color={7} />}
+            leading={<Avatar size={36} initials="N" color={MEMBERS.nathan.color} />}
             title="Nathan"
             chevron
             onPress={() => {}}
@@ -747,7 +995,7 @@ function ControlSection() {
             />
           </View>
         </Card>
-        <Note>Toggle row: on · off (off track not drawn)</Note>
+        <Note>Toggle row: on · off</Note>
         <Card radius="group" separatorInset={16}>
           <ToggleRow label="Notifications" value={notify} onValueChange={setNotify} />
           <ToggleRow label="Notifications" value={!notify} onValueChange={(v) => setNotify(!v)} />
@@ -765,7 +1013,7 @@ function ControlSection() {
         </Row>
         <Note>Members: removable · toggle off / on</Note>
         <Row gap={8}>
-          <MemberChip name="Maya" initials="M" color={0} onRemove={() => {}} />
+          <MemberChip name="Maya" initials="M" color={MEMBERS.maya.color} onRemove={() => {}} />
           <MemberChip name="Jordan" initials="J" color={2} onRemove={() => {}} />
         </Row>
         <Row gap={8}>
@@ -773,7 +1021,7 @@ function ControlSection() {
           <MemberChip
             name="Nathan"
             initials="N"
-            color={7}
+            color={MEMBERS.nathan.color}
             selected={nathan}
             onToggle={() => setNathan(!nathan)}
           />
@@ -1039,6 +1287,19 @@ function BrandSection() {
           <HeaderButton icon="gear" accessibilityLabel="Group settings" onPress={() => {}} />
         </Row>
       </Gutter>
+      <Title>Icons (24 pt, board stroke)</Title>
+      <Gutter>
+        <View style={styles.iconGrid}>
+          {ICON_NAMES.map((name) => (
+            <View key={name} style={styles.iconCell}>
+              <Icon name={name} size={24} color={tokens.text} />
+              <AppText variant="caption" color="textMuted" numberOfLines={1}>
+                {name}
+              </AppText>
+            </View>
+          ))}
+        </View>
+      </Gutter>
       <Title>Empty state (rest frame)</Title>
       <View style={styles.center}>
         <EmptyStateMark />
@@ -1082,6 +1343,24 @@ const styles = StyleSheet.create({
   sheetStage: { paddingTop: 16, marginTop: 8 },
   sheetBody: { paddingHorizontal: 20, gap: 2 },
   sheetFill: { flex: 1, justifyContent: 'center', paddingVertical: 8 },
+  stateLabel: { marginTop: 14, marginHorizontal: 4 },
+  statusFrame: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
+  pressedCell: { flex: 1, flexBasis: 0, alignItems: 'center', gap: 6 },
+  paletteGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 16 },
+  paletteCell: { width: '25%', alignItems: 'flex-start', gap: 6 },
+  mono: { fontFamily: monoFamily },
+  tokenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 36,
+    paddingHorizontal: 16,
+  },
+  tokenCol: { width: 104 },
+  tokenValue: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  tokenSwatch: { width: 16, height: 16, borderRadius: 5, borderWidth: 1 },
+  iconGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 14 },
+  iconCell: { width: '25%', alignItems: 'center', gap: 4 },
   iconTile: {
     width: 60,
     height: 60,

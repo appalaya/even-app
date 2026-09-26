@@ -16,7 +16,8 @@ import { Icon } from './Icon';
  * - `member`   60 · 0 4 0 16 · 16/21 medium, second line 13/18 `textMuted` (Group settings members).
  * - `person`   46 · 0 14 · 16/21 (Done adding sheet).
  * - `choice`   58 · 0 14 · 17/22 (Join: "Which name is yours?").
- * The gap between columns is 12 throughout.
+ * The gap between columns is 12 throughout. A pressable row fills with `rowPressed` while pressed (States board);
+ * the `Card` around it clips the fill to its corners.
  */
 export type ListRowVariant =
   'expense' | 'settle' | 'balance' | 'activity' | 'settings' | 'member' | 'person' | 'choice';
@@ -137,11 +138,13 @@ export interface ListRowProps {
   detail?: ReactNode;
   /** A caption under `detail` ("Sep 20"), right-aligned. */
   detailCaption?: string;
-  /** Anything else at the trailing edge (a `JoinedMark`, "still adding"). */
+  /** Anything else at the trailing edge (a `JoinedMark` as the States board draws it, "still adding"). */
   trailing?: ReactNode;
-  /** A 16 pt chevron in `glyph` (or the accent, on a tinted card). */
+  /** A 16 pt chevron in `iconMuted` (or the accent, on a tinted card). */
   chevron?: boolean | 'accent';
   onPress?: () => void;
+  /** Draws the pressed state without a touch (the kit gallery's States page). */
+  showPressed?: boolean;
   /** Overrides the variant's minimum height (48 for the About rows). */
   minHeight?: number;
   /** Overrides the trailing padding (8 for the "You" row that ends in an "I'm done" pill). */
@@ -162,6 +165,7 @@ export function ListRow({
   trailing,
   chevron,
   onPress,
+  showPressed = false,
   minHeight,
   paddingRight,
   accessibilityLabel,
@@ -214,7 +218,7 @@ export function ListRow({
         <Icon
           name="chevronRight"
           size={16}
-          color={chevron === 'accent' ? tokens.accent : tokens.glyph}
+          color={chevron === 'accent' ? tokens.accent : tokens.iconMuted}
         />
       )}
     </>
@@ -246,7 +250,11 @@ export function ListRow({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
-      style={({ pressed }) => [styles.row, rowStyle, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.row,
+        rowStyle,
+        (pressed || showPressed) && { backgroundColor: tokens.rowPressed },
+      ]}
     >
       {body}
     </Pressable>
@@ -273,7 +281,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 12 },
   text: { flex: 1, minWidth: 0 },
   detail: { flexShrink: 0, alignItems: 'flex-end', gap: 2 },
-  pressed: { opacity: 0.6 },
   tile: {
     width: 40,
     height: 40,

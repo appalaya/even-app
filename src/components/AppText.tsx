@@ -17,7 +17,7 @@ export type TextColor =
   | 'textMuted'
   | 'textDisabled'
   | 'onDisabledFill'
-  | 'glyph'
+  | 'iconMuted'
   | 'accent'
   | 'onAccent'
   | 'onAvatar';

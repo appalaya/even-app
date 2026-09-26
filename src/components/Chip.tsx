@@ -70,8 +70,8 @@ export interface MemberChipProps {
    */
   onRemove?: () => void;
   /**
-   * The toggle form (Regenerate invite, "Remove someone?"): 40 tall on `fill`, 32 pt avatar; selected turns soft
-   * accent with a 1.5 pt inset accent ring and a semibold accent name.
+   * The toggle form (Regenerate invite, "Remove someone?"): 40 tall on `fill` (`fillPressed` while pressed), 32 pt
+   * avatar; selected turns soft accent with a 1.5 pt inset accent ring and a semibold accent name.
    */
   selected?: boolean;
   onToggle?: () => void;
@@ -111,9 +111,15 @@ export function MemberChip({
       accessibilityRole="checkbox"
       accessibilityLabel={name}
       accessibilityState={{ checked: selected }}
-      style={[
+      style={({ pressed }) => [
         styles.toggle,
-        { backgroundColor: selected ? tokens.accentSoft : tokens.fill },
+        {
+          backgroundColor: selected
+            ? tokens.accentSoft
+            : pressed
+              ? tokens.fillPressed
+              : tokens.fill,
+        },
         selected && { boxShadow: `inset 0 0 0 ${strokes.selected}px ${tokens.accent}` },
       ]}
     >
@@ -135,11 +141,22 @@ export interface SelectPillProps {
   /** The current choice, semibold ("You", "Today"). */
   value: string;
   onPress?: () => void;
+  /** Draws the pressed state without a touch (the kit gallery's States page). */
+  showPressed?: boolean;
   accessibilityLabel?: string;
 }
 
-/** A pill that opens a picker: 44 tall on `fill`, 15/20, a 14 pt chevron in `textSecondary` (Add expense). */
-export function SelectPill({ label, value, onPress, accessibilityLabel }: SelectPillProps) {
+/**
+ * A pill that opens a picker: 44 tall on `fill`, `fillPressed` while pressed (States board), 15/20, a 14 pt chevron
+ * in `textSecondary` (Add expense).
+ */
+export function SelectPill({
+  label,
+  value,
+  onPress,
+  showPressed = false,
+  accessibilityLabel,
+}: SelectPillProps) {
   const { tokens } = useTheme();
   return (
     <Pressable
@@ -148,8 +165,7 @@ export function SelectPill({ label, value, onPress, accessibilityLabel }: Select
       accessibilityLabel={accessibilityLabel ?? (label ? `${label}: ${value}` : value)}
       style={({ pressed }) => [
         styles.select,
-        { backgroundColor: tokens.fill },
-        pressed && styles.pressed,
+        { backgroundColor: pressed || showPressed ? tokens.fillPressed : tokens.fill },
       ]}
     >
       {label !== undefined && (
@@ -206,5 +222,4 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignSelf: 'flex-start',
   },
-  pressed: { opacity: 0.7 },
 });

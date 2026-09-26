@@ -4,6 +4,7 @@ import { useTheme } from '@/theme';
 
 import { AppText } from './AppText';
 import { Avatar } from './Avatar';
+import { AVATAR_STACK_MAX, stackLayout } from './avatarStackLogic';
 
 export interface StackMember {
   id: string;
@@ -17,7 +18,10 @@ export interface StackMember {
 }
 
 export interface AvatarStackProps {
-  /** In display order. design.md orders still-adding first, then done; the caller sorts. */
+  /**
+   * Everyone in the group, in any order. The stack sorts them itself (`stackLayout`): still adding first
+   * (outlined), then done (filled), each half in the order given.
+   */
   members: readonly StackMember[];
   /** At most this many avatars, then a "+N" chip (default 5, as design.md and the 12-member board). */
   max?: number;
@@ -32,11 +36,15 @@ export interface AvatarStackProps {
 }
 
 /** The done-adding row's avatars. Decorative: the row's label ("7 of 12 done adding") carries the meaning. */
-export function AvatarStack({ members, max = 5, size = 28, ringColor }: AvatarStackProps) {
+export function AvatarStack({
+  members,
+  max = AVATAR_STACK_MAX,
+  size = 28,
+  ringColor,
+}: AvatarStackProps) {
   const { tokens } = useTheme();
   const ring = ringColor ?? tokens.surface;
-  const shown = members.slice(0, max);
-  const extra = members.length - shown.length;
+  const { shown, overflow: extra } = stackLayout(members, max);
   const overlap = size === 26 ? -7 : -6;
 
   return (
