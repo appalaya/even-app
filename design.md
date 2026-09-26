@@ -508,6 +508,7 @@ CREATE TABLE prefs (                  -- local, never synced: default name/emoji
 CREATE TABLE pending_deletes (        -- server copies we still owe a DELETE to
   local_id   TEXT NOT NULL,
   server_url TEXT NOT NULL,
+  auth_token TEXT NOT NULL,           -- the per-server bearer token, derived before the secret is gone
   PRIMARY KEY (local_id, server_url)
 );
 
@@ -593,11 +594,14 @@ under Rotation.
    `epoch_resets_this_cycle`.
 
 **Epoch rule.** If no epoch is stored and the response carries one, store it
-and continue. If the response's epoch differs from the stored one, or is
-`null` where one is stored: if `epoch_resets_this_cycle` is already 1, stop
-the group with `last_sync_error = 'epoch_unstable'`; otherwise increment it,
-store the new epoch (or `'unknown'` for `null`), set `cursor = 0`, set
-`acked = 0` on every event, and restart the cycle. The group's full log is
+and continue. If the stored epoch is `'unknown'` (recorded after a `null`)
+and the response carries a real one, adopt it without a reset: that is the
+normal end of a delete-or-expiry recovery, not instability. Otherwise, if the
+response's epoch differs from the stored one, or is `null` where a real one
+is stored: if `epoch_resets_this_cycle` is already 1, stop the group with
+`last_sync_error = 'epoch_unstable'`; else increment it, store the new epoch
+(or `'unknown'` for `null`), set `cursor = 0`, set `acked = 0` on every event
+(rejected rows stay rejected), and restart the cycle. The group's full log is
 re-pushed (the server ignores what it already has) and re-pulled. This is the
 self-heal for expiry, accidental deletion, and server replacement, and it
 costs at most one full log's worth of traffic, up to the server's group cap.
@@ -729,9 +733,11 @@ would recreate it:
 - Leave offers "Also delete this group's copy on <host>", with the warning
   that other members will recreate it on their next sync unless they leave too.
 
-If a delete request fails, `pending_deletes` records the debt and the next
-sync retries it. Operator takedown is a server-side blocklist, not a client
-action.
+If a delete request fails, `pending_deletes` records the debt **together
+with the per-server auth token**, which is all a `DELETE` needs, so the retry
+still works after Leave has removed the secret. The next sync cycle retries
+outstanding debts first. Operator takedown is a server-side blocklist, not a
+client action.
 
 ## Background refresh
 
