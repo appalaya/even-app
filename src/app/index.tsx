@@ -1,94 +1,122 @@
-import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+/**
+ * Groups (Main, GroupsDark; GroupsEmpty, GroupsEmptyDark): the app's first screen. Group cards in `useGroups()`
+ * order, the collapsed "Archived · N" row, "Import group file", and the sticky "Join with code" · "Create group"
+ * footer; with no groups, the wordmark header and the empty state's mark and motion. On a first launch with an
+ * empty store and groups left in the keychain, a sheet offers to recover them.
+ */
+import { router, useLocalSearchParams } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
 
-import { useTheme } from '@/theme';
+import { AppText, Button, HeaderButton, Screen, Wordmark } from '@/components';
+import { ArchivedSection } from '@/features/groups/ArchivedSection';
+import { GroupCard } from '@/features/groups/GroupCard';
+import { GroupsEmpty } from '@/features/groups/GroupsEmpty';
+import { ImportGroupFileButton } from '@/features/groups/ImportGroupFileButton';
+import { hrefs } from '@/features/groups/routes';
+import { useImportGroupFile } from '@/features/groups/useImportGroupFile';
+import { useKeychainRecovery } from '@/features/groups/useKeychainRecovery';
+import { ConfirmSheet } from '@/features/join/ConfirmSheet';
+import { recoverQuestion } from '@/features/join/invite';
+import { useGroups } from '@/state';
 
-/** Groups screen, placeholder: wordmark, tagline, and the two actions (not wired yet). */
+/** Dev only: long-press the title to open the UI kit gallery. */
+const openKit = __DEV__ ? () => router.push('/dev/kit') : undefined;
+
 export default function GroupsScreen() {
-  const { tokens } = useTheme();
+  const list = useGroups();
+  const params = useLocalSearchParams<{ motionAt?: string; archived?: string }>();
+  const recovery = useKeychainRecovery();
+  const { importGroupFile, busy } = useImportGroupFile();
+
+  const settings = (
+    <HeaderButton
+      icon="gear"
+      size={24}
+      accessibilityLabel="Settings"
+      onPress={() => router.push(hrefs.settings)}
+    />
+  );
+  const open = (localId: string) => router.push(hrefs.group(localId));
+  const create = () => router.push(hrefs.create);
+  const join = () => router.push(hrefs.join);
+
+  const recoverySheet = (
+    <ConfirmSheet
+      visible={recovery.offer > 0}
+      onDismiss={recovery.dismiss}
+      question={recoverQuestion(recovery.offer)}
+      confirmLabel="Recover"
+      onConfirm={() => void recovery.recover()}
+      cancelLabel="Not now"
+      busy={recovery.busy}
+    />
+  );
+
+  // A few milliseconds on open: nothing, rather than a header that may be the wrong one.
+  if (list.status === 'loading') return <Screen scroll={false}>{null}</Screen>;
+
+  if (list.rows.length === 0) {
+    const motionAt = __DEV__ && params.motionAt !== undefined ? Number(params.motionAt) : undefined;
+    return (
+      <Screen
+        largeTitle={
+          <Pressable onLongPress={openKit} accessible={false}>
+            <Wordmark />
+          </Pressable>
+        }
+        headerRight={settings}
+        scroll={false}
+      >
+        <GroupsEmpty onCreate={create} onJoin={join} motionAt={motionAt} />
+        {recoverySheet}
+      </Screen>
+    );
+  }
+
+  const active = list.rows.filter((row) => !row.archived);
+  const archived = list.rows.filter((row) => row.archived);
+
   return (
-    <SafeAreaView style={[styles.screen, { backgroundColor: tokens.background }]}>
-      <View style={styles.hero}>
-        <Text
-          accessibilityRole="header"
-          // Dev only: long-press opens the UI kit gallery (src/app/dev/kit.tsx).
-          onLongPress={__DEV__ ? () => router.push('/dev/kit') : undefined}
-          style={[styles.wordmark, { color: tokens.accent }]}
-        >
-          Even
-        </Text>
-        <Text style={[styles.tagline, { color: tokens.textMuted }]}>Pay whoever. End even.</Text>
+    <Screen
+      largeTitle={<Title />}
+      headerRight={settings}
+      footer={
+        <View style={styles.footer}>
+          <View style={styles.half}>
+            <Button label="Join with code" variant="secondary" onPress={join} />
+          </View>
+          <View style={styles.half}>
+            <Button label="Create group" onPress={create} />
+          </View>
+        </View>
+      }
+    >
+      <View accessibilityLabel="Your groups" style={styles.list}>
+        {active.map((row) => (
+          <GroupCard key={row.localId} row={row} onPress={() => open(row.localId)} />
+        ))}
       </View>
-      <View style={styles.actions}>
-        <PlaceholderButton label="Create group" variant="primary" />
-        <PlaceholderButton label="Join with code" variant="secondary" />
-      </View>
-    </SafeAreaView>
+      <ArchivedSection
+        rows={archived}
+        onOpen={open}
+        initiallyOpen={__DEV__ && params.archived === 'open'}
+      />
+      <ImportGroupFileButton onPress={() => void importGroupFile()} disabled={busy} />
+      {recoverySheet}
+    </Screen>
   );
 }
 
-function PlaceholderButton({
-  label,
-  variant,
-}: {
-  label: string;
-  variant: 'primary' | 'secondary';
-}) {
-  const { tokens } = useTheme();
-  const primary = variant === 'primary';
+function Title() {
   return (
-    <Pressable
-      disabled
-      accessibilityRole="button"
-      accessibilityState={{ disabled: true }}
-      style={[
-        styles.button,
-        primary
-          ? { backgroundColor: tokens.accent }
-          : { backgroundColor: tokens.surface, borderColor: tokens.border, borderWidth: 1 },
-      ]}
-    >
-      <Text style={[styles.buttonLabel, { color: primary ? tokens.onAccent : tokens.text }]}>
-        {label}
-      </Text>
-    </Pressable>
+    <AppText variant="largeTitle" accessibilityRole="header" onLongPress={openKit}>
+      Groups
+    </AppText>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingBottom: 16,
-  },
-  hero: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  wordmark: {
-    fontSize: 56,
-    fontWeight: '700',
-    letterSpacing: -1.5,
-  },
-  tagline: {
-    fontSize: 17,
-  },
-  actions: {
-    gap: 12,
-  },
-  button: {
-    minHeight: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    opacity: 0.5,
-  },
-  buttonLabel: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
+  list: { gap: 10, paddingHorizontal: 16 },
+  footer: { flexDirection: 'row', gap: 10 },
+  half: { flex: 1 },
 });
