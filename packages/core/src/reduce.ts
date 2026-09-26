@@ -1,16 +1,547 @@
-import type { GroupState, LogEntry } from './types.js';
+/**
+ * The reducer: replays a group's log into `GroupState`. See design.md "Reducer" and "Ordering".
+ *
+ * Pure and deterministic: the log is sorted by (ts, id) and folded in that order, so any input
+ * permutation of the same entries yields a deep-equal state (including Map insertion order).
+ * Inputs are never mutated and never aliased into the output (splits and records are copied).
+ *
+ * Decisions where the spec leaves room (all tested in reduce.test.ts):
+ * - An event is "applied" only if it changes state. Ignored events (a later `group.created`, a
+ *   second `member.added` for a real member, a second `expense.added`/`payment.added`, updates to an
+ *   unknown or deleted expense, a `group.closed` naming this group) AND no-op events (a duplicate
+ *   `member.claimed` for the same device, a rename to the current name, an update whose every field
+ *   equals the current value or loses last-writer-wins, re-archiving an archived member, deleting an
+ *   id never seen) produce no activity item and no history entry.
+ * - Entries sharing an envelope id are replayed once (first in (ts, id) order).
+ * - `by` never creates a placeholder member; an unknown actor reads as "Someone".
+ * - `member.added` over a placeholder takes the record's name and emoji (it is the newer write) and
+ *   keeps the placeholder's devices and archived flag.
+ * - An empty-string note is stored as "no note" (the only way an `ExpenseChanges` can clear a note).
+ * - Each flagged item appears once; `currency_mismatch` takes precedence over `split_mismatch`.
+ *   `unknown_member` is never emitted: dangling references still count money (design.md "Validation").
+ * - An `expense.deleted`/`payment.deleted` for an id never seen still records a tombstone, so an
+ *   add sorting after it (only possible with equal-ts oddities or hostile clients) is ignored.
+ * - `totalsByCategory` lists only categories with a non-zero total, in `CATEGORIES` order.
+ */
+import { AVATAR_COLOR_COUNT } from './constants.js';
+import {
+  CATEGORIES,
+  type ActivityItem,
+  type Category,
+  type Event,
+  type EventOf,
+  type Expense,
+  type ExpenseChanges,
+  type ExpenseState,
+  type FlaggedItem,
+  type GroupState,
+  type HistoryEntry,
+  type LogEntry,
+  type MemberState,
+  type Payment,
+  type PaymentState,
+} from './types.js';
+
 export interface ReduceOptions {
   /** Formats minor units for activity summaries; defaults to String(n). The app passes formatMinor bound to the group currency. */
   format?: (minor: number) => string;
   /** This group's own localId; a group.closed whose `to` equals it is ignored. */
   selfLocalId?: string;
 }
-export function emptyState(): GroupState { throw new Error('not implemented'); }
+
+export function emptyState(): GroupState {
+  return {
+    created: false,
+    name: '',
+    currency: '',
+    closed: null,
+    rotatedFrom: [],
+    movedTo: null,
+    members: new Map(),
+    expenses: new Map(),
+    payments: new Map(),
+    activity: [],
+    totalsByCategory: new Map(),
+    flagged: [],
+    unknownMembers: [],
+    nameCollisions: [],
+  };
+}
+
+/** Plain UTF-16 code-unit comparison (never locale-aware). */
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareEntries(a: LogEntry, b: LogEntry): number {
+  if (a.event.ts !== b.event.ts) return a.event.ts < b.event.ts ? -1 : 1;
+  return compareCodeUnits(a.id, b.id);
+}
+
 /** Stable sort by (ts, id) ascending. Does not mutate. */
-export function sortLog(log: readonly LogEntry[]): LogEntry[] { throw new Error('not implemented'); }
-/** Deterministic avatar colour index 0..AVATAR_COLOR_COUNT-1 from a member id. */
-export function memberColor(memberId: string): number { throw new Error('not implemented'); }
+export function sortLog(log: readonly LogEntry[]): LogEntry[] {
+  return [...log].sort(compareEntries);
+}
+
+/** Deterministic avatar colour index 0..AVATAR_COLOR_COUNT-1 from a member id. FNV-1a 32-bit over UTF-16 code units. */
+export function memberColor(memberId: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < memberId.length; i++) {
+    hash ^= memberId.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return (hash >>> 0) % AVATAR_COLOR_COUNT;
+}
+
 /** 1–2 uppercase initials from a name ("maya andersen" → "MA", "Nathan" → "N"). */
-export function initialsOf(name: string): string { throw new Error('not implemented'); }
+export function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/u).filter((w) => w.length > 0);
+  const first = words[0];
+  if (first === undefined) return '?';
+  const head = (word: string): string => Array.from(word)[0] ?? '';
+  const last = words.length > 1 ? words[words.length - 1] : undefined;
+  return (head(first) + (last === undefined ? '' : head(last))).toUpperCase();
+}
+
+// ---------- internals ----------
+
+interface Stamp {
+  ts: number;
+  id: string;
+}
+
+/** True if `a` sorts strictly after `b` in (ts, id) order. */
+function newer(a: Stamp, b: Stamp | undefined): boolean {
+  if (b === undefined) return true;
+  if (a.ts !== b.ts) return a.ts > b.ts;
+  return a.id > b.id;
+}
+
+type ExpenseField = 'title' | 'money' | 'paidBy' | 'date' | 'category' | 'note';
+const EXPENSE_FIELDS: readonly ExpenseField[] = ['title', 'money', 'paidBy', 'date', 'category', 'note'];
+
+/** Copies a split with own-data-property semantics, so a key like `__proto__` stays an ordinary key. */
+function cloneSplit(split: Readonly<Record<string, number>>): Record<string, number> {
+  return Object.fromEntries(Object.entries(split));
+}
+
+function sameSplit(a: Readonly<Record<string, number>>, b: Readonly<Record<string, number>>): boolean {
+  const ae = Object.entries(a);
+  const be = new Map(Object.entries(b));
+  if (ae.length !== be.size) return false;
+  for (const [k, v] of ae) {
+    if (be.get(k) !== v) return false;
+  }
+  return true;
+}
+
+function normNote(note: string | undefined): string | undefined {
+  return note === undefined || note === '' ? undefined : note;
+}
+
+/** A fresh `Expense` (only the contract's fields) from any expense-shaped value. */
+function toExpense(src: Expense): Expense {
+  const e: Expense = {
+    id: src.id,
+    title: src.title,
+    amount: src.amount,
+    currency: src.currency,
+    paidBy: src.paidBy,
+    date: src.date,
+    category: src.category,
+    split: cloneSplit(src.split),
+  };
+  const note = normNote(src.note);
+  if (note !== undefined) e.note = note;
+  return e;
+}
+
+function toPayment(src: Payment): Payment {
+  const p: Payment = {
+    id: src.id,
+    from: src.from,
+    to: src.to,
+    amount: src.amount,
+    currency: src.currency,
+    date: src.date,
+  };
+  if (src.note !== undefined) p.note = src.note;
+  return p;
+}
+
+function splitSumsTo(split: Readonly<Record<string, number>>, amount: number): boolean {
+  const values = Object.values(split);
+  if (values.length === 0) return false;
+  let sum = 0;
+  for (const v of values) sum += v;
+  return Number.isSafeInteger(sum) && sum === amount;
+}
+
+function hostOf(server: string): string {
+  return server.startsWith('https://') ? server.slice('https://'.length) : server;
+}
+
+class Fold {
+  readonly state: GroupState = emptyState();
+  private readonly lastWrite = new Map<string, Map<ExpenseField, Stamp>>();
+  private readonly expenseTombstones = new Set<string>();
+  private readonly paymentTombstones = new Set<string>();
+
+  constructor(
+    private readonly format: (minor: number) => string,
+    private readonly selfLocalId: string | undefined,
+  ) {}
+
+  private nameOf(memberId: string): string {
+    return this.state.members.get(memberId)?.name ?? 'Someone';
+  }
+
+  /** Returns the member, creating an "Unknown" placeholder for a dangling reference. */
+  private ensureMember(memberId: string): MemberState {
+    const existing = this.state.members.get(memberId);
+    if (existing !== undefined) return existing;
+    const placeholder: MemberState = {
+      id: memberId,
+      name: 'Unknown',
+      archived: false,
+      devices: [],
+      unknown: true,
+      color: memberColor(memberId),
+      initials: '?',
+    };
+    this.state.members.set(memberId, placeholder);
+    return placeholder;
+  }
+
+  private emit(entry: LogEntry, summary: string): void {
+    const { type, ts, at, by, dev } = entry.event;
+    const item: ActivityItem = { eventId: entry.id, type, ts, at, by, dev, summary };
+    this.state.activity.push(item);
+  }
+
+  /** Applies one entry and records an activity item unless the event was ignored or changed nothing. */
+  apply(entry: LogEntry): void {
+    const ev = entry.event;
+    const actor = this.nameOf(ev.by);
+    const summary = this.dispatch(entry, ev, actor);
+    if (summary !== null) this.emit(entry, summary);
+  }
+
+  /** Returns the activity summary, or null if the event was ignored or changed nothing. */
+  private dispatch(entry: LogEntry, ev: Event, actor: string): string | null {
+    const s = this.state;
+    switch (ev.type) {
+      case 'group.created': {
+        if (s.created) return null;
+        s.created = true;
+        s.name = ev.name;
+        s.currency = ev.currency;
+        return `${actor} created the group`;
+      }
+      case 'group.renamed': {
+        if (s.name === ev.name) return null;
+        s.name = ev.name;
+        return `${actor} renamed the group to ${ev.name}`;
+      }
+      case 'group.closed': {
+        if (ev.to !== undefined && ev.to === this.selfLocalId) return null;
+        const prev = s.closed;
+        if (prev !== null && prev.reason === ev.reason && prev.to === ev.to) return null;
+        s.closed = ev.to === undefined ? { reason: ev.reason } : { reason: ev.reason, to: ev.to };
+        return `${actor} closed this group`;
+      }
+      case 'group.rotated': {
+        if (s.rotatedFrom.includes(ev.from)) return null;
+        s.rotatedFrom = [...s.rotatedFrom, ev.from];
+        return `${actor} created this group from a new invite`;
+      }
+      case 'group.moved': {
+        if (s.movedTo === ev.server) return null;
+        s.movedTo = ev.server;
+        return `${actor} moved the group to ${hostOf(ev.server)}`;
+      }
+      case 'member.added':
+        return this.memberAdded(ev, actor);
+      case 'member.updated':
+        return this.memberUpdated(ev, actor);
+      case 'member.claimed': {
+        const m = this.ensureMember(ev.id);
+        if (m.devices.includes(ev.dev)) return null;
+        const hadDevice = m.devices.length > 0;
+        m.devices = [...m.devices, ev.dev].sort(compareCodeUnits);
+        return hadDevice ? `${m.name} joined on a new device` : `${m.name} joined`;
+      }
+      case 'member.archived': {
+        const m = this.ensureMember(ev.id);
+        if (m.archived) return null;
+        m.archived = true;
+        return `${actor} archived ${m.name}`;
+      }
+      case 'member.unarchived': {
+        const m = this.ensureMember(ev.id);
+        if (!m.archived) return null;
+        m.archived = false;
+        return `${actor} restored ${m.name}`;
+      }
+      case 'expense.added':
+        return this.expenseAdded(entry, ev, actor);
+      case 'expense.updated':
+        return this.expenseUpdated(entry, ev, actor);
+      case 'expense.deleted': {
+        if (this.expenseTombstones.has(ev.id)) return null;
+        this.expenseTombstones.add(ev.id);
+        const e = s.expenses.get(ev.id);
+        if (e === undefined) return null;
+        s.expenses.delete(ev.id);
+        this.lastWrite.delete(ev.id);
+        return `${actor} deleted ${e.title}`;
+      }
+      case 'payment.added': {
+        const p = ev.payment;
+        if (s.payments.has(p.id) || this.paymentTombstones.has(p.id)) return null;
+        const from = this.ensureMember(p.from);
+        const to = this.ensureMember(p.to);
+        const state: PaymentState = { ...toPayment(p), addedBy: ev.by, addedAt: ev.at };
+        s.payments.set(p.id, state);
+        return `${from.name} paid ${to.name} ${this.format(p.amount)}`;
+      }
+      case 'payment.deleted': {
+        if (this.paymentTombstones.has(ev.id)) return null;
+        this.paymentTombstones.add(ev.id);
+        if (!s.payments.delete(ev.id)) return null;
+        return `${actor} deleted a payment`;
+      }
+    }
+  }
+
+  private memberAdded(ev: EventOf<'member.added'>, actor: string): string | null {
+    const rec = ev.member;
+    const existing = this.state.members.get(rec.id);
+    if (existing !== undefined && !existing.unknown) return null;
+    const m: MemberState = {
+      id: rec.id,
+      name: rec.name,
+      archived: existing?.archived ?? false,
+      devices: existing?.devices ?? [],
+      unknown: false,
+      color: memberColor(rec.id),
+      initials: initialsOf(rec.name),
+    };
+    if (rec.emoji !== undefined) m.emoji = rec.emoji;
+    this.state.members.set(rec.id, m);
+    return ev.by === rec.id ? `${rec.name} joined` : `${actor} added ${rec.name}`;
+  }
+
+  private memberUpdated(ev: EventOf<'member.updated'>, actor: string): string | null {
+    const m = this.ensureMember(ev.id);
+    const parts: string[] = [];
+    const { name, emoji } = ev.changes;
+    if (name !== undefined && name !== m.name) {
+      parts.push(`${actor} renamed ${m.name} to ${name}`);
+      m.name = name;
+      m.initials = initialsOf(name);
+    }
+    if (emoji === null) {
+      if (m.emoji !== undefined) {
+        delete m.emoji;
+        parts.push(`${actor} cleared ${m.name}'s emoji`);
+      }
+    } else if (emoji !== undefined && emoji !== m.emoji) {
+      m.emoji = emoji;
+      parts.push(`${actor} set ${m.name}'s emoji to ${emoji}`);
+    }
+    return parts.length === 0 ? null : parts.join('; ');
+  }
+
+  private history(entry: LogEntry, kind: HistoryEntry['kind'], snapshot: Expense, changes?: ExpenseChanges): HistoryEntry {
+    const { ts, at, by, dev } = entry.event;
+    const h: HistoryEntry = { eventId: entry.id, ts, at, by, dev, kind, snapshot };
+    if (changes !== undefined) h.changes = changes;
+    return h;
+  }
+
+  private expenseAdded(entry: LogEntry, ev: EventOf<'expense.added'>, actor: string): string | null {
+    const s = this.state;
+    const rec = ev.expense;
+    if (s.expenses.has(rec.id) || this.expenseTombstones.has(rec.id)) return null;
+    this.ensureMember(rec.paidBy);
+    for (const memberId of Object.keys(rec.split)) this.ensureMember(memberId);
+    const expense = toExpense(rec);
+    const state: ExpenseState = {
+      ...expense,
+      split: cloneSplit(expense.split),
+      addedBy: ev.by,
+      addedAt: ev.at,
+      updatedAt: ev.at,
+      history: [this.history(entry, 'added', expense)],
+    };
+    s.expenses.set(rec.id, state);
+    const stamp: Stamp = { ts: ev.ts, id: entry.id };
+    this.lastWrite.set(rec.id, new Map(EXPENSE_FIELDS.map((f) => [f, stamp] as const)));
+    return `${actor} added ${expense.title} · ${this.format(expense.amount)}`;
+  }
+
+  private expenseUpdated(entry: LogEntry, ev: EventOf<'expense.updated'>, actor: string): string | null {
+    const s = this.state;
+    if (this.expenseTombstones.has(ev.id)) return null;
+    const e = s.expenses.get(ev.id);
+    if (e === undefined) return null;
+    const writes = this.lastWrite.get(ev.id) ?? new Map<ExpenseField, Stamp>();
+    const stamp: Stamp = { ts: ev.ts, id: entry.id };
+    const c = ev.changes;
+    const wins = (field: ExpenseField): boolean => newer(stamp, writes.get(field));
+
+    // Applied fields, narrated in a fixed order against the expense as it stands after each step.
+    const parts: string[] = [];
+    const applied: {
+      title?: string;
+      paidBy?: string;
+      date?: string;
+      category?: Category;
+      note?: string;
+    } = {};
+    let money: { amount: number; split: Record<string, number> } | undefined;
+
+    for (const field of EXPENSE_FIELDS) {
+      if (!wins(field)) continue;
+      switch (field) {
+        case 'title': {
+          if (c.title === undefined || c.title === e.title) break;
+          parts.push(`${actor} renamed ${e.title} to ${c.title}`);
+          e.title = c.title;
+          applied.title = c.title;
+          writes.set(field, stamp);
+          break;
+        }
+        case 'money': {
+          if (c.amount === undefined || c.split === undefined) break;
+          if (c.amount === e.amount && sameSplit(c.split, e.split)) break;
+          const payer = e.paidBy === ev.by ? '' : `${this.nameOf(e.paidBy)}'s `;
+          parts.push(
+            c.amount === e.amount
+              ? `${actor} changed the split of ${payer}${e.title}`
+              : `${actor} changed ${payer}${e.title} from ${this.format(e.amount)} to ${this.format(c.amount)}`,
+          );
+          for (const memberId of Object.keys(c.split)) this.ensureMember(memberId);
+          e.amount = c.amount;
+          e.split = cloneSplit(c.split);
+          money = { amount: c.amount, split: cloneSplit(c.split) };
+          writes.set(field, stamp);
+          break;
+        }
+        case 'paidBy': {
+          if (c.paidBy === undefined || c.paidBy === e.paidBy) break;
+          const payer = this.ensureMember(c.paidBy);
+          parts.push(`${actor} changed who paid for ${e.title} to ${payer.name}`);
+          e.paidBy = c.paidBy;
+          applied.paidBy = c.paidBy;
+          writes.set(field, stamp);
+          break;
+        }
+        case 'date': {
+          if (c.date === undefined || c.date === e.date) break;
+          parts.push(`${actor} changed the date of ${e.title}`);
+          e.date = c.date;
+          applied.date = c.date;
+          writes.set(field, stamp);
+          break;
+        }
+        case 'category': {
+          if (c.category === undefined || c.category === e.category) break;
+          parts.push(`${actor} changed the category of ${e.title}`);
+          e.category = c.category;
+          applied.category = c.category;
+          writes.set(field, stamp);
+          break;
+        }
+        case 'note': {
+          if (c.note === undefined) break;
+          const next = normNote(c.note);
+          if (next === normNote(e.note)) break;
+          parts.push(`${actor} edited the note on ${e.title}`);
+          if (next === undefined) delete e.note;
+          else e.note = next;
+          applied.note = c.note;
+          writes.set(field, stamp);
+          break;
+        }
+      }
+    }
+
+    if (parts.length === 0) return null;
+    this.lastWrite.set(ev.id, writes);
+    const changes: ExpenseChanges =
+      money === undefined ? { ...applied } : { ...applied, amount: money.amount, split: money.split };
+    e.updatedAt = Math.max(e.updatedAt, ev.at);
+    e.history.push(this.history(entry, 'updated', toExpense(e), changes));
+    return parts.join('; ');
+  }
+
+  finish(): GroupState {
+    const s = this.state;
+
+    // Flags: at most one per item; currency first.
+    const flagged: FlaggedItem[] = [];
+    for (const e of s.expenses.values()) {
+      if (e.currency !== s.currency) flagged.push({ kind: 'expense', id: e.id, reason: 'currency_mismatch' });
+      else if (!splitSumsTo(e.split, e.amount)) flagged.push({ kind: 'expense', id: e.id, reason: 'split_mismatch' });
+    }
+    for (const p of s.payments.values()) {
+      if (p.currency !== s.currency) flagged.push({ kind: 'payment', id: p.id, reason: 'currency_mismatch' });
+    }
+    flagged.sort((a, b) => compareCodeUnits(a.kind, b.kind) || compareCodeUnits(a.id, b.id));
+    s.flagged = flagged;
+    const flaggedExpenses = new Set(flagged.filter((f) => f.kind === 'expense').map((f) => f.id));
+
+    // Totals over non-flagged live expenses, in CATEGORIES order, non-zero only.
+    const sums = new Map<Category, number>();
+    for (const e of s.expenses.values()) {
+      if (flaggedExpenses.has(e.id)) continue;
+      sums.set(e.category, (sums.get(e.category) ?? 0) + e.amount);
+    }
+    const order = (c: Category): number => {
+      const i = CATEGORIES.indexOf(c);
+      return i === -1 ? CATEGORIES.length : i;
+    };
+    const cats = [...sums.keys()].sort((a, b) => order(a) - order(b) || compareCodeUnits(a, b));
+    s.totalsByCategory = new Map();
+    for (const c of cats) {
+      const total = sums.get(c) ?? 0;
+      if (total !== 0) s.totalsByCategory.set(c, total);
+    }
+
+    // Placeholders still unknown at the end.
+    s.unknownMembers = [...s.members.values()]
+      .filter((m) => m.unknown)
+      .map((m) => m.id)
+      .sort(compareCodeUnits);
+
+    // Name collisions among non-archived, non-placeholder members.
+    const byName = new Map<string, string[]>();
+    for (const m of s.members.values()) {
+      if (m.archived || m.unknown) continue;
+      const key = m.name.trim().toLowerCase();
+      const ids = byName.get(key);
+      if (ids === undefined) byName.set(key, [m.id]);
+      else ids.push(m.id);
+    }
+    s.nameCollisions = [...byName.values()]
+      .filter((ids) => ids.length >= 2)
+      .map((ids) => [...ids].sort(compareCodeUnits))
+      .sort((a, b) => compareCodeUnits(a[0] ?? '', b[0] ?? ''));
+
+    return s;
+  }
+}
+
 /** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
-export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState { throw new Error('not implemented'); }
+export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState {
+  const fold = new Fold(options?.format ?? ((n: number) => String(n)), options?.selfLocalId);
+  const seen = new Set<string>();
+  for (const entry of sortLog(log)) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    fold.apply(entry);
+  }
+  return fold.finish();
+}
