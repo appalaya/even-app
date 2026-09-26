@@ -85,7 +85,12 @@ accounts, no ads, and no one but the group able to read it.
   rows become events; the statement never leaves the phone.
 - **Currency conversion.** One currency (ISO 4217 code) per group, no rates.
   Expense events carry a currency code so per-currency balances can come
-  later.
+  later. If rates are ever added: iOS has no exchange-rate API, so a source is
+  needed (ECB reference rates via a cached, unauthenticated `/v1/rates` on the
+  sync server so no third party sees users; self-hosters can point elsewhere),
+  the rate is locked per expense at entry as an integer-scaled field with a
+  manual "what my card charged" override, and the base amount is stored
+  resolved like a split.
 - **Multiple payers on one expense.** Enter two expenses.
 - **Recurring expenses.** Not a trip thing.
 - **Comments on expenses.** The note field is enough.

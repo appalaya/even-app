@@ -779,9 +779,17 @@ checksum, and canonicalises the server URL.
 - **Already have it**: an invite whose `localId` matches a local group and
   whose server differs is treated as a move (above), with confirmation, not as
   a duplicate.
-- **Create**: name, currency, your name, and an "Advanced: sync server" field
-  that defaults to `https://sync.even.appalaya.com`. This is where a
-  self-hoster points a new group at their own server. The create flow writes,
+- **Create**: name, currency, your name and avatar, an optional "People"
+  section to pre-add names (chips; they pick their name when they join), and
+  an "Advanced: sync server" field that defaults to
+  `https://sync.even.appalaya.com`, which is where a self-hoster points a new
+  group at their own server. The create flow writes the creator's
+  `member.added` and `member.claimed`, then `group.created`, then one
+  `member.added` per pre-added name. After Create the app lands on the new
+  group with an invite card at the top ("Share link", "Copy code", the
+  one-sentence warning); the buttons are disabled with "Preparing your
+  invite…" until the first push is acknowledged, and the card collapses into
+  the settings gear once another member has joined. The create flow writes,
   in this order, the creator's `member.added` (with `by` = their new member
   id), their `member.claimed`, then `group.created`, each with its `ts` from
   `nextTs`, so the log reads "Maya joined", "Maya created the group" in order
@@ -852,7 +860,9 @@ is a sheet or a settings sub-page.
   is a link. Share it and you're in." Archived groups sit in a collapsed
   Archived section at the bottom.
 - **Group**: big number at top (your net), the simplified settle list under
-  it, then a segmented list: Expenses, Balances (per-member nets, then spend
+  it, the done-adding row (at most five avatars, not-done first then done,
+  then a "+N" chip, with "7 of 12 done adding"; tapping opens a sheet listing
+  everyone's status), then a segmented list: Expenses, Balances (per-member nets, then spend
   by category with the trip total in the header and each row showing amount
   and percent of total, bars proportional to the total), Activity. Pull to refresh. A subtle line: "Synced 2 min
   ago" or the error. Under the header, "N of M done adding" (M counts
@@ -876,10 +886,10 @@ is a sheet or a settings sub-page.
   delete, and a History section listing every version with who changed what;
   any version can be restored in one tap.
 - **Settle**: from → to → amount, prefilled from the tapped settle-list row.
-- **App settings** (gear on the Groups screen): a "You" row with a large
-  tappable avatar (initials on colour, or the chosen emoji; tapping opens the
-  same emoji picker sheet used everywhere, with "Use initials" to clear) and
-  the Name field; Appearance (System · Light · Dark); Notifications (the only
+- **App settings** (gear on the Groups screen): a "You" card with the avatar
+  centred at the top, 72 px, a small pencil badge on its corner and no
+  caption (tapping opens the same emoji picker sheet used everywhere, with
+  "Use initials" to clear), and the Name field on its own row beneath; Appearance (System · Light · Dark); Notifications (the only
   switch, tied to the OS permission, with "Your phone decides when Even can
   check for updates in the background."); Import group file; About, Privacy,
   Terms. No background-sync switch exists anywhere.
