@@ -1,0 +1,201 @@
+/**
+ * The stack B seed against the boards' numbers, through the same reducer, balances and view models the screens use.
+ */
+import { formatMinor, nets, reduce, simplify, type GroupState } from '@even/core';
+import { describe, expect, it } from 'vitest';
+
+import {
+  historyRows,
+  flagOf,
+  splitCaption,
+  activeMemberIds,
+  splitTotalLine,
+} from '../features/expense/model';
+import {
+  activitySections,
+  balanceRows,
+  categoryRows,
+  doneSummary,
+  myTransfers,
+  sortedExpenses,
+} from '../features/group/model';
+import { buildScenario, flaggedPreview, SEED_STATES, seedSecret, type SeedState } from './seedB';
+
+const NOW = new Date(2026, 8, 26, 15, 0).getTime();
+const DEVICE = 'thisDeviceAAAAAAAAAAAA';
+const money = (minor: number) => formatMinor(minor, 'CAD', 'en-US');
+
+function load(state: SeedState) {
+  const spec = buildScenario(state, DEVICE, NOW);
+  const group = reduce(spec.entries, { format: money });
+  const balances = nets(group);
+  return { spec, group, balances, transfers: simplify(balances), me: spec.me.id };
+}
+
+function nameOf(group: GroupState, id: string): string {
+  return group.members.get(id)?.name ?? '?';
+}
+
+describe('seed-b scenarios', () => {
+  it('builds every state from valid events', () => {
+    for (const state of SEED_STATES) {
+      const { spec, group } = load(state);
+      expect(spec.entries.length).toBeGreaterThan(0);
+      expect(group.flagged).toEqual([]);
+    }
+  });
+
+  it('Group: you owe $52.00, pay Maya $44.00 and Jordan $8.00; 3 of 4 done', () => {
+    const { group, balances, transfers, me } = load('group');
+    expect(balances.get(me)).toBe(-5200);
+    expect(myTransfers(transfers, me).map((t) => [nameOf(group, t.to), t.amount])).toEqual([
+      ['Maya', 4400],
+      ['Jordan', 800],
+    ]);
+    const done = doneSummary(group, me);
+    expect([done.doneCount, done.total, done.allDone]).toEqual([3, 4, false]);
+    expect(done.people.map((p) => [p.member.name, p.done])).toEqual([
+      ['Sam', false],
+      ['Maya', true],
+      ['Jordan', true],
+      ['Nathan', true],
+    ]);
+    expect(sortedExpenses(group).map((e) => [e.title, e.amount, e.date])).toEqual([
+      ['Dinner at Park Distillery', 9600, '2026-09-20'],
+      ['Sunshine Village lift tickets', 42000, '2026-09-20'],
+      ['Banff Town Parking', 2400, '2026-09-19'],
+      ['Gas at Petro-Canada', 6000, '2026-09-18'],
+      ['Fairmont Banff Springs', 118000, '2026-09-18'],
+    ]);
+  });
+
+  it('Balances: the board order and figures, and spend by category', () => {
+    const { group, balances, me } = load('balances');
+    expect(balanceRows(group, balances, me).map((r) => [r.member.name, r.net])).toEqual([
+      ['Sam', -5200],
+      ['Maya', 17200],
+      ['Nathan', -12800],
+      ['Jordan', 800],
+    ]);
+    const { rows, total } = categoryRows(group);
+    expect(total).toBe(178000);
+    expect(rows.map((r) => [r.category, r.amount])).toEqual([
+      ['lodging', 118000],
+      ['activities', 42000],
+      ['food', 9600],
+      ['fuel', 6000],
+      ['parking', 2400],
+    ]);
+  });
+
+  it('Activity: Today and Yesterday as drawn, with the device codes', () => {
+    const { group, me } = load('activity');
+    const [today, yesterday] = activitySections(group, me);
+    expect(today?.rows.map((r) => [r.subject, r.rest, r.device])).toEqual([
+      ['Maya', ' is done adding expenses', null],
+      ['Jordan', ' joined on a new device', '7QX2'],
+      ['Maya', " changed Nathan's Sunshine Village lift tickets from $400.00 to $420.00", 'K2PD'],
+    ]);
+    expect(yesterday?.rows.map((r) => [r.subject, r.rest])).toEqual([
+      ['You', ' paid Maya $369.00'],
+      ['Jordan', ' paid Maya $393.00'],
+    ]);
+  });
+
+  it('Group, everyone done: done members in member order, you last', () => {
+    const { group, me } = load('alldone');
+    const done = doneSummary(group, me);
+    expect(done.allDone).toBe(true);
+    expect(done.people.map((p) => p.member.name)).toEqual(['Maya', 'Jordan', 'Nathan', 'Sam']);
+  });
+
+  it('Group, even and archived: nobody owes anything', () => {
+    for (const state of ['even', 'archived'] as const) {
+      const { transfers, balances, me } = load(state);
+      expect(transfers).toEqual([]);
+      expect(balances.get(me)).toBe(0);
+    }
+    const { group, me } = load('archived');
+    expect(group.archived).toBe(true);
+    const [today, yesterday] = activitySections(group, me);
+    expect(today?.rows.map((r) => `${r.subject ?? ''}${r.rest}`)).toEqual([
+      'Nathan archived the group',
+      'Nathan paid Maya $128.00',
+      'You paid Jordan $8.00',
+      'You paid Maya $44.00',
+    ]);
+    expect(yesterday?.rows.map((r) => `${r.subject ?? ''}${r.rest}`)).toEqual([
+      'Maya is done adding expenses',
+    ]);
+  });
+
+  it('Whistler 2027: 7 of 12 done; you owe $86.40 to Priya and Maya', () => {
+    const { group, balances, transfers, me } = load('many');
+    expect(balances.get(me)).toBe(-8640);
+    expect(myTransfers(transfers, me).map((t) => [nameOf(group, t.to), t.amount])).toEqual([
+      ['Priya', 6240],
+      ['Maya', 2400],
+    ]);
+    const done = doneSummary(group, me);
+    expect([done.doneCount, done.total]).toEqual([7, 12]);
+    expect(done.people.map((p) => p.member.name)).toEqual([
+      'Sam',
+      'Priya',
+      'Leo',
+      'Ben',
+      'Diego',
+      'Maya',
+      'Jordan',
+      'Nathan',
+      'Aiko',
+      'Chloe',
+      'Hana',
+      'Omar',
+    ]);
+  });
+
+  it('Expense detail: the dinner history as drawn', () => {
+    const { spec, group, me } = load('expense');
+    const dinner = group.expenses.get(spec.open.expenseId ?? '');
+    expect(dinner).toBeDefined();
+    if (dinner === undefined) return;
+    const rows = historyRows(dinner, {
+      nameOf: (id) => (id === me ? 'You' : nameOf(group, id)),
+      money,
+      date: (iso) => iso,
+    });
+    expect(rows.map((r) => [r.text, r.current, r.restorable])).toEqual([
+      ['Maya changed the amount from $90.00 to $96.00', true, false],
+      ['Jordan added the note "Split the wine"', false, true],
+      ['Maya added this', false, true],
+    ]);
+    expect(splitCaption(dinner.split, activeMemberIds(group))).toBe('Equally, 3 of 4 people');
+  });
+
+  it('Expense detail, flagged: the split adds up to $94.00 of $96.00', () => {
+    const { state, dinnerId, myMemberId } = flaggedPreview(DEVICE);
+    const dinner = state.expenses.get(dinnerId);
+    expect(flagOf(state, dinnerId)?.reason).toBe('split_mismatch');
+    expect(dinner && splitTotalLine(dinner, money)).toBe('Shares add up to $94.00, not $96.00');
+    expect(dinner && splitCaption(dinner.split, activeMemberIds(state))).toBe('Exact amounts');
+    const rows =
+      dinner === undefined
+        ? []
+        : historyRows(dinner, {
+            nameOf: (id) => (id === myMemberId ? 'You' : nameOf(state, id)),
+            money,
+            date: (iso) => iso,
+          });
+    expect(rows.map((r) => r.text)).toEqual([
+      'Jordan changed the split',
+      'Maya changed the amount from $90.00 to $96.00',
+      'Maya added this',
+    ]);
+  });
+
+  it('derives one secret per seed key', () => {
+    expect(seedSecret('banff')).toHaveLength(32);
+    expect(seedSecret('banff')).toEqual(seedSecret('banff'));
+    expect(seedSecret('banff')).not.toEqual(seedSecret('banff-even'));
+  });
+});
