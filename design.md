@@ -560,6 +560,9 @@ open. Same pattern as Stow.
 - App comes to foreground
 - After any local write, debounced 1 s
 - Pull-to-refresh on the group screen
+- A tap on the sync glyph at the end of the group's status line ("sync
+  now"), debounced: a tap within 10 s of the last successful sync replays the
+  spinner without a request, and taps during an in-flight sync are ignored
 - Background task (below)
 - Group opened for the first time after join
 
