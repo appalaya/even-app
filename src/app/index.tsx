@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,7 +10,12 @@ export default function GroupsScreen() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.background }]}>
       <View style={styles.hero}>
-        <Text accessibilityRole="header" style={[styles.wordmark, { color: tokens.accent }]}>
+        <Text
+          accessibilityRole="header"
+          // Dev only: long-press opens the UI kit gallery (src/app/dev/kit.tsx).
+          onLongPress={__DEV__ ? () => router.push('/dev/kit') : undefined}
+          style={[styles.wordmark, { color: tokens.accent }]}
+        >
           Even
         </Text>
         <Text style={[styles.tagline, { color: tokens.textMuted }]}>Pay whoever. End even.</Text>

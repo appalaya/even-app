@@ -12,3 +12,16 @@ export type {
   Theme,
   ThemeTokens,
 } from './tokens';
+export {
+  avatarType,
+  emojiType,
+  fontWeight,
+  monoFamily,
+  tabularNums,
+  typography,
+  type AvatarSize,
+  type FontWeightName,
+  type TypographyVariant,
+} from './typography';
+export { layout, space, strokes } from './spacing';
+export { radii } from './radii';
