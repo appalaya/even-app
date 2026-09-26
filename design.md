@@ -959,9 +959,9 @@ Deviating from the canvas in implementation is a no-go.
 
 - **Brand mark**: a lowercase "e" whose crossbar runs into an equals sign,
   in the accent. The app icon (light, dark, tinted) and the empty-state mark.
-- **Empty-state animation**: the mark centred, with 8–10 circles ≤ 14 px in
+- **Empty-state animation**: the mark centred, with nine circles 9–14 px in
   the avatar palette tokens moving on curved paths around it and settling
-  onto the "=" bars, then resting. About 3 s, ease-in-out, plays once on open,
+  onto a loose orbit around the mark (as drawn on the canvas), then resting. About 3 s, ease-in-out, plays once on open,
   then a slow breathe; under Reduce Motion only the rest frame is shown.
   Built with Reanimated, no Lottie dependency. Because the circles use avatar
   tokens they follow themes with no change.
