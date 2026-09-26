@@ -62,11 +62,15 @@ export type EventPayload =
   | { type: 'group.closed'; reason: 'rotated'; to?: string }         // written into the OLD group; `to` = new localId
   | { type: 'group.rotated'; from: string }                          // written into the NEW group; `from` = old localId
   | { type: 'group.moved'; server: string }                          // canonical https origin
+  | { type: 'group.archived' }                                       // read-only by choice; still syncs; independent of group.closed
+  | { type: 'group.unarchived' }
   | { type: 'member.added'; member: Member }
   | { type: 'member.updated'; id: string; changes: { name?: string; emoji?: string | null } }
   | { type: 'member.claimed'; id: string }                           // `dev` is the claiming device
   | { type: 'member.archived'; id: string }
   | { type: 'member.unarchived'; id: string }
+  | { type: 'member.done'; id: string }                              // "I'm done adding"; `by` is normally `id`, not required
+  | { type: 'member.undone'; id: string }
   | { type: 'expense.added'; expense: Expense }
   | { type: 'expense.updated'; id: string; changes: ExpenseChanges }
   | { type: 'expense.deleted'; id: string }
@@ -164,9 +168,12 @@ export interface GroupState {
   name: string;
   currency: string;
   closed: { reason: 'rotated'; to?: string } | null;
+  archived: boolean;                      // latest of group.archived / group.unarchived; independent of `closed`
   rotatedFrom: string[];                  // localIds named by group.rotated events
   movedTo: string | null;                 // server from the latest group.moved, or null
   members: Map<string, MemberState>;
+  doneMembers: string[];                  // member ids marked done adding, sorted; placeholders included
+  allDone: boolean;                       // every non-archived member with a claimed device is done, and there is at least one
   expenses: Map<string, ExpenseState>;    // live (non-deleted) expenses only
   deletedExpenses: Map<string, ExpenseState>; // tombstoned expenses, history ending in a 'deleted' entry; never in balances or totals
   payments: Map<string, PaymentState>;    // live only

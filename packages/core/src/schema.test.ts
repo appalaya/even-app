@@ -25,11 +25,15 @@ const FIXTURES: Record<EventType, Json> = {
   'group.closed': { ...base, type: 'group.closed', reason: 'rotated', to: localId('newgroup') },
   'group.rotated': { ...base, type: 'group.rotated', from: localId('oldgroup') },
   'group.moved': { ...base, type: 'group.moved', server: 'https://home.example.net:8443/even' },
+  'group.archived': { ...base, type: 'group.archived' },
+  'group.unarchived': { ...base, type: 'group.unarchived' },
   'member.added': { ...base, type: 'member.added', member: { id: NATHAN, name: 'Nathan', emoji: '🏔️' } },
   'member.updated': { ...base, type: 'member.updated', id: NATHAN, changes: { name: 'Nate', emoji: null } },
   'member.claimed': { ...base, type: 'member.claimed', id: MAYA },
   'member.archived': { ...base, type: 'member.archived', id: NATHAN },
   'member.unarchived': { ...base, type: 'member.unarchived', id: NATHAN },
+  'member.done': { ...base, type: 'member.done', id: MAYA },
+  'member.undone': { ...base, type: 'member.undone', id: MAYA },
   'expense.added': {
     ...base,
     type: 'expense.added',
@@ -210,6 +214,10 @@ describe('parseEvent: payload ids', () => {
     ['member.claimed', 'member.claimed', (e) => void (e.id = 'short')],
     ['member.archived', 'member.archived', (e) => void (e.id = `${NATHAN}x`)],
     ['member.unarchived', 'member.unarchived', (e) => void (e.id = 42)],
+    ['member.done', 'member.done', (e) => void (e.id = MAYA.slice(1))],
+    ['member.done missing id', 'member.done', (e) => void delete e.id],
+    ['member.undone', 'member.undone', (e) => void (e.id = `${MAYA.slice(1)}=`)],
+    ['member.undone missing id', 'member.undone', (e) => void delete e.id],
     ['expense.deleted', 'expense.deleted', (e) => void (e.id = EXPENSE.replace('0', '.'))],
     ['payment.deleted', 'payment.deleted', (e) => void delete e.id],
     ['expense.updated id', 'expense.updated', (e) => void (e.id = '')],
@@ -239,6 +247,37 @@ describe('parseEvent: payload ids', () => {
   it('requires reason "rotated" on group.closed', () => {
     expect(parseEdited('group.closed', (e) => (e.reason = 'deleted'))).toBeNull();
     expect(parseEdited('group.closed', (e) => delete e.reason)).toBeNull();
+  });
+});
+
+// ---------- Done adding and archive ----------
+
+describe('parseEvent: member.done/undone and group.archived/unarchived', () => {
+  it('group.archived and group.unarchived carry only the base fields; extra fields are stripped', () => {
+    for (const type of ['group.archived', 'group.unarchived'] as const) {
+      const parsed = parseEdited(type, (e) => {
+        e.id = NATHAN;
+        e.reason = 'settled';
+      });
+      expect(parsed).toEqual(FIXTURES[type]);
+      expect(parsed).not.toHaveProperty('id');
+      expect(parsed).not.toHaveProperty('reason');
+    }
+  });
+
+  it('member.done and member.undone strip unknown fields and do not require by === id', () => {
+    for (const type of ['member.done', 'member.undone'] as const) {
+      expect(parseEdited(type, (e) => (e.note = 'all in'))).toEqual(FIXTURES[type]);
+      expect(parseEdited(type, (e) => (e.id = NATHAN))).toEqual({ ...FIXTURES[type], id: NATHAN });
+    }
+  });
+
+  it('the new events still require valid base fields', () => {
+    for (const type of ['group.archived', 'group.unarchived', 'member.done', 'member.undone'] as const) {
+      expect(parseEdited(type, (e) => delete e.by)).toBeNull();
+      expect(parseEdited(type, (e) => (e.ts = LIMITS.tsMax))).toBeNull();
+      expect(parseEdited(type, (e) => (e.sv = 2))).toBeNull();
+    }
   });
 });
 

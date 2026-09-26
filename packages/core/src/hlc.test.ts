@@ -125,6 +125,10 @@ describe('nextTs', () => {
     ];
     expect(nextTs(NOW, memberLog, NATHAN)).toBe(NOW + 6 * DAY + 1);
     expect(nextTs(NOW, memberLog)).toBe(NOW);
+
+    // member.done / member.undone target the member too, so an undo sorts after the done it reverses.
+    const doneLog = [...memberLog, entry(NOW + 8 * DAY, { type: 'member.done', id: NATHAN })];
+    expect(nextTs(NOW, doneLog, NATHAN)).toBe(NOW + 8 * DAY + 1);
   });
 
   it('returns an integer for a fractional clock', () => {
@@ -141,11 +145,15 @@ describe('entityIdOf', () => {
     [{ type: 'group.closed', reason: 'rotated' }, null],
     [{ type: 'group.rotated', from: 'x'.repeat(43) }, null],
     [{ type: 'group.moved', server: 'https://example.com' }, null],
+    [{ type: 'group.archived' }, null],
+    [{ type: 'group.unarchived' }, null],
     [{ type: 'member.added', member: { id: NATHAN, name: 'Nathan' } }, null],
     [{ type: 'member.updated', id: NATHAN, changes: { name: 'Nate' } }, NATHAN],
     [{ type: 'member.claimed', id: NATHAN }, NATHAN],
     [{ type: 'member.archived', id: NATHAN }, NATHAN],
     [{ type: 'member.unarchived', id: NATHAN }, NATHAN],
+    [{ type: 'member.done', id: NATHAN }, NATHAN],
+    [{ type: 'member.undone', id: NATHAN }, NATHAN],
     [expenseAdded(NOW).event, null],
     [{ type: 'expense.updated', id: EXPENSE, changes: { title: 'Lunch' } }, EXPENSE],
     [{ type: 'expense.deleted', id: EXPENSE }, EXPENSE],
@@ -159,8 +167,8 @@ describe('entityIdOf', () => {
     [{ type: 'payment.deleted', id: PAYMENT }, PAYMENT],
   ];
 
-  it('covers all fifteen event types', () => {
-    expect(new Set(cases.map(([p]) => p.type)).size).toBe(15);
+  it('covers all nineteen event types', () => {
+    expect(new Set(cases.map(([p]) => p.type)).size).toBe(19);
   });
 
   it.each(cases)('%o → %s', (payload, expected) => {

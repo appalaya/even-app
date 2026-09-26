@@ -152,11 +152,15 @@ Common fields on every event:
 | `group.closed` | `{ reason: 'rotated', to?: localId }` | Written into the **old** group by whoever rotates. Reducer marks the group read-only with "ask a member for the new invite." |
 | `group.rotated` | `{ from: localId }` | Written into the **new** group by whoever rotates. Any such event, not necessarily the first, links the groups. |
 | `group.moved` | `{ server: string }` | Written into the group before the writer switches servers. Receivers are offered "follow to <host>". |
+| `group.archived` | `{}` | An explicit, reversible end of the group: read-only by choice, still syncs. The latest `group.archived` / `group.unarchived` by `(ts, id)` wins; a repeat is a no-op. Independent of `group.closed` (rotated away, never syncs). |
+| `group.unarchived` | `{}` | Reverses `group.archived`. |
 | `member.added` | `{ member: Member }` | For a self-add during join, `by` is the new member's own id. |
 | `member.updated` | `{ id, changes: { name?, emoji? \| null } }` | Field-level last-writer-wins. `emoji: null` clears it. |
 | `member.claimed` | `{ id }` | Written by a device when it picks its name. `dev` identifies the device. Idempotent per `(id, dev)`. |
 | `member.archived` | `{ id }` | Hidden from pickers; balances retained. |
 | `member.unarchived` | `{ id }` | |
+| `member.done` | `{ id }` | "I'm done adding." `by` is normally the member itself but need not be. **Auto-clear:** an `expense.added` whose `by` is a done member removes it from `doneMembers`, with no extra activity item; `expense.updated` and `payment.added` do not. |
+| `member.undone` | `{ id }` | Reverses `member.done` ("adding more"). |
 | `expense.added` | `{ expense: Expense }` | |
 | `expense.updated` | `{ id, changes: ExpenseChanges }` | Field-level last-writer-wins by `(ts, id)`, with `amount` + `split` as one atomic field. |
 | `expense.deleted` | `{ id }` | Tombstone. Final; later updates are ignored. |
@@ -411,9 +415,22 @@ replays each envelope id once, and folds:
   the UI makes the group read-only and shows the reason.
 - `group.moved`: only the latest by `(ts, id)` counts, and only if its
   `server` differs from the group's current `server_url`.
+- `member.done` / `member.undone` add and remove the member in `doneMembers`
+  (sorted; a repeat is a no-op; a `member.done` for an unknown id makes a
+  placeholder like any `member.*` target). An `expense.added` whose `by` is a
+  done member removes it, with no activity item of its own because the
+  expense's item already says it; `expense.updated` and `payment.added` never
+  do. `allDone` is true when every non-archived member with at least one
+  claimed device is in `doneMembers` and there is at least one such member,
+  so a name pre-added but never claimed cannot hold the group up.
+- `group.archived` / `group.unarchived`: the latest by `(ts, id)` sets
+  `archived`. It is independent of `closed`: a closed group was rotated away
+  and never syncs again; an archived one is read-only by choice, still
+  syncs, and can be unarchived.
 
-`GroupState` contains the group meta, members (with device sets and
-avatars), live expenses (each with its history), deleted expenses (with their
+`GroupState` contains the group meta (including `archived`), members (with
+device sets and avatars), `doneMembers` (who has said "I'm done adding") and
+`allDone`, live expenses (each with its history), deleted expenses (with their
 history), live payments, spend totals by category, the activity list (every
 applied event, in order, with a human summary such as "Maya changed Nathan's
 Food from 100.00 to 10.00"), `flagged`, `unknownMembers`, and
@@ -811,12 +828,19 @@ is a sheet or a settings sub-page.
 - **Groups**: cards with name, your net ("you're owed 44.00" / "you owe 12.00"
   / "settled"), sync dot. Create, Join with code, and Import group file live
   here. Empty state: two buttons, Create and Join, and one sentence: "A group
-  is a link. Share it and you're in."
+  is a link. Share it and you're in." Archived groups sit in a collapsed
+  Archived section at the bottom.
 - **Group**: big number at top (your net), the simplified settle list under
   it, then a segmented list: Expenses, Balances (per-member nets and spend by
   category for the trip), Activity. Pull to refresh. A subtle line: "Synced 2 min
-  ago" or the error. Banners, when relevant: unreadable entries, update
-  required, group closed, group moved.
+  ago" or the error. Under the header, "N of M done adding" (M counts
+  non-archived members who have joined on a device) with an "I'm done" pill
+  that toggles your own mark; when `allDone` it reads "Everyone's done".
+  Even state: at a zero net the big number reads "You're even"; with an empty
+  settle list it reads "Everyone's settled" and offers to archive the group.
+  Banners, when relevant: unreadable entries, update required, group closed,
+  group moved, group archived. An archived group is read-only, and its banner
+  carries Unarchive.
 - **Add expense**: amount keypad-first, title with the inferred category
   emoji appearing beside it as you type, paid-by chip (defaults to you), split
   row (defaults to "Everyone, equally"). Two required fields. Save is
@@ -830,8 +854,8 @@ is a sheet or a settings sub-page.
   members (rename, emoji, archive, unarchive; shows which have joined), your
   default name and emoji, server (host, operator, limits,
   retention, usage meter, move, delete old copy after a move), background
-  updates toggle, export CSV, group file export, new invite, leave (with the
-  optional server-copy delete).
+  updates toggle, export CSV, group file export, new invite, archive group,
+  leave (with the optional server-copy delete).
 
 ## Elegance constraints
 

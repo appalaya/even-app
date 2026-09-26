@@ -20,8 +20,16 @@ accounts, no ads, and no one but the group able to read it.
 4. **Edit and delete an expense** — anyone in the group, as in Splitwise.
    Every change is attributed in the activity feed and in notifications, the
    expense shows its full history, and any version can be restored in one tap.
+4a. **Done adding** — each member can say "I'm done adding" and take it back.
+   The group shows "N of M done adding", and "Everyone's done" once every
+   member who has joined on a device has said so. Adding an expense clears
+   your own mark.
 5. **Balances** — per-member net, and the simplified "who pays whom" list.
 6. **Settle up** — record a payment between two members.
+6a. **Archive group** — an explicit, reversible end. Once everyone is settled
+   the group offers to archive; Settings has it too. Archived groups are
+   read-only, still sync, sit in a collapsed Archived section of the groups
+   list, and show an Unarchive banner.
 7. **Activity feed** — chronological list of everything that happened, with
    who did it and from which device.
 8. **Categories and notes** — sixteen fixed categories with emoji, inferred
@@ -142,6 +150,7 @@ accounts, no ads, and no one but the group able to read it.
 | Leave is local; delete server copy is separate | The server cannot know who is last; conflating the two could strand others. |
 | Background refresh, not push | No device tokens on the server, no third-party push dependency. |
 | Landing page only on the web | One UI to make elegant; Safari storage eviction never becomes our problem. |
+| Explicit done and archive states | Settling was a hidden agreement; two visible states replace the group-chat question "is everyone done?" |
 
 ## Four Lenses Findings (Kickoff)
 

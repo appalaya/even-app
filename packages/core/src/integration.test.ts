@@ -80,11 +80,15 @@ const FIXTURES: { [T in EventType]: EventOf<T> } = {
   'group.closed': { ...base, type: 'group.closed', reason: 'rotated', to: localIdOf('newgroup') },
   'group.rotated': { ...base, type: 'group.rotated', from: localIdOf('oldgroup') },
   'group.moved': { ...base, type: 'group.moved', server: SERVER_B },
+  'group.archived': { ...base, type: 'group.archived' },
+  'group.unarchived': { ...base, type: 'group.unarchived' },
   'member.added': { ...base, type: 'member.added', member: { id: NATHAN, name: 'Nathan', emoji: '🏔️' } },
   'member.updated': { ...base, type: 'member.updated', id: NATHAN, changes: { name: 'Nate', emoji: null } },
   'member.claimed': { ...base, type: 'member.claimed', id: MAYA },
   'member.archived': { ...base, type: 'member.archived', id: NATHAN },
   'member.unarchived': { ...base, type: 'member.unarchived', id: NATHAN },
+  'member.done': { ...base, type: 'member.done', id: MAYA },
+  'member.undone': { ...base, type: 'member.undone', id: MAYA },
   'expense.added': {
     ...base,
     type: 'expense.added',
@@ -456,6 +460,11 @@ describe('integration: determinism', () => {
     g.write(NATHAN, DEV_NATHAN, { type: 'member.updated', id: NATHAN, changes: { emoji: '🐻' } }, NATHAN);
     g.write(MAYA, DEV_MAYA, { type: 'member.archived', id: JORDAN }, JORDAN);
     g.write(MAYA, DEV_MAYA, { type: 'member.unarchived', id: JORDAN }, JORDAN);
+    g.write(JORDAN, DEV_JORDAN, { type: 'member.done', id: JORDAN }, JORDAN);
+    g.write(MAYA, DEV_MAYA, { type: 'member.done', id: MAYA }, MAYA);
+    g.write(MAYA, DEV_MAYA, { type: 'member.undone', id: MAYA }, MAYA);
+    g.write(MAYA, DEV_MAYA, { type: 'group.archived' });
+    g.write(JORDAN, DEV_JORDAN, { type: 'group.unarchived' });
     g.write(JORDAN, DEV_JORDAN, { type: 'expense.updated', id: GAS, changes: { title: 'Fuel', note: 'Esso' } }, GAS);
     g.write(NATHAN, DEV_NATHAN, { type: 'payment.deleted', id: PAY1 }, PAY1);
     g.write(MAYA, DEV_MAYA, { type: 'expense.deleted', id: DINNER }, DINNER);
@@ -466,7 +475,7 @@ describe('integration: determinism', () => {
   }
 
   it('covers every event type', () => {
-    expect(new Set(kitchenSink().log.map((e) => e.event.type)).size).toBe(15);
+    expect(new Set(kitchenSink().log.map((e) => e.event.type)).size).toBe(19);
   });
 
   it('reduce of envelopes opened in any order equals reduce of the original log', () => {

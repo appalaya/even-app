@@ -208,9 +208,12 @@ describe('emptyState', () => {
       name: '',
       currency: '',
       closed: null,
+      archived: false,
       rotatedFrom: [],
       movedTo: null,
       members: new Map(),
+      doneMembers: [],
+      allDone: false,
       expenses: new Map(),
       deletedExpenses: new Map(),
       payments: new Map(),
@@ -822,6 +825,170 @@ describe('reduce: group events', () => {
   });
 });
 
+describe('reduce: done adding', () => {
+  it('member.done / member.undone toggle a sorted, unique doneMembers; repeats are no-ops', () => {
+    const log = [
+      ...base(),
+      entry(10, { type: 'member.done', id: NATHAN, by: NATHAN }),
+      entry(11, { type: 'member.done', id: NATHAN, by: NATHAN }), // already done: no-op
+      entry(12, { type: 'member.done', id: MAYA }),
+      entry(13, { type: 'member.undone', id: JORDAN, by: JORDAN }), // not done: no-op
+      entry(14, { type: 'member.undone', id: NATHAN, by: NATHAN }),
+      entry(15, { type: 'member.undone', id: NATHAN, by: NATHAN }), // no longer done: no-op
+      entry(16, { type: 'member.done', id: JORDAN }), // `by` need not be the member
+    ];
+    expect(reduce(log.slice(0, 7)).doneMembers).toEqual([MAYA, NATHAN]); // sorted, not insertion order
+    const s = reduce(log);
+    expect(s.doneMembers).toEqual([JORDAN, MAYA]);
+    expect(summaries(s).slice(4)).toEqual([
+      'Nathan is done adding expenses',
+      'Maya is done adding expenses',
+      'Nathan is adding more expenses',
+      'Jordan is done adding expenses',
+    ]);
+    expect(s.activity.slice(4).map((a) => a.eventId)).toEqual([eid(10), eid(12), eid(14), eid(16)]);
+  });
+
+  it('member.done on an unknown id makes a placeholder; member.undone for someone not done changes nothing', () => {
+    const s = reduce([...base(), entry(10, { type: 'member.done', id: GHOST })]);
+    expect(s.doneMembers).toEqual([GHOST]);
+    expect(s.members.get(GHOST)).toMatchObject({ name: 'Unknown', unknown: true });
+    expect(s.unknownMembers).toEqual([GHOST]);
+    expect(summaries(s).at(-1)).toBe('Unknown is done adding expenses');
+    // No placeholder, no activity, no state change at all.
+    const undone = reduce([...base(), entry(10, { type: 'member.undone', id: GHOST })]);
+    expect(undone.members.has(GHOST)).toBe(false);
+    expect(canon(undone)).toStrictEqual(canon(reduce(base())));
+  });
+
+  it('an expense.added by a done member clears it, with no extra activity item', () => {
+    const s = reduce(
+      [
+        ...base(),
+        entry(10, { type: 'member.done', id: NATHAN, by: NATHAN }),
+        entry(11, { type: 'member.done', id: MAYA }),
+        entry(12, { type: 'expense.added', by: NATHAN, expense: expense(FOOD, { title: 'Food', paidBy: NATHAN }) }),
+        entry(13, { type: 'member.done', id: NATHAN, by: NATHAN }), // and he can mark himself done again
+        entry(14, { type: 'expense.added', by: NATHAN, expense: expense(GAS, { title: 'Gas', paidBy: NATHAN }) }),
+      ],
+      { format: two },
+    );
+    expect(s.doneMembers).toEqual([MAYA]);
+    expect(summaries(s).slice(4)).toEqual([
+      'Nathan is done adding expenses',
+      'Maya is done adding expenses',
+      'Nathan added Food · 90.00',
+      'Nathan is done adding expenses',
+      'Nathan added Gas · 90.00',
+    ]);
+  });
+
+  it('only an applied expense.added by the member clears it: not updates, deletes, payments, ignored adds, or adds by others', () => {
+    const s = reduce([
+      ...base(),
+      entry(10, { type: 'expense.added', by: NATHAN, expense: expense(DINNER, { paidBy: NATHAN }) }), // sorts before the done
+      entry(11, { type: 'member.done', id: NATHAN, by: NATHAN }),
+      entry(12, { type: 'expense.updated', by: NATHAN, id: DINNER, changes: { title: 'Supper' } }),
+      entry(13, { type: 'payment.added', by: NATHAN, payment: payment(PAY1) }),
+      entry(14, { type: 'expense.added', by: NATHAN, expense: expense(DINNER, { title: 'Dup' }) }), // duplicate id: ignored
+      entry(15, { type: 'expense.added', expense: expense(GAS, { title: 'Gas', paidBy: NATHAN }) }), // paid by Nathan, added by Maya
+      entry(16, { type: 'expense.deleted', by: NATHAN, id: GAS }),
+      entry(17, { type: 'expense.added', by: NATHAN, expense: expense(GAS, { title: 'Gas again' }) }), // tombstoned id: ignored
+    ]);
+    expect(s.doneMembers).toEqual([NATHAN]);
+    expect(s.expenses.get(DINNER)?.title).toBe('Supper');
+    expect(s.payments.has(PAY1)).toBe(true);
+    expect(s.expenses.has(GAS)).toBe(false);
+  });
+});
+
+describe('reduce: allDone', () => {
+  const claim = (n: number, id: string): LogEntry => entry(n, { type: 'member.claimed', id, by: id });
+  const done = (n: number, id: string): LogEntry => entry(n, { type: 'member.done', id, by: id });
+  const archive = (n: number, id: string): LogEntry => entry(n, { type: 'member.archived', id });
+
+  it.each<[string, LogEntry[], boolean]>([
+    ['an empty log', [], false],
+    ['members, none with a claimed device', base(), false],
+    ['unclaimed members done, nobody claimed', [...base(), done(10, NATHAN), done(11, JORDAN)], false],
+    ['one claimed member, not done', [...base(), claim(10, MAYA)], false],
+    ['one claimed member, done (unclaimed members do not count)', [...base(), claim(10, MAYA), done(11, MAYA)], true],
+    ['two claimed, one done', [...base(), claim(10, MAYA), claim(11, JORDAN), done(12, MAYA)], false],
+    ['two claimed, both done', [...base(), claim(10, MAYA), claim(11, JORDAN), done(12, MAYA), done(13, JORDAN)], true],
+    ['a claimed but archived member is excluded', [...base(), claim(10, MAYA), claim(11, JORDAN), done(12, MAYA), archive(13, JORDAN)], true],
+    ['the only claimed member is archived (even if done)', [...base(), claim(10, JORDAN), done(11, JORDAN), archive(12, JORDAN)], false],
+    [
+      'an unarchived member counts again',
+      [...base(), claim(10, MAYA), claim(11, JORDAN), done(12, MAYA), archive(13, JORDAN), entry(14, { type: 'member.unarchived', id: JORDAN })],
+      false,
+    ],
+    ['member.undone', [...base(), claim(10, MAYA), done(11, MAYA), entry(12, { type: 'member.undone', id: MAYA })], false],
+    [
+      'auto-cleared by an expense.added',
+      [...base(), claim(10, MAYA), done(11, MAYA), entry(12, { type: 'expense.added', expense: expense(DINNER) })],
+      false,
+    ],
+  ])('%s → %s', (_name, log, expected) => {
+    expect(reduce(log).allDone).toBe(expected);
+  });
+
+  it('excludes a placeholder without a claim, but counts one a device has claimed', () => {
+    const unclaimed = reduce([
+      ...base(),
+      claim(10, MAYA),
+      done(11, MAYA),
+      entry(12, { type: 'expense.added', by: JORDAN, expense: expense(DINNER, { paidBy: GHOST }) }), // not by Maya: no auto-clear
+    ]);
+    expect(unclaimed.unknownMembers).toEqual([GHOST]);
+    expect(unclaimed.allDone).toBe(true);
+
+    const claimed = [...base(), claim(10, MAYA), done(11, MAYA), claim(12, GHOST)];
+    expect(reduce(claimed).members.get(GHOST)).toMatchObject({ unknown: true, devices: [pad('dev-other')] });
+    expect(reduce(claimed).allDone).toBe(false);
+    expect(reduce([...claimed, done(13, GHOST)]).allDone).toBe(true);
+  });
+});
+
+describe('reduce: group archive', () => {
+  it('the latest of group.archived / group.unarchived wins regardless of input order', () => {
+    const log = [
+      ...base(),
+      entry(10, { type: 'group.archived' }),
+      entry(11, { type: 'group.unarchived', by: JORDAN }),
+      entry(12, { type: 'group.archived', by: NATHAN }),
+    ];
+    const s = reduce(log);
+    expect(s.archived).toBe(true);
+    expect(summaries(s).slice(4)).toEqual(['Maya archived the group', 'Jordan unarchived the group', 'Nathan archived the group']);
+    for (let seed = 1; seed <= 10; seed++) expect(canon(reduce(shuffled(log, seed)))).toStrictEqual(canon(s));
+    const back = [...base(), entry(10, { type: 'group.unarchived', ts: T0 + 20_000 }), entry(11, { type: 'group.archived', ts: T0 + 10_000 })];
+    expect(reduce(back).archived).toBe(false);
+  });
+
+  it('a repeated archive, or an unarchive of a group that is not archived, is a no-op', () => {
+    const s = reduce([
+      ...base(),
+      entry(10, { type: 'group.unarchived' }), // not archived: no-op
+      entry(11, { type: 'group.archived' }),
+      entry(12, { type: 'group.archived', by: JORDAN }), // already archived: no-op
+    ]);
+    expect(s.archived).toBe(true);
+    expect(summaries(s).slice(4)).toEqual(['Maya archived the group']);
+    expect(canon(reduce([...base(), entry(10, { type: 'group.unarchived' })]))).toStrictEqual(canon(reduce(base())));
+  });
+
+  it('is independent of closed', () => {
+    const closed = entry(11, { type: 'group.closed', reason: 'rotated', to: 'new-local' });
+    const s = reduce([...base(), entry(10, { type: 'group.archived' }), closed]);
+    expect(s.closed).toEqual({ reason: 'rotated', to: 'new-local' });
+    expect(s.archived).toBe(true);
+    const unarchived = reduce([...base(), entry(10, { type: 'group.archived' }), closed, entry(12, { type: 'group.unarchived' })]);
+    expect(unarchived.closed).toEqual({ reason: 'rotated', to: 'new-local' });
+    expect(unarchived.archived).toBe(false);
+    expect(reduce([...base(), closed]).archived).toBe(false);
+  });
+});
+
 describe('reduce: self-join claims', () => {
   const self = pad('dev-self');
 
@@ -878,7 +1045,7 @@ describe('reduce: caller-supplied format', () => {
 });
 
 describe('reduce: purity and determinism', () => {
-  /** Every event type, same-ts ties, a tombstone, a placeholder, a flag, a collision. */
+  /** Every event type, same-ts ties, a tombstone, a placeholder, a flag, a collision, a done auto-clear. */
   function kitchenSink(): LogEntry[] {
     return [
       ...banff(),
@@ -900,12 +1067,24 @@ describe('reduce: purity and determinism', () => {
       entry(35, { type: 'group.rotated', from: 'old-local' }),
       entry(36, { type: 'group.closed', reason: 'rotated', to: 'new-local' }),
       created(37),
+      entry(38, { type: 'member.done', id: NATHAN, by: NATHAN }),
+      entry(39, { type: 'member.done', id: JORDAN, by: JORDAN }),
+      entry(40, { type: 'expense.added', by: NATHAN, expense: expense(pad('snacks'), { title: 'Snacks', paidBy: NATHAN }) }), // auto-clears Nathan
+      entry(41, { type: 'member.undone', id: JORDAN, ts: T0 + 39_000 }), // same ts as 39, sorts after it by id
+      entry(42, { type: 'member.done', id: GHOST }),
+      entry(43, { type: 'member.undone', id: MAYA }), // not done: no-op
+      entry(44, { type: 'group.archived' }),
+      entry(45, { type: 'group.unarchived', by: JORDAN, ts: T0 + 44_000 }), // same ts as 44
+      entry(46, { type: 'group.archived', by: NATHAN }),
+      entry(47, { type: 'group.archived' }), // already archived: no-op
     ];
   }
 
   it('is deep-equal (including Map order) for any permutation', () => {
     const log = kitchenSink();
-    const expected = canon(reduce(log, { format: two }));
+    const s = reduce(log, { format: two });
+    expect([s.doneMembers, s.allDone, s.archived]).toEqual([[GHOST], false, true]); // the new events took effect
+    const expected = canon(s);
     fc.assert(
       fc.property(fc.shuffledSubarray(log, { minLength: log.length, maxLength: log.length }), (perm) => {
         expect(canon(reduce(perm, { format: two }))).toStrictEqual(expected);

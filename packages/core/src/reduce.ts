@@ -11,7 +11,8 @@
  *   unknown or deleted expense, a `group.closed` naming this group) AND no-op events (a duplicate
  *   `member.claimed` for the same device, a rename to the current name, an update whose every field
  *   equals the current value or loses last-writer-wins, re-archiving an archived member, deleting an
- *   id never seen) produce no activity item and no history entry.
+ *   id never seen, marking a done member done, un-marking a member who is not done, re-archiving an
+ *   archived group or unarchiving one that is not archived) produce no activity item and no history entry.
  * - One applied event produces no activity item: a `member.claimed` that merely confirms a self-join
  *   (the claim's `by` is the member, and its `dev` is the device whose self-add `member.added` created
  *   the member). The device set is still updated; the self-add already reads "X joined".
@@ -32,6 +33,18 @@
  * - An `expense.deleted`/`payment.deleted` for an id never seen still records a tombstone, so an
  *   add sorting after it (only possible with equal-ts oddities or hostile clients) is ignored.
  * - `totalsByCategory` lists only categories with a non-zero total, in `CATEGORIES` order.
+ * - `member.done` targets create a placeholder like every `member.*` target, so `doneMembers` only
+ *   names members that exist. A `member.undone` for a member who is not done changes nothing at
+ *   all: it creates no placeholder either.
+ * - Auto-clear: an APPLIED `expense.added` whose `by` is a done member removes that member from
+ *   `doneMembers` and adds no activity item of its own (the expense's item explains it). An ignored
+ *   add (duplicate or tombstoned id), `expense.updated`, `expense.deleted`, and `payment.added` never
+ *   clear it, and neither does an expense merely paid by a done member but added by someone else.
+ * - Archiving a member does not clear its done mark; `allDone` just stops counting it. `allDone` is
+ *   true iff at least one non-archived member has a claimed device and every such member is done
+ *   (placeholders included when a device claimed them).
+ * - `group.archived`/`group.unarchived` toggle `archived`; the latest in (ts, id) order wins. It is
+ *   independent of `closed`: neither event reads or changes the other.
  */
 import { AVATAR_COLOR_COUNT } from './constants.js';
 import {
@@ -68,9 +81,12 @@ export function emptyState(): GroupState {
     name: '',
     currency: '',
     closed: null,
+    archived: false,
     rotatedFrom: [],
     movedTo: null,
     members: new Map(),
+    doneMembers: [],
+    allDone: false,
     expenses: new Map(),
     deletedExpenses: new Map(),
     payments: new Map(),
@@ -316,6 +332,16 @@ class Fold {
         s.movedTo = ev.server;
         return `${actor} moved the group to ${hostOf(ev.server)}`;
       }
+      case 'group.archived': {
+        if (s.archived) return null;
+        s.archived = true;
+        return `${actor} archived the group`;
+      }
+      case 'group.unarchived': {
+        if (!s.archived) return null;
+        s.archived = false;
+        return `${actor} unarchived the group`;
+      }
       case 'member.added':
         return this.memberAdded(ev, actor);
       case 'member.updated':
@@ -339,6 +365,17 @@ class Fold {
         if (!m.archived) return null;
         m.archived = false;
         return `${actor} restored ${m.name}`;
+      }
+      case 'member.done': {
+        if (s.doneMembers.includes(ev.id)) return null;
+        const m = this.ensureMember(ev.id);
+        s.doneMembers = [...s.doneMembers, ev.id].sort(compareCodeUnits);
+        return `${m.name} is done adding expenses`;
+      }
+      case 'member.undone': {
+        if (!s.doneMembers.includes(ev.id)) return null; // before ensureMember: a no-op creates no placeholder
+        s.doneMembers = s.doneMembers.filter((memberId) => memberId !== ev.id);
+        return `${this.nameOf(ev.id)} is adding more expenses`;
       }
       case 'expense.added':
         return this.expenseAdded(entry, ev, actor);
@@ -438,6 +475,8 @@ class Fold {
     s.expenses.set(rec.id, state);
     const stamp: Stamp = { ts: ev.ts, id: entry.id };
     this.lastWrite.set(rec.id, new Map(EXPENSE_FIELDS.map((f) => [f, stamp] as const)));
+    // Auto-clear: adding an expense shows the adder is not done. No separate activity item.
+    if (s.doneMembers.includes(ev.by)) s.doneMembers = s.doneMembers.filter((memberId) => memberId !== ev.by);
     return `${actor} added ${expense.title} · ${this.format(expense.amount)}`;
   }
 
@@ -589,6 +628,11 @@ class Fold {
       .filter((ids) => ids.length >= 2)
       .map((ids) => [...ids].sort(compareCodeUnits))
       .sort((a, b) => compareCodeUnits(a[0] ?? '', b[0] ?? ''));
+
+    // Everyone's done: every non-archived member with a claimed device is done, and there is at least one.
+    const done = new Set(s.doneMembers);
+    const joined = [...s.members.values()].filter((m) => !m.archived && m.devices.length > 0);
+    s.allDone = joined.length > 0 && joined.every((m) => done.has(m.id));
 
     return s;
   }

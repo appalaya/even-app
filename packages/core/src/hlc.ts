@@ -36,12 +36,16 @@ export function entityIdOf(event: Event): string | null {
     case 'member.claimed':
     case 'member.archived':
     case 'member.unarchived':
+    case 'member.done':
+    case 'member.undone':
       return event.id;
     case 'group.created':
     case 'group.renamed':
     case 'group.closed':
     case 'group.rotated':
     case 'group.moved':
+    case 'group.archived':
+    case 'group.unarchived':
     case 'member.added':
     case 'expense.added':
     case 'payment.added':
