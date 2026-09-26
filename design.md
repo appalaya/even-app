@@ -293,10 +293,10 @@ overwriting a choice the user has made:
   `user`; otherwise it is discarded. So a model result can be refined by a
   later model result, but never overwrite a tap.
 - Tapping Save freezes the chip; the event carries whatever it shows.
-- Every inferred chip (`source` is `keyword` or `model`) shows the
-  "suggested" tag until the user taps it; a tap (`source = user`) removes
-  it. When the model changes the chip, the swap animates. So a category the
-  user did not choose is never invisible.
+- A keyword-inferred chip carries no tag (as drawn on the AddExpense board).
+  When the model changes the chip, the swap animates and the chip shows a
+  "suggested" tag briefly, so a change the user did not make is never
+  invisible. A user-chosen chip never shows the tag.
 
 Replies and taps are both handled on the JavaScript thread in arrival order,
 so there is no window in which a user tap can be lost.
