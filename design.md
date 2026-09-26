@@ -79,6 +79,14 @@ different Maya?"; the second answer adds a new member with a different name.
 The activity feed shows the device id's short form next to the member name,
 so the group can see that "Maya" is posting from two places.
 
+**Who may edit a member.** Enforced by the app (honest clients), not by
+the reducer, like every other permission in Even: you may rename and change
+the avatar of your own claimed seat; a member nobody has claimed yet (a
+pre-added name) may be edited by anyone, since someone has to fix a typo they
+typed; another joined member may only be archived or unarchived; nobody can
+archive themselves (that is Leave). The activity feed attributes every change,
+which is the real deterrent.
+
 **Names are unique within a group**, compared case-insensitively and ignoring
 surrounding whitespace, among non-archived members. The UI refuses to add a
 duplicate and suggests a last initial. The reducer cannot refuse (two devices
@@ -830,6 +838,14 @@ is a sheet or a settings sub-page.
 
 ## Screens, in one line each
 
+- **Brand mark**: a lowercase "e" whose crossbar runs into an equals sign,
+  in the accent. The app icon (light, dark, tinted) and the empty-state mark.
+- **Empty-state animation**: the mark centred, with 8–10 circles ≤ 14 px in
+  the avatar palette tokens moving on curved paths around it and settling
+  onto the "=" bars, then resting. About 3 s, ease-in-out, plays once on open,
+  then a slow breathe; under Reduce Motion only the rest frame is shown.
+  Built with Reanimated, no Lottie dependency. Because the circles use avatar
+  tokens they follow themes with no change.
 - **Groups**: cards with name, your net ("you're owed 44.00" / "you owe 12.00"
   / "settled"), sync dot. Create, Join with code, and Import group file live
   here. Empty state: two buttons, Create and Join, and one sentence: "A group
@@ -868,8 +884,8 @@ is a sheet or a settings sub-page.
   check for updates in the background."); Import group file; About, Privacy,
   Terms. No background-sync switch exists anywhere.
 - **Group settings**: invite (always visible, with the one-sentence warning),
-  members (rename, emoji, archive, unarchive; shows which have joined), your
-  default name and emoji, server (host, operator, limits,
+  members (shows which have joined; rename and avatar on your own seat and on
+  unclaimed names, archive/unarchive on others, never yourself), server (host, operator, limits,
   retention, usage meter, move, delete old copy after a move), export CSV, group file export, new invite, archive group,
   leave (with the optional server-copy delete).
 
