@@ -664,7 +664,11 @@ the old invite.
    are **not** copied.
 4. Append `group.rotated { from: oldLocalId }` to the new group. The rotating
    device marks the new group as "recognition done" so its own marker does
-   not trigger the procedure below.
+   not trigger the procedure below. If the user picked someone to remove in
+   the confirmation sheet, append `member.archived { id }` for that member to
+   the new group here: the member list, their expenses, and the history all
+   carry over unchanged (balances must still add up), and archiving is what
+   takes them out of pickers and out of the "done adding" count.
 5. Push the new group. Present the new invite.
 6. Append `group.closed { reason: 'rotated', to: newLocalId }` to the **old**
    group and keep syncing the old group until that event is acknowledged;
@@ -832,8 +836,9 @@ is a sheet or a settings sub-page.
   is a link. Share it and you're in." Archived groups sit in a collapsed
   Archived section at the bottom.
 - **Group**: big number at top (your net), the simplified settle list under
-  it, then a segmented list: Expenses, Balances (per-member nets and spend by
-  category for the trip), Activity. Pull to refresh. A subtle line: "Synced 2 min
+  it, then a segmented list: Expenses, Balances (per-member nets, then spend
+  by category with the trip total in the header and each row showing amount
+  and percent of total, bars proportional to the total), Activity. Pull to refresh. A subtle line: "Synced 2 min
   ago" or the error. Under the header, "N of M done adding" (M counts
   non-archived members who have joined on a device) with an "I'm done" pill
   that toggles your own mark; when `allDone` it reads "Everyone's done".
