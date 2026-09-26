@@ -278,10 +278,14 @@ overwriting a choice the user has made:
 
 - A user tap sets `source = user`, cancels any in-flight model request, and
   drops any reply that arrives afterwards. Later title edits do not re-infer.
-- Keyword inference runs on a keystroke only while `source = keyword`.
+  `user` is sticky until the sheet is dismissed.
+- While `source` is `keyword` or `model`, every keystroke runs keyword
+  inference (applied immediately, source becomes `keyword`) and, after the
+  500 ms pause, issues a fresh model request.
 - Each model request carries the exact title it was asked about. A reply is
-  applied only if that title still matches the field and `source` is still
-  `keyword`; otherwise it is discarded.
+  applied only if that title still matches the field and `source` is not
+  `user`; otherwise it is discarded. So a model result can be refined by a
+  later model result, but never overwrite a tap.
 - Tapping Save freezes the chip; the event carries whatever it shows.
 - When the model changes the chip, the swap animates and shows "suggested"
   for a moment, so a change the user did not make is never invisible.
