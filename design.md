@@ -288,8 +288,12 @@ cases the remaining units are distributed one each, starting at an index
 derived from a hash of the expense id and proceeding in member-id order, so
 the leftover unit does not always land on the same person. For percent splits
 the remainder goes only to members with bp > 0 (the start index is taken over
-that subset), so a member at 0% never owes a unit. `core` has a
-property test: for any amount and any member set, splits sum to the amount.
+that subset), so a member at 0% never owes a unit. Equal mode also accepts a
+per-member multiplier and an extra amount (Splitwise's shares and
+adjustments): extras come off the top and the remainder splits by weight,
+with the same leftover rule. `splitWeighted` implements it; `splitEqual` is
+the all-ones case. `core` has a property test: for any amount and any member
+set, splits sum to the amount.
 Before sealing, the client checks the padded body fits the event size limit
 (`pad` throws `too_large`). With members capped at 50, an expense never
 exceeds it: the largest valid `expense.added` (80-character title and
@@ -846,6 +850,10 @@ is a sheet or a settings sub-page.
   row (defaults to "Everyone, equally"). Two required fields. Save is
   one tap with haptic feedback. Advanced split is a push, not a modal in a
   modal. Archived members already on the expense stay visible in the editor.
+- **Split** (pushed from Add expense): segmented Equal · Exact · Percent. In
+  Equal each member row has an optional "×n" multiplier and an optional
+  "+ extra" amount, under one line: "Extras come off the top; the rest splits
+  by share."
 - **Expense detail**: the facts, the split, who added it and when, edit and
   delete, and a History section listing every version with who changed what;
   any version can be restored in one tap.

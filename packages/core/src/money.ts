@@ -3,6 +3,11 @@
  *
  * This module is the only place that converts between minor units and display (design.md, "Minor units, not
  * cents"). Everything below the formatting layer is an integer number of minor units.
+ *
+ * Splits (design.md, "Rounding"): splitWeighted is the UI's Equal mode, with an optional per-member multiplier and
+ * extra amount (Splitwise's shares and adjustments); splitEqual is its all-ones case; splitByBasisPoints is Percent.
+ * Exact amounts need no helper, only isValidSplit. All three give their leftover units one each, starting at
+ * hash(seed) % k over the ascending ids of the k members taking part, so the leftover moves with the expense id.
  */
 
 /**
@@ -174,20 +179,20 @@ function toRecord(ids: readonly string[], shares: readonly bigint[]): Record<str
   return Object.fromEntries(ids.map((id, i) => [id, Number(shares[i] ?? 0n)]));
 }
 
-/** floor(amount / n) each, remainder distributed one unit each starting at hash(seed) % n, in ascending member-id order. */
+/**
+ * floor(amount / n) each, remainder distributed one unit each starting at hash(seed) % n, in ascending member-id order.
+ *
+ * This is splitWeighted with every weight 1 and no extras (W = n, each share floor(amount / n), k = n), so it
+ * delegates there after its own argument checks; a property test pins the equality.
+ */
 export function splitEqual(amount: number, memberIds: readonly string[], seed: string): Record<string, number> {
-  const total = toAmount(amount, 'splitEqual');
+  toAmount(amount, 'splitEqual');
   checkSeed(seed, 'splitEqual');
   if (memberIds.length === 0) throw new RangeError('splitEqual: memberIds must be non-empty');
   if (memberIds.some((id) => typeof id !== 'string')) throw new TypeError('splitEqual: member ids must be strings');
   if (new Set(memberIds).size !== memberIds.length) throw new RangeError('splitEqual: memberIds must be unique');
 
-  const ids = sortedIds(memberIds);
-  const n = BigInt(ids.length);
-  const base = total / n;
-  const shares = ids.map(() => base);
-  distributeRemainder(shares, total - base * n, seed);
-  return toRecord(ids, shares);
+  return splitWeighted(amount, Object.fromEntries(memberIds.map((id) => [id, { weight: 1 }])), seed);
 }
 
 const BPS_TOTAL = 10_000;
@@ -227,6 +232,83 @@ export function splitByBasisPoints(amount: number, bps: Readonly<Record<string, 
     shares[i] = positiveShares[j] ?? 0n;
   });
   return toRecord(ids, shares);
+}
+
+/** A member's part of an Equal-mode split: a multiplier (Splitwise's shares) and an amount on top (its adjustments). */
+export interface WeightedShare {
+  weight: number;
+  extra?: number;
+}
+
+const isNonNegativeSafeInteger = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/**
+ * Extras come off the top; the remainder splits by integer weight (BigInt), leftover units distributed one each
+ * starting at hash(seed) % k over the ascending ids of members with weight > 0. Result = share + extra.
+ *
+ * With R = amount − Σ extras and W = Σ weights, each share is floor(R × w / W) in BigInt (R × w may exceed 2⁵³).
+ * The leftover R − Σ shares is the sum of the fractional parts of the weight > 0 shares, so it is < k and nobody
+ * gets more than one extra unit: splitByBasisPoints' rule, with weights in place of basis points. A weight-0 member
+ * gets exactly its extra (possibly 0) and never a leftover unit. Every member id is a key of the result.
+ *
+ * Throws RangeError unless: members is non-empty; each weight and each extra (default 0) is a non-negative safe
+ * integer; Σ extras ≤ amount; and some weight is > 0, or Σ extras === amount exactly (the result is then the extras).
+ */
+export function splitWeighted(amount: number, members: Readonly<Record<string, WeightedShare>>, seed: string): Record<string, number> {
+  const total = toAmount(amount, 'splitWeighted');
+  checkSeed(seed, 'splitWeighted');
+  if (typeof members !== 'object' || members === null || Array.isArray(members)) {
+    throw new TypeError('splitWeighted: members must be an object of id → { weight, extra? }');
+  }
+  const entries = Object.entries(members);
+  if (entries.length === 0) throw new RangeError('splitWeighted: members must be non-empty');
+
+  const weights = new Map<string, bigint>();
+  const extras = new Map<string, bigint>();
+  let weightSum = 0n;
+  let extraSum = 0n;
+  for (const [id, share] of entries) {
+    if (typeof share !== 'object' || share === null) {
+      throw new RangeError(`splitWeighted: share for ${id} must be an object { weight, extra? }, got ${String(share)}`);
+    }
+    const { weight, extra = 0 } = share;
+    if (!isNonNegativeSafeInteger(weight)) {
+      throw new RangeError(`splitWeighted: weight for ${id} must be a non-negative safe integer, got ${String(weight)}`);
+    }
+    if (!isNonNegativeSafeInteger(extra)) {
+      throw new RangeError(`splitWeighted: extra for ${id} must be a non-negative safe integer, got ${String(extra)}`);
+    }
+    weights.set(id, BigInt(weight));
+    extras.set(id, BigInt(extra));
+    weightSum += BigInt(weight);
+    extraSum += BigInt(extra);
+  }
+  if (extraSum > total) {
+    throw new RangeError(`splitWeighted: extras sum to ${extraSum.toString()}, more than the amount ${amount}`);
+  }
+
+  const ids = sortedIds([...weights.keys()]);
+  const extraOf = (id: string): bigint => extras.get(id) ?? 0n;
+  if (weightSum === 0n) {
+    if (extraSum !== total) {
+      throw new RangeError(
+        `splitWeighted: every weight is 0, so the extras must sum to the amount; got ${extraSum.toString()} of ${amount}`,
+      );
+    }
+    return toRecord(ids, ids.map(extraOf));
+  }
+
+  const rest = total - extraSum;
+  const shares = ids.map((id) => (rest * (weights.get(id) ?? 0n)) / weightSum);
+  const allocated = shares.reduce((a, b) => a + b, 0n);
+  // Distribute over the weight > 0 members only, then write their shares back in place.
+  const positive = ids.flatMap((id, i) => ((weights.get(id) ?? 0n) > 0n ? [i] : []));
+  const positiveShares = positive.map((i) => shares[i] ?? 0n);
+  distributeRemainder(positiveShares, rest - allocated, seed);
+  positive.forEach((i, j) => {
+    shares[i] = positiveShares[j] ?? 0n;
+  });
+  return toRecord(ids, ids.map((id, i) => (shares[i] ?? 0n) + extraOf(id)));
 }
 
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);

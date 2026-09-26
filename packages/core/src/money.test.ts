@@ -10,6 +10,8 @@ import {
   splitByBasisPoints,
   splitEqual,
   splitSum,
+  splitWeighted,
+  type WeightedShare,
 } from './money.js';
 
 /** Intl emits NBSP / narrow NBSP around symbols; compare on plain spaces. */
@@ -375,6 +377,215 @@ describe('splitByBasisPoints', () => {
     expect(() => splitByBasisPoints(100, { a: 5000, b: 5001 }, 's')).toThrow(RangeError);
     expect(() => splitByBasisPoints(100, { a: Number.NaN, b: 10_000 }, 's')).toThrow(RangeError);
     expect(() => splitByBasisPoints(-1, { a: 10_000 }, 's')).toThrow(RangeError);
+  });
+});
+
+/**
+ * An amount, then 1..50 members with weights in [0, 100] (one forced ≥ 1) and extras summing to at most the amount,
+ * cut from a random total (0, anything up to the amount, or exactly the amount); some zero extras are left unset.
+ */
+const weightedArb = fc.tuple(amountArb, membersArb).chain(([amount, ids]) => {
+  const n = ids.length;
+  return fc
+    .record({
+      weights: fc.array(fc.integer({ min: 0, max: 100 }), { minLength: n, maxLength: n }),
+      forced: fc.integer({ min: 0, max: n - 1 }),
+      extraTotal: fc.oneof(fc.constant(0), fc.integer({ min: 0, max: amount }), fc.constant(amount)),
+      cuts: fc.array(fc.integer({ min: 0, max: 1_000_000 }), { minLength: n - 1, maxLength: n - 1 }),
+      unset: fc.array(fc.boolean(), { minLength: n, maxLength: n }),
+    })
+    .map(({ weights, forced, extraTotal, cuts, unset }) => {
+      const points = [0, ...cuts.map((c) => Number((BigInt(extraTotal) * BigInt(c)) / 1_000_000n)).sort((a, b) => a - b), extraTotal];
+      const members: Record<string, WeightedShare> = Object.fromEntries(
+        ids.map((id, i): [string, WeightedShare] => {
+          const weight = i === forced ? Math.max(1, weights[i] ?? 1) : (weights[i] ?? 0);
+          const extra = (points[i + 1] ?? 0) - (points[i] ?? 0);
+          return [id, extra === 0 && unset[i] === true ? { weight } : { weight, extra }];
+        }),
+      );
+      return { amount, members };
+    });
+});
+
+/** Independent reference for splitWeighted, using fnvRef for the start index. */
+function weightedRef(amount: number, members: Record<string, WeightedShare>, seed: string): Record<string, number> {
+  const ids = Object.keys(members).sort();
+  const w = (id: string): bigint => BigInt(members[id]?.weight ?? 0);
+  const x = (id: string): bigint => BigInt(members[id]?.extra ?? 0);
+  const rest = BigInt(amount) - ids.reduce((a, id) => a + x(id), 0n);
+  const total = ids.reduce((a, id) => a + w(id), 0n);
+  const floors = new Map(ids.map((id) => [id, total === 0n ? 0n : (rest * w(id)) / total]));
+  let leftover = Number(rest - [...floors.values()].reduce((a, b) => a + b, 0n));
+  const positive = ids.filter((id) => w(id) > 0n);
+  const lucky = new Set<string>();
+  for (let i = fnvRef(seed) % Math.max(positive.length, 1); leftover > 0; i++, leftover--) lucky.add(positive[i % positive.length] ?? '');
+  return Object.fromEntries(ids.map((id) => [id, Number((floors.get(id) ?? 0n) + x(id) + (lucky.has(id) ? 1n : 0n))]));
+}
+
+const ones = (ids: readonly string[]): Record<string, WeightedShare> => Object.fromEntries(ids.map((id) => [id, { weight: 1 }]));
+
+describe('splitWeighted', () => {
+  it('takes extras off the top and splits the rest by weight: 100.00 among A, B, C with C +40.00', () => {
+    for (const seed of ['x', 'y', 'e1', 'expense-7']) {
+      const split = splitWeighted(10_000, { A: { weight: 1 }, B: { weight: 1 }, C: { weight: 1, extra: 4000 } }, seed);
+      expect(split).toEqual({ A: 2000, B: 2000, C: 6000 });
+    }
+  });
+
+  it('splits 100.00 as 2 shares to 1, the odd unit placed by the seed', () => {
+    const outcomes = new Set<string>();
+    for (let i = 0; i < 20; i++) {
+      const seed = `expense-${i}`;
+      const split = splitWeighted(10_000, { A: { weight: 2 }, B: { weight: 1 } }, seed);
+      const a = split.A ?? -1;
+      const b = split.B ?? -1;
+      expect(a + b).toBe(10_000);
+      // Each member is within one unit of its exact share, so |A − 2B| ≤ 2 (6666/3334 gives −2, not ≥ 2B − 1).
+      expect(a).toBeGreaterThanOrEqual(2 * b - 2);
+      expect(a).toBeLessThanOrEqual(2 * b + 2);
+      // Floors are 6666 + 3333: one leftover unit, to the weight > 0 member at hash(seed) % 2 of [A, B].
+      expect(split).toEqual(fnvRef(seed) % 2 === 0 ? { A: 6667, B: 3333 } : { A: 6666, B: 3334 });
+      outcomes.add(`${a}/${b}`);
+    }
+    expect([...outcomes].sort()).toEqual(['6666/3334', '6667/3333']);
+  });
+
+  it('gives a weight-0 member exactly its extra and never a leftover unit', () => {
+    const recipients = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      // 1001 − 100 = 901 over weights 1:1 → floors 450, 450, one leftover unit.
+      const split = splitWeighted(1001, { a: { weight: 1 }, b: { weight: 1 }, tip: { weight: 0, extra: 100 }, none: { weight: 0 } }, `s${i}`);
+      expect(split.tip).toBe(100);
+      expect(split.none).toBe(0);
+      expect(split.a! + split.b!).toBe(901);
+      recipients.add(Object.entries(split).find(([, v]) => v === 451)?.[0] ?? '');
+    }
+    expect([...recipients].sort()).toEqual(['a', 'b']);
+  });
+
+  it('accepts all weights 0 when the extras sum to the amount exactly', () => {
+    expect(splitWeighted(1000, { a: { weight: 0, extra: 300 }, b: { weight: 0, extra: 700 }, c: { weight: 0 } }, 's')).toEqual({ a: 300, b: 700, c: 0 });
+    expect(splitWeighted(0, { a: { weight: 0 }, b: { weight: 0, extra: 0 } }, 's')).toEqual({ a: 0, b: 0 });
+    // Extras covering the amount with positive weights leaves nothing to split by weight.
+    expect(splitWeighted(500, { a: { weight: 3, extra: 500 }, b: { weight: 1 } }, 's')).toEqual({ a: 500, b: 0 });
+  });
+
+  it('is exact where Number arithmetic is not', () => {
+    // Same numbers as splitByBasisPoints' case: 999_999_990_111 × 9009 exceeds 2^53 and rounds across the floor.
+    const amount = 999_999_990_111;
+    const bySeed = splitWeighted(amount, { a: { weight: 9009 }, b: { weight: 991 } }, 'seed');
+    expect(bySeed).toEqual(splitByBasisPoints(amount, { a: 9009, b: 991 }, 'seed'));
+    expect([900_899_991_090, 900_899_991_091]).toContain(bySeed.a);
+    // Weights may be any safe integer: R × w reaches ~9 × 10^27 here.
+    for (const seed of ['x', 'y', 'z']) {
+      const huge = splitWeighted(LIMITS.amountMax, { a: { weight: Number.MAX_SAFE_INTEGER }, b: { weight: 1 } }, seed);
+      expect(huge).toEqual(fnvRef(seed) % 2 === 0 ? { a: LIMITS.amountMax, b: 0 } : { a: LIMITS.amountMax - 1, b: 1 });
+    }
+  });
+
+  it('handles amountMax among 50 members with weights up to 100 (BigInt guard)', () => {
+    const members = Object.fromEntries(
+      Array.from({ length: 50 }, (_, i): [string, WeightedShare] => [`m${String(i).padStart(2, '0')}`, i % 5 === 0 ? { weight: 100 - i, extra: 1_000_000_007 } : { weight: 100 - i }]),
+    );
+    const split = splitWeighted(LIMITS.amountMax, members, 'big');
+    expect(sum(split)).toBe(BigInt(LIMITS.amountMax));
+    expect(split).toEqual(weightedRef(LIMITS.amountMax, members, 'big'));
+    for (const v of Object.values(split)) expect(Number.isSafeInteger(v)).toBe(true);
+    expect(isValidSplit(LIMITS.amountMax, split)).toBe(true);
+  });
+
+  it('sums to the amount, keys every member, and never gives less than the extra (property)', () => {
+    fc.assert(
+      fc.property(weightedArb, fc.string(), ({ amount, members }, seed) => {
+        const split = splitWeighted(amount, members, seed);
+        expect(Object.keys(split).sort()).toEqual(Object.keys(members).sort());
+        expect(sum(split)).toBe(BigInt(amount));
+        for (const [id, { extra = 0 }] of Object.entries(members)) {
+          const v = split[id] ?? -1;
+          expect(Number.isSafeInteger(v)).toBe(true);
+          expect(v).toBeGreaterThanOrEqual(extra);
+        }
+        expect(isValidSplit(amount, split)).toBe(true);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('gives floor(R × w / W) + extra, leftover to consecutive weight > 0 members from hash(seed) % k (property)', () => {
+    fc.assert(
+      fc.property(weightedArb, fc.string(), ({ amount, members }, seed) => {
+        expect(splitWeighted(amount, members, seed)).toEqual(weightedRef(amount, members, seed));
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('is deterministic and independent of member order (property)', () => {
+    fc.assert(
+      fc.property(weightedArb, fc.string(), ({ amount, members }, seed) => {
+        const a = splitWeighted(amount, members, seed);
+        expect(splitWeighted(amount, members, seed)).toEqual(a);
+        expect(splitWeighted(amount, Object.fromEntries(Object.entries(members).reverse()), seed)).toEqual(a);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it('equals splitEqual, key order included, when every weight is 1 and there are no extras (property)', () => {
+    fc.assert(
+      fc.property(amountArb, membersArb, fc.string(), (amount, ids, seed) => {
+        const equal = Object.entries(splitEqual(amount, ids, seed));
+        expect(Object.entries(splitWeighted(amount, ones(ids), seed))).toEqual(equal);
+        const zeroExtras = Object.fromEntries(ids.map((id) => [id, { weight: 1, extra: 0 }]));
+        expect(Object.entries(splitWeighted(amount, zeroExtras, seed))).toEqual(equal);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('only moves leftover units when the seed changes (property)', () => {
+    fc.assert(
+      fc.property(weightedArb, fc.string(), fc.string(), ({ amount, members }, s1, s2) => {
+        const a = splitWeighted(amount, members, s1);
+        const b = splitWeighted(amount, members, s2);
+        for (const [id, { weight }] of Object.entries(members)) {
+          const d = Math.abs((a[id] ?? 0) - (b[id] ?? 0));
+          expect(d).toBeLessThanOrEqual(1);
+          if (weight === 0) expect(d).toBe(0);
+        }
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('treats "__proto__" as an ordinary id', () => {
+    const members = Object.fromEntries([['__proto__', { weight: 2, extra: 1 }], ['b', { weight: 1 }]]) as Record<string, WeightedShare>;
+    const split = splitWeighted(7, members, 's');
+    expect(Object.prototype.hasOwnProperty.call(split, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(split)).toBe(Object.prototype);
+    expect(sum(split)).toBe(7n);
+  });
+
+  it('throws RangeError on bad members, weights, extras or amount', () => {
+    const bad = (amount: number, members: unknown): (() => unknown) => () => splitWeighted(amount, members as Record<string, WeightedShare>, 's');
+    expect(bad(100, {})).toThrow(/non-empty/);
+    expect(bad(100, { a: { weight: -1 }, b: { weight: 2 } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 1.5 } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: Number.NaN } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 2 ** 53 } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: '1' } })).toThrow(RangeError);
+    expect(bad(100, { a: {} })).toThrow(RangeError);
+    expect(bad(100, { a: 1 })).toThrow(RangeError);
+    expect(bad(100, { a: null })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 1, extra: -1 } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 1, extra: 0.5 } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 1, extra: null } })).toThrow(RangeError);
+    expect(bad(100, { a: { weight: 1, extra: 60 }, b: { weight: 1, extra: 41 } })).toThrow(/more than the amount/);
+    expect(bad(100, { a: { weight: 0, extra: 60 }, b: { weight: 0, extra: 39 } })).toThrow(/every weight is 0/);
+    expect(bad(100, { a: { weight: 0 } })).toThrow(/every weight is 0/);
+    expect(bad(-1, { a: { weight: 1 } })).toThrow(RangeError);
+    expect(bad(1.5, { a: { weight: 1 } })).toThrow(RangeError);
+    expect(bad(100, null)).toThrow(TypeError);
   });
 });
 

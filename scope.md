@@ -16,7 +16,9 @@ accounts, no ads, and no one but the group able to read it.
    Members can be pre-added by anyone or added by the joiner. Names are
    unique per group.
 3. **Add an expense** — amount, title, who paid (defaults to you), split
-   (defaults to everyone equally). Equal, exact amounts, or percentages.
+   (defaults to everyone equally). Equal (with optional per-member
+   multipliers and extras, which cover shares and adjustments), exact
+   amounts, or percentages.
 4. **Edit and delete an expense** — anyone in the group, as in Splitwise.
    Every change is attributed in the activity feed and in notifications, the
    expense shows its full history, and any version can be restored in one tap.
@@ -85,7 +87,6 @@ accounts, no ads, and no one but the group able to read it.
   Expense events carry a currency code so per-currency balances can come
   later.
 - **Multiple payers on one expense.** Enter two expenses.
-- **Share-based splits** ("2 shares vs 1"). Percentages cover it.
 - **Recurring expenses.** Not a trip thing.
 - **Comments on expenses.** The note field is enough.
 - **Edit lock** ("only the payer and the adder can edit"). Candidate group
@@ -151,6 +152,7 @@ accounts, no ads, and no one but the group able to read it.
 | Background refresh, not push | No device tokens on the server, no third-party push dependency. |
 | Landing page only on the web | One UI to make elegant; Safari storage eviction never becomes our problem. |
 | Explicit done and archive states | Settling was a hidden agreement; two visible states replace the group-chat question "is everyone done?" |
+| Shares and adjustments folded into Equal mode | Five capabilities behind three segments; splits are stored resolved so the schema is untouched. |
 
 ## Four Lenses Findings (Kickoff)
 
