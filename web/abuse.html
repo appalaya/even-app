@@ -37,7 +37,7 @@
 
   <h2>What happens</h2>
   <ul>
-    <li>We add the group&rsquo;s id to our server&rsquo;s blocklist. From then on the server answers every request for that group with &ldquo;gone&rdquo;, the app stops syncing it for good, and it cannot be uploaded again under that id.</li>
+    <li>We add the group&rsquo;s id to our server&rsquo;s blocklist. From then on the server refuses that group, the app stops syncing it for good, and it cannot be uploaded again under that id.</li>
     <li>We cannot read the group&rsquo;s contents to check a report, because the server never has the key. We act on the report and the id.</li>
     <li>Blocking tells us nothing about who is in the group. We do not know, and we keep no accounts, names or IP addresses to look up.</li>
     <li>Copies already on members&rsquo; phones are not affected; we have no way to reach them.</li>

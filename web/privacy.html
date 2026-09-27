@@ -27,7 +27,7 @@
 
   <p class="summary">Even encrypts every group on your phone before anything leaves it. Our server stores the result and cannot read it: not an amount, not a name, not the group&rsquo;s name. There are no accounts, so there is nothing about you for us to keep.</p>
 
-  <p>This page is the plain-words version of Even&rsquo;s threat model, the technical document behind the claim &ldquo;we cannot read your data.&rdquo; If that claim ever stops being literally true, the threat model changes first, and this page with it. Even is made by Appalaya Inc. (&ldquo;we&rdquo;).</p>
+  <p>This page is the plain-words version of Even&rsquo;s <a href="https://github.com/appalaya/even-server/blob/main/THREAT-MODEL.md" rel="noreferrer">threat model</a>, the technical document behind the claim &ldquo;we cannot read your data.&rdquo; If that claim ever stops being literally true, the threat model changes first, and this page with it. Even is made by Appalaya Inc. (&ldquo;we&rdquo;).</p>
 
   <h2>What our server can see</h2>
   <p>A sync server passes locked entries between the phones in a group. For each group, it sees:</p>
@@ -59,16 +59,13 @@
 
   <h2>What stays on your phone</h2>
   <p>Every phone in a group holds the group&rsquo;s whole history, stored locked. The app unlocks it in memory while you use it. The only things it writes to storage unlocked are each group&rsquo;s name and currency (both of which are already in the invite), the time of each entry, so they can be put in order, and, while a deletion you asked for is still pending, the access key for that server&rsquo;s copy. Group keys live in the phone&rsquo;s secure keychain or keystore.</p>
-  <p>Notifications are the one exception you control. When the app checks for news in the background, it can show something like &ldquo;Maya added Dinner &middot; 90.00&rdquo;. Your phone keeps that notification and may show it on the lock screen. You can change that in your phone&rsquo;s notification settings, or turn Even&rsquo;s notifications off in the app.</p>
+  <p>Notifications are the one exception you control. When the app checks for news in the background, it can show something like &ldquo;Maya added Dinner &middot; $90.00&rdquo;. Your phone keeps that notification and may show it on the lock screen. You can change that in your phone&rsquo;s notification settings, or turn Even&rsquo;s notifications off in the app.</p>
 
   <h2>What a backup contains</h2>
   <ul>
     <li><strong>iPhone.</strong> An iCloud or computer backup includes the app&rsquo;s locked data and the keychain that holds your group keys. So a backup contains everything needed to read your groups. If that matters to you, turn on Advanced Data Protection for end-to-end encrypted iCloud backups, or turn off iCloud Backup.</li>
     <li><strong>Android.</strong> Group keys are held by the phone&rsquo;s keystore and are not restored from a backup, so an Android backup cannot unlock your groups: it holds their locked data, and each group&rsquo;s name and currency. After restoring, you need the invite again.</li>
   </ul>
-
-  <h2>Receipts and statements</h2>
-  <p>Even does not read receipts or bank statements yet. When it does, the reading will happen on your phone, using the phone&rsquo;s own on-device model or text recognition. The photo, screenshot or PDF will never leave your phone and will not be stored, synced or logged. No cloud service will be used, including Apple&rsquo;s Private Cloud Compute.</p>
 
   <h2>Our free server</h2>
   <p>Unless you choose another one, groups sync through our free server at <code>sync.even.appalaya.com</code>.</p>
@@ -89,7 +86,7 @@
     <li><strong>An unlocked phone.</strong> Even has no lock of its own. Anyone using your unlocked phone can open it.</li>
     <li><strong>Patterns of use.</strong> As described above, the server and Cloudflare can see when and how often a group is used, and from which addresses.</li>
     <li><strong>A key that got out.</strong> A group has one key for its lifetime, so someone who obtains it can read the whole history. Regenerating the invite shuts them out of what comes next.</li>
-    <li><strong>The app you installed.</strong> The app&rsquo;s code is open for anyone to check, but that does not prove the build in the app store matches it.</li>
+    <li><strong>The app you installed.</strong> The app&rsquo;s <a href="https://github.com/appalaya/even-app" rel="noreferrer">code is open</a> for anyone to check, but that does not prove the build in the app store matches it.</li>
   </ul>
 
   <h2>Running your own server</h2>

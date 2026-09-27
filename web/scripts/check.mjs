@@ -39,6 +39,8 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/apps\.apple\.com\/app\/id(?:PLACEHOLDER|\d+)$/,
   /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.appalaya\.even$/,
   /^https:\/\/github\.com\/appalaya\/even-server$/,
+  /^https:\/\/github\.com\/appalaya\/even-server\/blob\/main\/THREAT-MODEL\.md$/,
+  /^https:\/\/github\.com\/appalaya\/even-app$/,
   /^https:\/\/appalaya\.com$/,
 ];
 

@@ -4,10 +4,14 @@
 export const LINKS = {
   privacy: 'https://even.appalaya.com/privacy',
   terms: 'https://even.appalaya.com/terms',
-  /** The docs name no source repository yet; the landing page stands in. */
-  source: 'https://even.appalaya.com',
+  source: 'https://github.com/appalaya/even-app',
   /** Help and feedback, and "Report this group" (with the group in its fragment: features/report/contact.ts). */
   contact: 'https://even.appalaya.com/contact',
+  /** "Update": the store listings (the Play page exists once the app is published there). */
+  store: {
+    ios: 'https://apps.apple.com/app/id6816425117',
+    android: 'https://play.google.com/store/apps/details?id=com.appalaya.even',
+  },
 } as const;
 
 /** "1.0.0" and "1" → "1.0 (1)": a zero patch is dropped, as the board writes it. */

@@ -13,13 +13,14 @@
  * Join sits at the foot, inset 16.
  */
 import * as Clipboard from 'expo-clipboard';
-import { Linking, StyleSheet, View } from 'react-native';
+import { Linking, StyleSheet, View, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, Icon, Sheet, TextField } from '@/components';
 import { currencyName } from '@/features/groups/currencies';
 import type { InvitePreview } from '@/state';
 import { useTheme } from '@/theme';
+import { LINKS } from '@/features/settings/about';
 
 export type CodeState =
   | { kind: 'empty' }
@@ -27,8 +28,8 @@ export type CodeState =
   /** `update`: the invite needs a newer Even; offer the store. */
   | { kind: 'error'; message: string; update?: boolean };
 
-/** Where "Update" leads until the store listing exists: the landing page carries the store badges. */
-const UPDATE_URL = 'https://even.appalaya.com';
+/** "Update" opens this phone's store listing. */
+const UPDATE_URL = Platform.OS === 'android' ? LINKS.store.android : LINKS.store.ios;
 
 export interface JoinCodeSheetProps {
   visible: boolean;

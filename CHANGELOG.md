@@ -13,7 +13,11 @@ becomes the "What's New" notes.
 ### New
 - Split costs with friends with no accounts and no ads: create a group, share
   a link or a code, add what you paid, and see who owes whom
-- Settle up in the fewest payments, with every change visible to the whole
-  group and every phone agreeing, even after time offline
+- Settle up in the fewest payments, even after time offline
 - Everything is encrypted on your phone before it leaves it; the server that
   keeps your group in sync cannot read it
+- Invite by QR code: show one from the invite card or Group settings, and
+  scan one from Join with code
+- Report a group, or ask for help and send feedback, from inside the app
+- After a reinstall, a group you were in gets your name back on its own; a
+  phone that never picked a name is asked

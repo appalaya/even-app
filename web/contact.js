@@ -40,7 +40,7 @@ const FAILURES = {
   network: "Couldn't send. Check your connection and try again.",
   turnstile: "The bot check didn't finish. Try it again.",
   rate_limited: "Couldn't send. Try again in a minute.",
-  unavailable: "Couldn't send. The form isn't available right now; try again later.",
+  unavailable: "Couldn't send. Try again later.",
 };
 
 /**

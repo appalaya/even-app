@@ -1,6 +1,12 @@
 NEW IN THIS BUILD
-• The first build of Even. Create a group, share its link or code with someone else in Alpha, and join it on their phone.
-• Add a few expenses from both phones, one of them with no signal. Once both are back online, the balances and "who pays whom" should match on both phones.
-• Record a payment from the suggested list and check that everyone reaches zero.
+• Invites by QR: on the invite card and in Group settings, "Show QR code" opens a code the other phone's camera can read. In Join with code, "Scan" reads one.
+• Group settings has "Report this group", and App settings has "Help and feedback". Both open our contact page.
+• After a reinstall, opening a group you were in gets your name back on its own. A phone that never picked a name is asked "Which name is yours?" and shows "Pick your name" until it does.
+• A group with no expenses no longer reads "settled", and the dark theme covers the area behind a screen you swipe away.
+
+TRY
+• Create a group on one phone and join it from another by scanning the QR code, then by pasting the code.
+• Add expenses from both phones, one of them offline, and check both phones agree once back online.
+• Settle up and check "Everyone's settled" appears only after real expenses.
 
 Report anything odd, and the time it happened.

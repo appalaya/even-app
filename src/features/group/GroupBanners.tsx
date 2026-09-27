@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Alert, Linking, StyleSheet, View } from 'react-native';
+import { Alert, Linking, StyleSheet, View, Platform } from 'react-native';
 
 import { Banner, collisionMessage, movedMessage } from '@/components';
 import { useApp, type DerivedGroup } from '@/state';
@@ -9,9 +9,10 @@ import { layout } from '@/theme';
 
 import { hostOf, movedBy } from './model';
 import { groupHrefs } from './routes';
+import { LINKS } from '@/features/settings/about';
 
-/** Where "Update" leads until the store listing exists: the landing page carries the store badges. */
-const UPDATE_URL = 'https://even.appalaya.com';
+/** "Update" opens this phone's store listing. */
+const UPDATE_URL = Platform.OS === 'android' ? LINKS.store.android : LINKS.store.ios;
 
 /**
  * Two or more non-archived members share a name (the reducer's `nameCollisions`): the first such name and how many
