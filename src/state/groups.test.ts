@@ -446,26 +446,27 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       expect((await derived(b, localId)).state.members.size).toBe(3);
     });
 
-    it('a failed first join, undone as the Join sheet does, leaves nothing and joins afresh later', async () => {
+    it('a join the server refuses, undone as the Join sheet does, leaves nothing and joins afresh later', async () => {
       const w = await setup(kind);
       const a = await w.device('A');
       const b = await w.device('B');
       const { localId } = await createTrip(a);
       expectSynced(await sync(a, localId));
       const { code } = await g(a).inviteFor(localId);
+      const serverGroupId = deriveServer(await secretOn(a, localId), SERVER).groupId;
 
-      w.server().offline = true;
-      const failed = await g(b).joinInvite(code);
-      if (failed.kind !== 'joined') throw new Error('unreachable');
-      expect(failed.firstSync).toMatchObject({ outcome: 'failed', error: 'network' });
+      w.server().blocked.add(serverGroupId);
+      const refused = await g(b).joinInvite(code);
+      if (refused.kind !== 'joined') throw new Error('unreachable');
+      expect(refused.firstSync).toMatchObject({ outcome: 'failed', error: 'group_blocked' });
       // JoinFlow undoes it (nothing of this phone's is in the group yet) and says why under Join.
       await g(b).leaveGroup(localId);
       expect(await b.store.getGroup(localId)).toBeNull();
       expect(await b.store.listGroups()).toEqual([]);
       expect(await b.secrets.getSecret(localId)).toBeNull();
 
-      // Join again: a fresh join, not "already", and this time it syncs and offers the name pick.
-      w.server().offline = false;
+      // Join again once the server lets it: a fresh join, not "already", that syncs and offers the name pick.
+      w.server().blocked.delete(serverGroupId);
       const joined = await g(b).joinInvite(code);
       expect(joined).toMatchObject({ kind: 'joined', localId, needsClaim: true, waiting: false });
       expect((await derived(b, localId)).state.members.size).toBe(3);

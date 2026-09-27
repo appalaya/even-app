@@ -10,7 +10,7 @@
  *   Join enabled;
  * - incomplete: the field ringed and "That code isn't complete. Copy it again." under it; Join disabled;
  * - a newer version: "This invite needs a newer Even." and an Update button to the store (error-copy panel).
- * Join sits at the foot, inset 16. When Join could not go through (JoinCodeFailed, JoinCodeRefused), the reason sits
+ * Join sits at the foot, inset 16. When Join could not go through (JoinCodeRefused), the reason sits
  * under it in the field-error style (16 pt warning glyph, 8 pt gap, 14/19 semibold), 12 below, inset 20, and Join
  * stays on to try again.
  */
@@ -44,7 +44,7 @@ export interface JoinCodeSheetProps {
   state: CodeState;
   onJoin: () => void;
   busy: boolean;
-  /** Why the last Join did not go through (JoinCodeFailed, JoinCodeRefused), for the code it was tapped with. */
+  /** Why the last Join did not go through (JoinCodeRefused), for the code it was tapped with. */
   failure?: string;
 }
 

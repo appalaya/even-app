@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { JoinResult } from '@/state';
 
+import type { SyncErrorCode } from '../../services/sync/types';
+
 import {
   hostOf,
   joinFailureMessage,
@@ -35,24 +37,18 @@ describe('join invite helpers', () => {
     expect(recoverQuestion(1)).toBe('Recover 1 group?');
   });
 
-  it('words a join that could not go through (JoinCodeFailed, JoinCodeRefused)', () => {
-    const host = 'sync.even.appalaya.com';
-    expect(joinFailureMessage('network', host)).toBe(
-      "Couldn't reach sync.even.appalaya.com. Check your connection and try again.",
-    );
-    expect(joinFailureMessage('group_blocked', host)).toBe(
+  it('words a join the server refused, or one whose call threw (JoinCodeRefused)', () => {
+    expect(joinFailureMessage('group_blocked')).toBe(
       "This group is blocked on its server, so you can't join it.",
     );
-    expect(joinFailureMessage('not_an_even_server', host)).toBe(
+    expect(joinFailureMessage('not_an_even_server')).toBe(
       "That URL isn't an Even server. Check the address.",
     );
-    expect(joinFailureMessage('unsupported_version', host)).toBe('This server needs updating.');
-    for (const other of ['server_error', 'rate_limited', 'local_error', 'unknown'] as const) {
-      expect(joinFailureMessage(other, host)).toBe("Couldn't join. Try again.");
-    }
+    expect(joinFailureMessage('unsupported_version')).toBe('This server needs updating.');
+    expect(joinFailureMessage('unknown')).toBe("Couldn't join. Try again.");
   });
 
-  it('takes the failure from a fresh join whose first sync failed, and only from that', () => {
+  it("takes only a reachable server's refusal of a fresh join as a failure", () => {
     const joined = (
       firstSync: Extract<JoinResult, { kind: 'joined' }>['firstSync'],
     ): JoinResult => ({
@@ -62,14 +58,21 @@ describe('join invite helpers', () => {
       firstSync,
       waiting: firstSync.outcome !== 'synced',
     });
-    expect(
-      joinFailureOf(joined({ localId: 'g1', outcome: 'failed', error: 'network', retryAt: 5 })),
-    ).toBe('network');
-    expect(
-      joinFailureOf(
-        joined({ localId: 'g1', outcome: 'failed', error: 'group_blocked', retryAt: null }),
-      ),
-    ).toBe('group_blocked');
+    const failed = (error: SyncErrorCode) =>
+      joinFailureOf(joined({ localId: 'g1', outcome: 'failed', error, retryAt: null }));
+    expect(failed('group_blocked')).toBe('group_blocked');
+    expect(failed('not_an_even_server')).toBe('not_an_even_server');
+    expect(failed('unsupported_version')).toBe('unsupported_version');
+    // No answer, or no definitive one: the join goes on as "Joined, waiting for first sync".
+    for (const error of [
+      'network',
+      'server_error',
+      'rate_limited',
+      'over_budget',
+      'local_error',
+    ] as const) {
+      expect(failed(error)).toBeNull();
+    }
     expect(
       joinFailureOf(
         joined({

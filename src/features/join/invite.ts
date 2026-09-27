@@ -55,33 +55,42 @@ export function recoverQuestion(count: number): string {
   return `Recover ${count} ${count === 1 ? 'group' : 'groups'}?`;
 }
 
-/** Why Join did not go through for an invite that reads: the first sync's error, or `unknown` for anything else. */
-export type JoinFailure = SyncErrorCode | 'unknown';
-
 /**
- * A fresh join whose first sync failed, as the error it failed with; null when the join went through (synced, or
- * waiting on a cycle that was already running) or was not a fresh join at all.
+ * A first sync's definitive answer from a reachable server that the group cannot be joined there. Anything else
+ * (no answer at all, a 5xx, a rate limit) leaves the join as it is: "Joined, waiting for first sync".
  */
-export function joinFailureOf(result: JoinResult): JoinFailure | null {
-  if (result.kind !== 'joined' || result.firstSync.outcome !== 'failed') return null;
-  return result.firstSync.error;
+const REFUSALS = ['group_blocked', 'not_an_even_server', 'unsupported_version'] as const;
+type JoinRefusal = (typeof REFUSALS)[number];
+
+/** Why Join did not go through for an invite that reads: the server's refusal, or `unknown` when the call threw. */
+export type JoinFailure = JoinRefusal | 'unknown';
+
+function isRefusal(error: SyncErrorCode): error is JoinRefusal {
+  return (REFUSALS as readonly SyncErrorCode[]).includes(error);
 }
 
 /**
- * The line under Join when a usable invite cannot be joined (JoinCodeFailed, JoinCodeRefused): the server cannot be
- * reached, refuses the group, is not an Even server, or needs updating; anything else is "Couldn't join".
+ * The server's refusal of a fresh join (its first sync failed with one), or null when the join goes on: it synced,
+ * it waits for the server (unreachable, or any other failure), or it was not a fresh join at all.
  */
-export function joinFailureMessage(failure: JoinFailure, host: string): string {
+export function joinFailureOf(result: JoinResult): JoinRefusal | null {
+  if (result.kind !== 'joined' || result.firstSync.outcome !== 'failed') return null;
+  return isRefusal(result.firstSync.error) ? result.firstSync.error : null;
+}
+
+/**
+ * The line under Join when a usable invite cannot be joined (JoinCodeRefused): the server refuses the group, is not
+ * an Even server, or needs updating; a join call that threw is "Couldn't join".
+ */
+export function joinFailureMessage(failure: JoinFailure): string {
   switch (failure) {
-    case 'network':
-      return `Couldn't reach ${host}. Check your connection and try again.`;
     case 'group_blocked':
       return "This group is blocked on its server, so you can't join it.";
     case 'not_an_even_server':
       return "That URL isn't an Even server. Check the address.";
     case 'unsupported_version':
       return 'This server needs updating.';
-    default:
+    case 'unknown':
       return "Couldn't join. Try again.";
   }
 }

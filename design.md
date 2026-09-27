@@ -925,16 +925,15 @@ checksum, and canonicalises the server URL.
   create the `groups` row, pull, then show "Which name is yours?" from the
   member list, each with its avatar and a "joined" mark if already claimed,
   with "I'm not listed" to add a member (prefilled from `prefs`). Picking a
-  name writes `member.claimed`. If that first sync fails, the join is undone
-  (nothing of this phone's is in the group yet, so its row and secret go) and
-  the sheet says why under Join, which stays on to try again (boards
-  JoinCodeFailed, JoinCodeRefused): "Couldn't reach <host>. Check your
-  connection and try again.", "This group is blocked on its server, so you
-  can't join it.", "That URL isn't an Even server. Check the address.", "This
-  server needs updating.", or "Couldn't join. Try again." A group held before
-  its members are known (a keychain recovery, or a first sync that was already
-  running) is "Joined, waiting for first sync"; the name pick is deferred until
-  members arrive. Closing the name pick leaves
+  name writes `member.claimed`. If the server is
+  unreachable, the group is created in state "Joined, waiting for first sync";
+  the name pick is deferred until members arrive. If the server refuses the
+  group instead (a definitive answer), the join is undone (nothing of this
+  phone's is in the group yet, so its row and secret go) and the sheet says why
+  under Join, which stays on to try again (board JoinCodeRefused): "This group
+  is blocked on its server, so you can't join it.", "That URL isn't an Even
+  server. Check the address.", or "This server needs updating."; a join that
+  fails outright says "Couldn't join. Try again." Closing the name pick leaves
   the Join route for Groups and keeps the group, unclaimed; Group offers the
   pick again when it is opened (see "Group").
 - **Already have it**: an invite whose `localId` matches a local group and

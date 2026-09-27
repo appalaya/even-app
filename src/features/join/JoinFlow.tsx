@@ -6,9 +6,10 @@
  * (`acceptInviteMove`). Closing any of its sheets (`onClose`) leaves the Join route for Groups; the group a join
  * created stays, unclaimed, and Group offers the name pick again when it is opened.
  *
- * A join whose first sync fails (the server unreachable, the group blocked there, not an Even server, a server that
- * needs updating, anything else) is undone, since nothing of this phone's is in the group yet, and the reason shows
- * under Join (JoinCodeFailed, JoinCodeRefused) with Join still on to try again.
+ * A join whose server cannot be reached goes on as "Joined, waiting for first sync". One the server refuses (the group
+ * blocked there, not an Even server, a server that needs updating) is undone, since nothing of this phone's is in
+ * the group yet, and the reason shows under Join (JoinCodeRefused), as does "Couldn't join. Try again." for a join
+ * call that threw; Join stays on to try again.
  *
  * One sheet shows at a time; switching waits for the previous one to leave, since iOS presents one at a time.
  */
@@ -130,15 +131,14 @@ export function JoinFlow({
 
   const join = async () => {
     if (busy || code.kind !== 'read') return;
-    const { host } = code.invite;
-    const fail = (why: JoinFailure) => setFailure({ text, message: joinFailureMessage(why, host) });
+    const fail = (why: JoinFailure) => setFailure({ text, message: joinFailureMessage(why) });
     setBusy(true);
     setFailure(null);
     try {
       const result = await groups.joinInvite(text);
       const failed = joinFailureOf(result);
       if (failed !== null) {
-        // The first sync did not complete: undo the join so that Join tries it afresh.
+        // The server refused the group: undo the join so that nothing is left and Join tries it afresh.
         await groups.leaveGroup(result.localId).catch((error: unknown) => {
           console.warn(
             'undoing a failed join failed',
