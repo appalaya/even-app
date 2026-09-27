@@ -591,6 +591,12 @@ version bump; shipped migrations are never edited.
   no token and nothing at migration time can derive one, so it is dropped (no
   build that wrote one shipped).
 
+When the store cannot open (a database written by a newer build, a failed
+migration), the app shows the StartupError board instead of Groups: "Even
+couldn't open your groups." and "Try again. If it keeps happening, restart
+your phone.", with Try again (opens the store again) and Get help (the contact
+page in the in-app browser). The error is logged.
+
 ## Sync engine
 
 `src/services/sync/` — one engine, one HTTP transport, plus group-file I/O.

@@ -7,8 +7,11 @@ import * as SystemUI from 'expo-system-ui';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppText, Button, Icon } from '@/components';
+import { useInAppBrowser } from '@/features/report/inAppBrowser';
+import { LINKS } from '@/features/settings/about';
 import { runStartupSelfCheck } from '@/selfCheck';
 // Imported for its side effect too: the task is defined when the bundle loads, before the OS asks for it.
 import { registerBackgroundRefresh } from '@/services/background/task';
@@ -34,7 +37,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <AppProvider renderError={(error) => <StartupError error={error} />}>
+        <AppProvider renderError={(error, retry) => <StartupError error={error} retry={retry} />}>
           <ThemedRoot />
         </AppProvider>
       </SafeAreaProvider>
@@ -102,24 +105,98 @@ function RootStack() {
   );
 }
 
-/** The store could not open (e.g. written by a newer version). No board draws this yet; logged, canvas colour only. */
-function StartupError({ error }: { error: Error }) {
+/**
+ * The store could not open (e.g. written by a newer version): the StartupError board, in the system scheme (the
+ * Appearance preference lives in the store). The error is logged.
+ */
+function StartupError({ error, retry }: { error: Error; retry: () => void }) {
   useEffect(() => {
     console.error('Even could not open its data', error.message);
   }, [error]);
   return (
     <ThemeProvider>
-      <Blank />
+      <StartupErrorScreen onRetry={retry} />
     </ThemeProvider>
   );
 }
 
-function Blank() {
-  const { tokens } = useTheme();
+/**
+ * StartupError, at the Groups screen's size: the 24 pt warning glyph in a 56 pt `surface` circle, "Even couldn't open
+ * your groups." 22/28 bold 20 below it and "Try again. If it keeps happening, restart your phone." 16/23
+ * `textSecondary` 10 below that, centred in the space above the buttons (inset 32, 40 clear of them); then "Try
+ * again" (opens the app's services again) and "Get help" (44 pt, 8 below; the contact page in the in-app browser, as
+ * App settings' Help row opens it), inset 16, with 12 above them and the home indicator's inset below.
+ */
+function StartupErrorScreen({ onRetry }: { onRetry: () => void }) {
+  const { tokens, scheme } = useTheme();
+  const insets = useSafeAreaInsets();
+  const openPage = useInAppBrowser();
   useNativeBackground(tokens.background);
-  return <View style={[styles.root, { backgroundColor: tokens.background }]} />;
+  return (
+    <View
+      style={[
+        styles.root,
+        {
+          backgroundColor: tokens.background,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+        },
+      ]}
+    >
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+      <View style={styles.errorBody} accessibilityRole="alert">
+        <View style={[styles.errorGlyph, { backgroundColor: tokens.surface }]}>
+          <Icon name="warning" size={24} color={tokens.text} strokeWidth={2} />
+        </View>
+        <AppText
+          variant="title3"
+          align="center"
+          accessibilityRole="header"
+          style={styles.errorTitle}
+        >
+          Even couldn&apos;t open your groups.
+        </AppText>
+        <AppText
+          variant="calloutLoose"
+          color="textSecondary"
+          align="center"
+          style={styles.errorText}
+        >
+          Try again. If it keeps happening, restart your phone.
+        </AppText>
+      </View>
+      <View style={styles.errorActions}>
+        <Button label="Try again" onPress={onRetry} />
+        <Button
+          label="Get help"
+          variant="quiet"
+          weight="semibold"
+          onPress={() => void openPage(LINKS.contact)}
+          style={styles.help}
+        />
+      </View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  errorBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 40,
+  },
+  errorGlyph: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorTitle: { marginTop: 20 },
+  errorText: { marginTop: 10 },
+  errorActions: { paddingTop: 12, paddingHorizontal: 16 },
+  help: { minHeight: 44, marginTop: 8 },
 });
