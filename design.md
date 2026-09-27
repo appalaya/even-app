@@ -20,6 +20,8 @@ including the parts the server never sees.
 - **Crypto**: `@noble/ciphers` (XChaCha20-Poly1305), `@noble/hashes` (SHA-256, HKDF); randomness via `globalThis.crypto.getRandomValues`, polyfilled once at app entry from `expo-crypto`
 - **State**: React Context + hooks over a memoised per-group derived state; SQLite is the source of truth
 - **Background**: expo-background-task, expo-notifications (local only)
+- **Camera and QR**: expo-camera for reading invite QR codes only (permission text "Even uses the camera only to read invite QR codes."; no microphone; Android blocks `RECORD_AUDIO` and `WRITE_SETTINGS`), `uqr` to encode the invite link (`jsqr` in tests only), expo-brightness to lift the screen while a code is shown
+- **In-app browser**: expo-web-browser for the contact page (Help and feedback, Report this group)
 - **Tests**: Vitest for `packages/core`; the app has no simulator-based test suite in v1
 
 ## Architecture Overview
@@ -102,6 +104,13 @@ with no choice made. A member may optionally set one emoji, stored on the
 member record in the log, which replaces the initials. No photos. A local
 "me" default, name and emoji, is kept in a `prefs` table and prefilled on
 every join and create.
+
+**This phone's seats.** The device id outlives an uninstall, so the log can
+show which members this very device claimed before. When a group is held
+without a seat and exactly one member carries this device, the seat is
+restored silently; when several do, the re-offered name pick marks them
+"this phone" and a tap asks "This phone was Maya before" ("Continue as Maya" /
+"Choose again") instead of the other-phone question.
 
 ## Keys
 
@@ -867,12 +876,21 @@ takedown is a server-side blocklist, not a client action.
 `core/invite.ts` encodes and decodes the protocol §8 payload, verifies the
 checksum, and canonicalises the server URL.
 
-- **Share**: the group screen has one Share button. The sheet offers "Copy
-  code" first and "Share link" second. The link is
-  `https://even.appalaya.com/i#<payload>`. Share is disabled until the group's
-  `group.created` and the creator's own `member.added` are acknowledged by the
-  server, so a joiner never lands in an empty group and creates a duplicate
-  member.
+- **Share**: the group screen's share arrow opens a small menu anchored under
+  it: "Share link" (the system share sheet) and "Show QR code" (the "Scan to
+  join" sheet). Copy code lives on the invite card and in Group settings. The
+  link is `https://even.appalaya.com/i#<payload>`. Sharing is disabled until
+  the group's `group.created` and the creator's own `member.added` are
+  acknowledged by the server, so a joiner never lands in an empty group and
+  creates a duplicate member. The arrow is hidden while the invite card shows,
+  in a read-only group, and while the phone has no seat.
+- **Scan to join** (board InviteQR): the invite link as a QR code (error
+  correction M, version 10 for a typical link) on a white tile with dark
+  modules in both themes, the group name above, the two drawn lines below, and
+  the screen at full brightness while it is open. Reached from the QR button
+  after Share link and Copy code on the invite card and in Group settings'
+  invite section, and from the share menu. Their camera opens Even through the
+  universal link, or the invite page if Even is not installed.
 - **Open**: the universal link and App Link route to `/i`. The app reads the
   full URL via `Linking.useURL()` and parses the fragment itself, since the
   router may not surface fragments. The custom scheme `even://` is registered
@@ -883,6 +901,17 @@ checksum, and canonicalises the server URL.
 - **Paste**: the Groups screen has "Join with code." It accepts the bare
   payload or a full link and strips the URL. A checksum failure says "That
   code isn't complete. Copy it again."
+- **Scan** (boards JoinScan, JoinScanDenied, JoinScanNotInvite, JoinScanFound):
+  a Scan pill beside Paste opens the camera sheet (viewfinder with corner
+  brackets, a light button, Cancel). It accepts a bare code or the
+  `https://even.appalaya.com/i#<code>` link and refuses `even://`. A code that
+  is not an Even invite shows "That QR code isn't an Even invite." and keeps
+  scanning; one shaped like an invite but unusable (newer version, bad
+  checksum, server problem) counts as found so Join with code shows its usual
+  error. Found shows for 0.9 s with a haptic, then the bare code goes into the
+  field and the preview runs as after a paste. With camera access off the
+  sheet offers Open Settings and "Paste instead"; the permission is read again
+  when the app returns to the foreground.
 - **Join screen**: shows the group name and currency from the invite (or "a
   group" if absent), the server host, and Join. On join: store the secret,
   create the `groups` row, pull, then show "Which name is yours?" from the
@@ -917,8 +946,9 @@ checksum, and canonicalises the server URL.
 
 ## Landing page (`web/`)
 
-Static, deployed to Cloudflare as a Worker with static assets (no Worker script) at
-`even.appalaya.com`, by `.github/workflows/web.yml`; `web/README.md` has the details.
+Static, deployed to Cloudflare as a Worker with static assets at `even.appalaya.com`,
+by `.github/workflows/web.yml`; `web/README.md` has the details. The Worker's only
+script serves `/api/*` (the contact form); every other path is a static asset.
 
 - `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`
   for universal links and App Links, covering paths `/i` and `/i/`. A
@@ -939,7 +969,24 @@ Static, deployed to Cloudflare as a Worker with static assets (no Worker script)
   Loader, Web Analytics, Zaraz) are off for the zone.
 - `/terms`, `/privacy`, `/abuse`: plain pages. The privacy page is
   `THREAT-MODEL.md` in human words, including the backup and browser-history
-  notes.
+  notes. No page prints a mailbox address; every "contact us" is `/contact`.
+- `/contact` (boards ContactWeb, ContactWebDesktop): one page, three purposes
+  (Report a group, Get help, Send feedback), each delivered to its own mailbox
+  by `POST /api/contact`. A report takes the invite link and derives the group
+  id in the browser (`web/contact-lib.js`, checked against `@even/core`), so
+  only the id and the server origin are sent, never the key; the page says so
+  in the drawn sentence. The app opens it with the group in the URL fragment,
+  `#purpose=report&id=<groupId>&server=<canonical server URL>`, or with
+  `#purpose=help` / `#purpose=feedback`; a server that is not Appalaya's gets
+  the "we can't act on it, but we'll read your report" line, and a server with
+  a path cannot be reported. The Worker checks same origin, validates, verifies
+  a Turnstile token (action `contact`), rate-limits per IP, sends one plain-text
+  mail through Resend from a sender on `send.appalaya.com`, and stores nothing;
+  addresses and keys are Worker secrets set by the deploy, never in the repo.
+  The page's CSP allows only `challenges.cloudflare.com` beyond `'self'`; its
+  scripts are external files (hash-free, so the tests run the shipped code).
+- Store badges are the official Apple and Google artwork, self-hosted under
+  `/badges/`; the footer carries "© 2026 Appalaya Inc." linking to appalaya.com.
 
 ## Navigation
 
@@ -1009,24 +1056,30 @@ Deviating from the canvas in implementation is a no-go.
   settled" and offers to archive the group (a group with nothing in it reads
   only "You're even" and "No expenses yet", as on the Groups card; the
   archived header follows the same rule).
-  No seat: a phone that holds the group without a claimed member (a name pick
-  closed after Join, or a keychain recovery) cannot add anything, so each time
-  Group comes into view, once the members are known, it presents the Join
-  boards' "Which name is yours?" sheet over the screen, with the same
-  behaviour as after Join. Closing it only closes it; the group is untouched
-  and the sheet is re-offered on Group until a seat is claimed. When the log
-  already shows this device claimed exactly one member (the device id
-  outlives an uninstall), that seat is restored silently instead
-  (`GroupService.restoreSeat`, on every lifecycle check), and nothing is asked.
+  No seat (boards GroupNoSeat, SeatPick, SeatSameDevice): a phone that holds
+  the group without a claimed member (a name pick closed after Join, or a
+  keychain recovery) cannot add anything. When the log already shows this
+  device claimed exactly one member (the device id outlives an uninstall), the
+  seat is restored silently (`GroupService.restoreSeat`, on every lifecycle
+  check) and nothing is asked. Otherwise, each time Group comes into view,
+  once the members are known, it presents the name pick sheet titled "You're
+  already in", with names this phone claimed marked "this phone" (claimed
+  without the other-phone question; two or more of them ask "This phone was
+  Maya before"). Closing it only closes it: Group then reads "Spent so far"
+  with the trip total instead of a net, the note that this phone doesn't know
+  which name is yours, no settle list or done row, the share arrow hidden, and
+  "Pick your name" in the footer instead of Add expense, which reopens the
+  sheet; expense detail is read-only until a name is picked.
   On Balances a settled member reads "Nathan is settled" (no amount, last).
   Banners, when relevant: unreadable entries, update required, group closed,
   group moved, two members with one name, group archived. An archived group is
   read-only, and its banner carries Unarchive; a closed one greys its number and
   settle list ("Read-only. Record payments in the new group once you have its
   invite.") and has no Add expense. The header scrolls away on Balances and
-  Activity (the segmented control sticks under the nav bar). Share is hidden
-  while the new group's invite card shows and in a read-only group. Times read
-  in the device locale's format ("9:14 PM").
+  Activity (the segmented control sticks under the nav bar). The share arrow
+  (a menu: Share link, Show QR code) is hidden while the new group's invite
+  card shows, in a read-only group, and with no seat. Times read in the device
+  locale's format ("9:14 PM").
 - **Add expense**: amount keypad-first, title with the inferred category
   emoji appearing beside it as you type, paid-by chip (defaults to you), split
   row (defaults to "Everyone, equally"). Two required fields. Opened fresh it
@@ -1054,11 +1107,15 @@ Deviating from the canvas in implementation is a no-go.
   caption (tapping opens the same emoji picker sheet used everywhere, with
   "Use initials" to clear), and the Name field on its own row beneath; Appearance (System · Light · Dark); Notifications (the only
   switch, tied to the OS permission, with "Your phone decides when Even can
-  check for updates in the background."); Import group file; About (Privacy,
-  Terms, Source code, Version). No background-sync switch exists anywhere.
+  check for updates in the background."); Import group file; Help ("Help and
+  feedback" opens `/contact` in the in-app browser, captioned "Opens our
+  contact page. Nothing about your groups is sent."); About (Privacy, Terms,
+  Source code opening the public repository, Version). No background-sync
+  switch exists anywhere.
 - **Group settings**: the group's name first (a row opening Rename group),
-  invite (always visible, with the one-sentence warning; "Preparing your
-  invite…" until the server has the group), members (shows which have joined;
+  invite (always visible, with the one-sentence warning, Share link, Copy code
+  and the round Show QR code button, disabled with "Preparing your invite…"
+  until the server has the group), members (shows which have joined;
   rename and avatar on your own seat and on unclaimed names, archive/unarchive
   on others, never yourself; archived members greyed and last; the caption's
   third sentence: "Archived members stay in past expenses and balances."), Add
@@ -1066,7 +1123,15 @@ Deviating from the canvas in implementation is a no-go.
   operator, limits, retention, usage meter with its 80 % warning, Move server:
   Check reads `/v1/info`, then Move; "Delete the copy on <old host>" after a
   move), export CSV, group file export, new invite, archive group, leave (the
-  unsent count, and the optional server-copy delete).
+  unsent count, and the optional server-copy delete), and last, below Leave,
+  "Report this group" (boards ReportGroup, ReportGroupOther): a sheet saying
+  what we receive (the group's id on its server and a reason, never the
+  invite, key or contents) and what a block does; on a server that is not
+  canonically `PROTOCOL.defaultServer` it names that server, shows its
+  operator and terms from `/v1/info` when sent, says only that operator can
+  act, and demotes the button to "Tell Appalaya anyway". Continue opens
+  `/contact` in the in-app browser with the id and canonical server URL in the
+  fragment. The row is hidden when the phone has no key for the group.
 
 ## Theme tokens
 
@@ -1112,6 +1177,16 @@ These are budgets, checked in review:
 - Every list has an empty state that says what to do, in one sentence.
 - Money formatting is `Intl.NumberFormat` with the group currency and the
   currency's real exponent; no hand-rolled formatting.
+
+## Copy
+
+Board annotations never ship: a note beside or under the phone frame, or a
+caption that describes behaviour ("turns on when…", "sorts last", an API path)
+is for the engineer, not the user. App copy matches the drawn UI copy word for
+word, in the app's voice (short, plain, no "please", no exclamation marks,
+straight apostrophes in the app, typographic ones on the site); the same
+error is worded the same way everywhere. A sweep with an inventory of every
+user-visible string is part of review before a release.
 
 ## Key patterns
 
