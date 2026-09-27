@@ -204,7 +204,8 @@ const styles = StyleSheet.create({
   group: { gap: 6, marginTop: 16, marginHorizontal: layout.gutter },
   fieldRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   field: { flex: 1 },
-  check: { paddingHorizontal: 18 },
+  // The kit button centres itself when not full width; keep Check level with the field when the error line shows.
+  check: { paddingHorizontal: 18, alignSelf: 'flex-start' },
   details: { marginTop: 16, marginHorizontal: layout.gutter },
   status: {
     flexDirection: 'row',
