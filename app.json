@@ -14,7 +14,7 @@
       "associatedDomains": ["applinks:even.appalaya.com"],
       "infoPlist": {
         "UIBackgroundModes": ["fetch", "processing"],
-        "ITSAppUsesNonExemptEncryption": true
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {

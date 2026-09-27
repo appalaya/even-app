@@ -169,51 +169,33 @@ Do these before the first run; the upload fails without the app record.
    Review: beta app description, feedback email (`support@appalaya.com`),
    privacy policy URL `https://even.appalaya.com/privacy`, and Beta App Review
    contact details. Sign-in required: no (Even has no accounts).
-7. **Encryption documentation**, below.
+7. **Encryption**: nothing to file while the source stays public; see below.
 
 ## Export compliance (encryption)
 
 Even encrypts group content end to end with XChaCha20-Poly1305 (via
 `@noble/ciphers`), keyed with HKDF-SHA-256, in its own code rather than only
-through Apple's system encryption. So, unlike Flowcast, it cannot declare "no
-non-exempt encryption": `app.json` sets
-`ios.infoPlist.ITSAppUsesNonExemptEncryption` to `true`.
+through Apple's system encryption. Its source code is public
+(github.com/appalaya/even-app), and US export rules treat encryption whose
+source code is publicly available as not subject to the EAR once a one-time
+notification has been sent (15 CFR 742.15(b) and 734.7). Appalaya Inc. sent
+that notification to crypt@bis.doc.gov and enc@nsa.gov on 2026-09-27 from
+info@appalaya.com, naming this repository. Apple lists this case among its
+exemptions, so `app.json` sets `ios.infoPlist.ITSAppUsesNonExemptEncryption`
+to `false`: builds upload without a compliance code and never wait at
+Missing Compliance. None of this is legal advice; the owner confirmed the
+classification before filing.
 
-With that flag and no approved documentation, App Store Connect marks every
-build **Missing Compliance**, and no tester, internal or external, can install
-it until someone answers the encryption questions on that build (TestFlight →
-the build → Manage). To answer once for all builds:
-
-1. App Store Connect → the app → App Information → **App Encryption
-   Documentation** → +.
-2. Answer as follows. This is the common path for apps with end-to-end
-   encryption built on standard, published algorithms; it is not legal advice,
-   and the owner should confirm it (with counsel if in doubt) before filing.
-   Apple's wording changes from time to time, so match on meaning.
-   - Does the app use encryption: **yes**.
-   - Is it exempt (only Apple's system encryption, or only authentication,
-     digital signatures, copy protection, or the other listed exemptions):
-     **no**.
-   - Kind of algorithms: **standard encryption algorithms instead of, or in
-     addition to, the encryption in Apple's operating system** (not
-     proprietary). XChaCha20 extends the IETF's ChaCha20-Poly1305 (RFC 8439)
-     and is published by the IRTF CFRG as a draft rather than an RFC; confirm
-     that "standard" fits.
-   - Mass market: **yes**, self-classified under ECCN 5D992.c (License
-     Exception ENC, EAR 740.17(b)(1)). The usual obligation that comes with
-     this is an annual self-classification report to BIS (and the NSA's ENC
-     coordinator), due each February 1 for the previous year. BIS narrowed
-     which mass-market items need that report in March 2021, so confirm
-     whether it still applies to Even.
-   - Available on the App Store in France: if **yes**, upload the French
-     encryption declaration (ANSSI) that App Store Connect asks for.
-3. When App Store Connect approves the documentation, it shows a key value next
-   to it. Add it to `app.json` as `ios.infoPlist.ITSEncryptionExportComplianceCode`,
-   regenerate the native project (below) and merge. From then on builds carry
-   the code and stop asking.
-
-Until that code is in the app, each new build waits at Missing Compliance for
-someone to click through it before Alpha can install it.
+Keep it that way only while the source stays public. If the repository ever
+goes private, or the app gains encryption whose source is not published, set
+the key back to `true` and, in the same change, file App Encryption
+Documentation in App Store Connect (the app → App Information → App
+Encryption Documentation) and put the code it issues in `app.json` as
+`ios.infoPlist.ITSEncryptionExportComplianceCode`. With `true` and no matching
+code, App Store Connect rejects the upload outright ("Invalid Export
+Compliance Code", 90592); the questionnaire alone, answered as "standard
+algorithms, not available in France", issues no code. Google Play has no
+equivalent declaration.
 
 ## The native project
 
