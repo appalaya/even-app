@@ -23,6 +23,8 @@ on:
       - '.github/workflows/ios.yml'
       - '.github/workflows/ci.yml'
       - '.github/actionlint.yaml'
+      - '.github/workflows/web.yml'
+      - '.gitignore'
       - 'scripts/**'
   workflow_dispatch:
 
