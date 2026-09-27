@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AppText, Button, Card, Sheet, ToggleRow } from '@/components';
+import { AppText, Button, Checkbox, Icon, Sheet } from '@/components';
+import { radii, useTheme } from '@/theme';
 
 export interface LeaveSheetProps {
   visible: boolean;
@@ -16,16 +18,28 @@ export interface LeaveSheetProps {
 }
 
 /**
- * Leave (design.md "Rotation, moving, closing"): local only; says how many of this phone's changes never reached
- * the server; offers "Also delete this group's copy on <host>" with its warning. Laid out as the RegenerateInvite
- * board's confirmation (question, paragraph, then the primary action over Cancel); no board draws Leave itself.
+ * Leave (Group settings, extra states: "Leave, with unsent entries"; design.md "Rotation, moving, closing"): local
+ * only. "Leave Banff 2026?", "Removes the group from this phone. The others keep it."; with unsent entries a `fill`
+ * box saying how many nobody else has seen; the "Also delete this group's copy on <host>" checkbox with its warning;
+ * then "Leave anyway" (or "Leave" without unsent entries) in `danger` on `fill`, and Cancel.
  */
+/** The sheet's top edge on the 874 pt board (Group settings, extra states: Leave). */
+const DRAWN_TOP = 300;
+const BOARD_HEIGHT = 874;
+
 export function LeaveSheet({ visible, onDismiss, busy, groupName, ...body }: LeaveSheetProps) {
+  const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   const dismiss = () => {
     if (!busy) onDismiss();
   };
   return (
-    <Sheet visible={visible} onDismiss={dismiss} accessibilityLabel={`Leave ${groupName}?`}>
+    <Sheet
+      visible={visible}
+      onDismiss={dismiss}
+      top={Math.max(insets.top + 48, height - (BOARD_HEIGHT - DRAWN_TOP))}
+      accessibilityLabel={`Leave ${groupName}?`}
+    >
       <LeaveBody groupName={groupName} busy={busy} onDismiss={dismiss} {...body} />
     </Sheet>
   );
@@ -39,32 +53,52 @@ function LeaveBody({
   onLeave,
   onDismiss,
 }: Omit<LeaveSheetProps, 'visible'>) {
-  const [deleteCopy, setDeleteCopy] = useState(false);
+  const { tokens } = useTheme();
+  // Drawn checked (Group settings, extra states).
+  const [deleteCopy, setDeleteCopy] = useState(true);
+  const label = `Also delete this group's copy on ${host}`;
   return (
     <View style={styles.body}>
       <AppText variant="title3" accessibilityRole="header" style={styles.title}>
         Leave {groupName}?
       </AppText>
       <AppText variant="calloutLoose" color="textSecondary" style={styles.paragraph}>
-        Removes {groupName} from this phone. The others keep it.
-        {unsent > 0 &&
-          ` ${unsent} ${unsent === 1 ? 'change' : 'changes'} from this phone never reached the server; the others will never see ${unsent === 1 ? 'it' : 'them'}.`}
+        Removes the group from this phone. The others keep it.
       </AppText>
-      <Card tone="fill" radius="group" style={styles.toggle}>
-        <ToggleRow
-          label={`Also delete this group's copy on ${host}`}
-          value={deleteCopy}
-          onValueChange={setDeleteCopy}
+      {unsent > 0 && (
+        <View style={[styles.unsent, { backgroundColor: tokens.fill }]} accessibilityRole="alert">
+          <View style={styles.icon}>
+            <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
+          </View>
+          <AppText variant="subheadLoose" weight="semibold" style={styles.flex}>
+            {`You have ${unsent} ${unsent === 1 ? 'entry' : 'entries'} nobody else has seen yet. Leave anyway?`}
+          </AppText>
+        </View>
+      )}
+      <View style={styles.option}>
+        <Checkbox
+          checked={deleteCopy}
+          onToggle={() => setDeleteCopy((on) => !on)}
+          label={label}
           disabled={busy}
         />
-      </Card>
-      {deleteCopy && (
-        <AppText variant="caption" color="textSecondary" style={styles.caption}>
-          Other members will recreate it on their next sync unless they leave too.
-        </AppText>
-      )}
+        <View style={styles.optionText} importantForAccessibility="no-hide-descendants">
+          <AppText
+            variant="callout"
+            style={styles.optionLabel}
+            onPress={() => setDeleteCopy((on) => !on)}
+          >
+            {label}
+          </AppText>
+          <AppText variant="footnote" color="textSecondary">
+            Other members will put it back on their next sync unless they leave too.
+          </AppText>
+        </View>
+      </View>
+      <View style={styles.flex} />
       <Button
-        label="Leave"
+        label={unsent > 0 ? 'Leave anyway' : 'Leave'}
+        variant="danger"
         disabled={busy}
         onPress={() => onLeave(deleteCopy)}
         style={styles.leave}
@@ -81,11 +115,30 @@ function LeaveBody({
 }
 
 const styles = StyleSheet.create({
-  body: { paddingHorizontal: 16 },
+  flex: { flex: 1 },
+  body: { flex: 1, paddingHorizontal: 16 },
   title: { marginTop: 22, marginHorizontal: 4 },
   paragraph: { marginTop: 10, marginHorizontal: 4 },
-  toggle: { marginTop: 20 },
-  caption: { marginTop: 8, marginHorizontal: 4 },
-  leave: { marginTop: 24 },
+  unsent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radii.tile,
+  },
+  icon: { paddingTop: 2 },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginTop: 16,
+    marginHorizontal: 4,
+  },
+  optionText: { flex: 1, gap: 4 },
+  /** 16/22, as drawn. */
+  optionLabel: { lineHeight: 22 },
+  leave: { marginTop: 20 },
   cancel: { marginTop: 10 },
 });

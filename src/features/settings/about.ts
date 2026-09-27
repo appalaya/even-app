@@ -4,7 +4,7 @@
 export const LINKS = {
   privacy: 'https://even.appalaya.com/privacy',
   terms: 'https://even.appalaya.com/terms',
-  /** The docs name no source repository yet; the landing page stands in (see the stack report). */
+  /** The docs name no source repository yet; the landing page stands in. */
   source: 'https://even.appalaya.com',
 } as const;
 

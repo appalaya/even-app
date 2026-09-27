@@ -5,13 +5,14 @@
  *
  * One sheet shows at a time; switching waits for the previous one to leave, since iOS presents one at a time.
  */
-import type { MemberState } from '@even/core';
+import { memberColor, newId, type MemberState } from '@even/core';
+import type { Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { EmojiPickerSheet } from '@/features/emoji/EmojiPickerSheet';
 import { hrefs } from '@/features/groups/routes';
 import { isNameTaken, nameTakenMessage } from '@/features/groups/names';
 import { isStateError, useApp, useGroup, usePrefs } from '@/state';
-import type { Href } from 'expo-router';
 
 import { ConfirmSheet } from './ConfirmSheet';
 import { hostOf, moveQuestion, problemMessage } from './invite';
@@ -24,7 +25,6 @@ const SWAP_MS = 260;
 type Step =
   | { kind: 'code' }
   | { kind: 'pick'; localId: string }
-  | { kind: 'sameName'; localId: string; member: MemberState }
   | { kind: 'move'; localId: string; name: string; fromServer: string; toServer: string };
 
 export interface JoinFlowProps {
@@ -36,9 +36,21 @@ export interface JoinFlowProps {
   pickLocalId?: string;
   onClose: () => void;
   onDone: (href: Href) => void;
+  /**
+   * Development builds only (the dev seed's screenshots): open "I'm not listed", ask "Is that you on another phone?"
+   * about the member with this name, or tap Join once the code reads.
+   */
+  dev?: { notListed?: boolean; ask?: string; autoJoin?: boolean };
 }
 
-export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }: JoinFlowProps) {
+export function JoinFlow({
+  visible,
+  initialCode,
+  pickLocalId,
+  onClose,
+  onDone,
+  dev,
+}: JoinFlowProps) {
   const { groups } = useApp();
   const [step, setStep] = useState<Step>(
     pickLocalId !== undefined ? { kind: 'pick', localId: pickLocalId } : { kind: 'code' },
@@ -58,7 +70,11 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
   const [text, setText] = useState(initialCode ?? '');
   // The preview of the text as last checked, and a Join refusal for the text Join was tapped with.
   const [checked, setChecked] = useState<{ text: string; code: CodeState } | null>(null);
-  const [refusal, setRefusal] = useState<{ text: string; message: string } | null>(null);
+  const [refusal, setRefusal] = useState<{
+    text: string;
+    message: string;
+    update?: boolean;
+  } | null>(null);
   const latest = useRef(0);
 
   useEffect(() => {
@@ -70,7 +86,11 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
         text,
         code: result.ok
           ? { kind: 'read', invite: result.invite }
-          : { kind: 'error', message: problemMessage(result.error) },
+          : {
+              kind: 'error',
+              message: problemMessage(result.error),
+              update: result.error === 'version',
+            },
       });
     });
   }, [text, groups]);
@@ -79,7 +99,7 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
     text.trim() === ''
       ? { kind: 'empty' }
       : refusal?.text === text
-        ? { kind: 'error', message: refusal.message }
+        ? { kind: 'error', message: refusal.message, update: refusal.update === true }
         : checked?.text === text
           ? checked.code
           : { kind: 'empty' };
@@ -119,7 +139,7 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
         problem === 'server' ||
         problem === 'version'
       ) {
-        setRefusal({ text, message: problemMessage(problem) });
+        setRefusal({ text, message: problemMessage(problem), update: problem === 'version' });
       } else {
         console.warn('join failed', error instanceof Error ? error.message : error);
       }
@@ -142,7 +162,16 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
     }
   };
 
-  const localId = step.kind === 'code' ? null : step.localId;
+  const localId = step.kind === 'pick' ? step.localId : null;
+
+  // Development: Join as soon as the pasted code reads (the move confirmation's screenshot).
+  const autoJoined = useRef(false);
+  useEffect(() => {
+    if (!__DEV__ || dev?.autoJoin !== true || autoJoined.current || code.kind !== 'read') return;
+    autoJoined.current = true;
+    const timer = setTimeout(() => void join(), 600);
+    return () => clearTimeout(timer);
+  });
 
   return (
     <>
@@ -155,17 +184,14 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
         onJoin={() => void join()}
         busy={busy}
       />
-      {localId !== null && (
+      {localId !== null && step.kind === 'pick' && (
         <PickStep
           localId={localId}
           visible={visible && shown === 'pick'}
           fallbackName={preview?.name ?? null}
           onClose={onClose}
           onDone={onDone}
-          onSameName={(member) => go({ kind: 'sameName', localId, member })}
-          reopen={() => go({ kind: 'pick', localId })}
-          sameName={step.kind === 'sameName' ? step.member : null}
-          sameNameVisible={visible && shown === 'sameName'}
+          dev={dev}
         />
       )}
       {step.kind === 'move' && (
@@ -173,6 +199,8 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
           visible={visible && shown === 'move'}
           onDismiss={onClose}
           question={moveQuestion(step.name, step.fromServer, step.toServer)}
+          body="This invite is for a group you already have, on a different server. Everything you've added moves with it."
+          drawnTop={460}
           confirmLabel="Move"
           onConfirm={() => void move(step)}
           cancelLabel="Cancel"
@@ -183,27 +211,24 @@ export function JoinFlow({ visible, initialCode, pickLocalId, onClose, onDone }:
   );
 }
 
-/** "Which name is yours?" for one group, with its two follow-ups. */
+/**
+ * "Which name is yours?" for one group, with "I'm not listed" expanding in place and "Is that you on another phone,
+ * or a different Maya?" stacked over it (Groups, create and join, extra states 4 and 5).
+ */
 function PickStep({
   localId,
   visible,
   fallbackName,
   onClose,
   onDone,
-  onSameName,
-  reopen,
-  sameName,
-  sameNameVisible,
+  dev,
 }: {
   localId: string;
   visible: boolean;
   fallbackName: string | null;
   onClose: () => void;
   onDone: (href: Href) => void;
-  onSameName: (member: MemberState) => void;
-  reopen: () => void;
-  sameName: MemberState | null;
-  sameNameVisible: boolean;
+  dev?: { notListed?: boolean; ask?: string };
 }) {
   const { groups } = useApp();
   const { prefs } = usePrefs();
@@ -211,6 +236,12 @@ function PickStep({
   const [busy, setBusy] = useState(false);
   const [notListed, setNotListed] = useState(false);
   const [newName, setNewName] = useState('');
+  const [fromDefaults, setFromDefaults] = useState(false);
+  const [newEmoji, setNewEmoji] = useState<string | null>(null);
+  // The new seat's id is chosen now, so its avatar previews the colour it will have.
+  const [newMemberId] = useState(() => newId());
+  const [picking, setPicking] = useState(false);
+  const [sameName, setSameName] = useState<MemberState | null>(null);
   const [nameError, setNameError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | undefined>();
 
@@ -218,16 +249,30 @@ function PickStep({
     ? [...derived.state.members.values()].filter((m) => !m.archived && !m.unknown)
     : [];
 
-  const openNotListed = useCallback(() => {
-    setNotListed(true);
-    setNewName((current) => (current === '' ? (prefs?.name ?? '') : current));
-  }, [prefs]);
+  /** Opens "I'm not listed": from App settings' defaults, or empty after "Different Maya". */
+  const openNotListed = useCallback(
+    (fill: boolean) => {
+      setNotListed(true);
+      setNameError(undefined);
+      if (fill) {
+        const name = prefs?.name ?? '';
+        setNewName(name);
+        setFromDefaults(name !== '');
+        setNewEmoji(prefs?.emoji ?? null);
+      } else {
+        setNewName('');
+        setFromDefaults(false);
+      }
+    },
+    [prefs],
+  );
 
   const claim = async (member: MemberState) => {
     setBusy(true);
     setFormError(undefined);
     try {
       await groups.claimMember(localId, member.id);
+      setSameName(null);
       onDone(hrefs.group(localId));
     } catch (error) {
       setFormError("That name couldn't be claimed.");
@@ -252,7 +297,7 @@ function PickStep({
     setBusy(true);
     setFormError(undefined);
     try {
-      await groups.joinAsNewMember(localId, clean, prefs?.emoji ?? undefined);
+      await groups.joinAsNewMember(localId, clean, newEmoji ?? undefined, { id: newMemberId });
       onDone(hrefs.group(localId));
     } catch (error) {
       if (isStateError(error, 'name_taken')) setNameError(nameTakenMessage(clean));
@@ -266,44 +311,80 @@ function PickStep({
     }
   };
 
+  // Development: open a drawn state once the members are known.
+  const devShown = useRef(false);
+  useEffect(() => {
+    if (!__DEV__ || devShown.current || members.length === 0) return;
+    if (dev?.notListed !== true && dev?.ask === undefined) return;
+    devShown.current = true;
+    const timer = setTimeout(() => {
+      if (dev.notListed === true) openNotListed(true);
+      const asked = members.find((m) => m.name === dev.ask);
+      if (asked !== undefined) setSameName(asked);
+    }, 500);
+    return () => clearTimeout(timer);
+  });
+
   const name = derived?.name.trim() ? derived.name : (fallbackName ?? 'a group');
   return (
-    <>
-      <PickNameSheet
-        visible={visible}
-        onClose={onClose}
-        groupName={name}
-        host={hostOf(derived?.row.serverUrl ?? '')}
-        currency={derived?.currency ?? null}
-        members={members}
-        onPick={(m) => (m.devices.length > 0 ? onSameName(m) : void claim(m))}
-        notListed={notListed}
-        onNotListed={openNotListed}
-        newName={newName}
-        onChangeNewName={(value) => {
-          setNewName(value);
-          setNameError(undefined);
+    <PickNameSheet
+      visible={visible}
+      onClose={onClose}
+      groupName={name}
+      host={hostOf(derived?.row.serverUrl ?? '')}
+      currency={derived?.currency ?? null}
+      members={members}
+      onPick={(m) => (m.devices.length > 0 ? setSameName(m) : void claim(m))}
+      notListed={notListed}
+      onToggleNotListed={() => (notListed ? setNotListed(false) : openNotListed(true))}
+      newName={newName}
+      onChangeNewName={(value) => {
+        setNewName(value);
+        setFromDefaults(false);
+        setNameError(undefined);
+      }}
+      newEmoji={newEmoji}
+      newColor={memberColor(newMemberId)}
+      onChangeAvatar={() => setPicking(true)}
+      fromDefaults={fromDefaults}
+      onAddSelf={() => void addSelf()}
+      nameError={nameError}
+      formError={formError}
+      busy={busy}
+    >
+      {/* Stacked over the pick sheet, so iOS presents them from its modal. */}
+      <ConfirmSheet
+        visible={sameName !== null}
+        onDismiss={() => setSameName(null)}
+        question={`Is that you on another phone, or a different ${sameName?.name ?? ''}?`}
+        body={`If it's you, this phone joins as ${sameName?.name ?? ''} too. If not, you'll add yourself under another name.`}
+        drawnTop={512}
+        confirmLabel="It's me"
+        onConfirm={() => {
+          if (sameName !== null) void claim(sameName);
         }}
-        onAddSelf={() => void addSelf()}
-        nameError={nameError}
-        formError={formError}
+        cancelLabel={`Different ${sameName?.name ?? ''}`}
+        onCancel={() => {
+          setSameName(null);
+          openNotListed(false);
+        }}
         busy={busy}
       />
-      {sameName !== null && (
-        <ConfirmSheet
-          visible={sameNameVisible}
-          onDismiss={reopen}
-          question={`Is that you on another phone, or are you a different ${sameName.name}?`}
-          confirmLabel="That's me"
-          onConfirm={() => void claim(sameName)}
-          cancelLabel={`I'm a different ${sameName.name}`}
-          onCancel={() => {
-            openNotListed();
-            reopen();
-          }}
-          busy={busy}
-        />
-      )}
-    </>
+      <EmojiPickerSheet
+        visible={picking}
+        onDismiss={() => setPicking(false)}
+        value={newEmoji}
+        onPick={(emoji) => {
+          setNewEmoji(emoji);
+          setPicking(false);
+        }}
+        onUseInitials={() => {
+          setNewEmoji(null);
+          setPicking(false);
+        }}
+        name={newName.trim() === '' ? '?' : newName}
+        color={memberColor(newMemberId)}
+      />
+    </PickNameSheet>
   );
 }

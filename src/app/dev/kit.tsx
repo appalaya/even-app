@@ -6,6 +6,7 @@ import { LogBox, ScrollView, StyleSheet, View, type ScrollViewInstance } from 'r
 
 import {
   AddAvatar,
+  AmountCell,
   AmountDisplay,
   AppText,
   Avatar,
@@ -14,6 +15,8 @@ import {
   Button,
   Card,
   CategoryBars,
+  Checkbox,
+  collisionMessage,
   CategoryChip,
   CategoryGrid,
   CategoryTile,
@@ -31,6 +34,7 @@ import {
   MoneyText,
   movedMessage,
   notSyncedLabel,
+  ProgressRing,
   Screen,
   SearchField,
   SectionHeader,
@@ -371,6 +375,10 @@ const PALETTE_TOKENS: readonly (keyof ThemeTokens)[] = [
   'onAccent',
   'accentSoft',
   'accentBar',
+  'separatorTint',
+  'avatarOnChip',
+  'outlineStrong',
+  'danger',
   'scrim',
   'disabledFill',
   'onDisabledFill',
@@ -502,6 +510,33 @@ function ButtonSection() {
           <Button label="Done" variant="quiet" weight="semibold" disabled />
           <Button label="Details" variant="quiet" size="pill" />
         </Row>
+        <Note>Regular 48 · 17/22 (Balances: Settle up)</Note>
+        <Button label="Settle up" variant="secondary" size="regular" />
+        <Note>Compact 40 · 15/20 (under the usage warning)</Note>
+        <Button label="Export group file" variant="secondary" size="compact" fullWidth={false} />
+        <Note>Pill, narrow 36 · 14 (a member&apos;s pills): Rename · Archive · Unarchive</Note>
+        <Row gap={8}>
+          <Button label="Rename" size="pillNarrow" variant="neutral" weight="medium" />
+          <Button label="Archive" size="pillNarrow" variant="neutral" weight="medium" />
+          <Button label="Unarchive" size="pillNarrow" variant="neutral" labelColor="accent" />
+        </Row>
+        <Note>Danger: Leave anyway (on fill) · Delete (quiet, Expense detail)</Note>
+        <Button label="Leave anyway" variant="danger" />
+        <Row>
+          <Button label="Delete" variant="dangerQuiet" />
+          <Button label="Edit" variant="secondary" style={styles.flex} />
+        </Row>
+        <Note>Header buttons: gear · share · share disabled (invite not ready)</Note>
+        <Row gap={0}>
+          <HeaderButton icon="gear" accessibilityLabel="Settings" onPress={() => {}} />
+          <HeaderButton icon="share" accessibilityLabel="Share invite" onPress={() => {}} />
+          <HeaderButton
+            icon="share"
+            accessibilityLabel="Share invite"
+            onPress={() => {}}
+            disabled
+          />
+        </Row>
       </Gutter>
     </>
   );
@@ -534,19 +569,23 @@ function AvatarSection() {
     <>
       <Title>Avatars</Title>
       <Gutter>
-        <Note>Initials at 24 · 26 · 28 · 30 · 32 · 36 · 72</Note>
+        <Note>Initials at 24 · 26 · 28 · 30 · 32 · 36 · 56 · 72</Note>
         <Row gap={8}>
           {([24, 26, 28, 30, 32, 36] as const).map((s) => (
             <Avatar key={s} size={s} initials="M" color={MEMBERS.maya.color} />
           ))}
+          <Avatar size={56} initials="A" color={6} />
           <Avatar size={72} initials="S" color={MEMBERS.you.color} />
         </Row>
-        <Note>Emoji on surface · on inset/fill list · outlined (still adding) · dimmed</Note>
+        <Note>
+          Emoji on surface · on inset/fill list · in a chip · outlined (still adding) · dimmed
+        </Note>
         <Row gap={8}>
           {([28, 30, 32, 36] as const).map((s) => (
             <Avatar key={s} size={s} emoji="🏂" />
           ))}
           <Avatar size={32} emoji="🏂" on="inset" />
+          <Avatar size={32} emoji="🏂" on="chip" />
           <Avatar size={30} initials="S" outlined />
           <Avatar size={32} initials="N" color={MEMBERS.nathan.color} dimmed />
         </Row>
@@ -604,7 +643,9 @@ function StatusSection() {
         <MoneyText amount={5200} currency={CUR} locale={LOC} size="big" />
         <StatusLine state="synced" label="Synced 2 min ago" onSyncNow={() => {}} />
         <StatusLine state="syncing" label="Syncing…" />
-        <StatusLine state="stale" label={notSyncedLabel('2:10 pm')} onSyncNow={() => {}} />
+        <StatusLine state="stale" label={notSyncedLabel('2:10 PM')} onSyncNow={() => {}} />
+        <Note>Read only (closed): the figure in textSecondary</Note>
+        <MoneyText amount={5200} currency={CUR} locale={LOC} size="big" color="textSecondary" />
         <Note>Inline: 16 semibold · 16 medium · 17 semibold · 15 medium</Note>
         <Row gap={16}>
           <MoneyText amount={4400} currency={CUR} locale={LOC} />
@@ -617,14 +658,31 @@ function StatusSection() {
           <SyncDot />
           <SyncDot waiting />
         </Row>
+        <Note>Progress ring (Preparing your invite…)</Note>
+        <Row gap={8}>
+          <ProgressRing />
+          <AppText variant="subheadLoose" color="textSecondary">
+            Preparing your invite…
+          </AppText>
+        </Row>
       </Gutter>
       <Title>Banners</Title>
       <Gutter gap={8}>
-        <Banner variant="unreadable" message="2 entries couldn't be read" />
-        <Banner variant="archived" message="Archived · read-only" />
-        <Banner variant="updateRequired" />
-        <Banner variant="closed" />
-        <Banner variant="moved" message={movedMessage('Maya', 'sync.example.net')} />
+        <Banner variant="unreadable" message="2 entries couldn't be read" onAction={() => {}} />
+        <Banner variant="archived" message="Archived · read-only" onAction={() => {}} />
+        <Banner variant="updateRequired" onAction={() => {}} />
+        <Banner variant="closed" onAction={() => {}} />
+        <Banner
+          variant="moved"
+          message={movedMessage('Maya', 'sync.example.net')}
+          onAction={() => {}}
+        />
+        <Banner variant="collision" message={collisionMessage('Maya')} onAction={() => {}} />
+        <Note>Without an action (Expense detail, flagged; a different currency)</Note>
+        <Banner
+          variant="flagged"
+          message="This entry is in USD, not CAD, and is left out of balances."
+        />
       </Gutter>
     </>
   );
@@ -642,14 +700,18 @@ function StatesSection() {
       <Title>States</Title>
       <Gutter gap={8}>
         <StateLabel>Banner · update required</StateLabel>
-        <Banner variant="updateRequired" />
+        <Banner variant="updateRequired" onAction={() => {}} />
         <StateLabel>Banner · group closed</StateLabel>
-        <Banner variant="closed" />
+        <Banner variant="closed" onAction={() => {}} />
         <StateLabel>Banner · group moved</StateLabel>
-        <Banner variant="moved" message={movedMessage('Maya', 'sync.example.net')} />
+        <Banner
+          variant="moved"
+          message={movedMessage('Maya', 'sync.example.net')}
+          onAction={() => {}}
+        />
         <StateLabel>Status line · not synced</StateLabel>
         <View style={styles.statusFrame}>
-          <StatusLine state="stale" label={notSyncedLabel('2:10 pm')} onSyncNow={() => {}} />
+          <StatusLine state="stale" label={notSyncedLabel('2:10 PM')} onSyncNow={() => {}} />
         </View>
         <StateLabel>Switch · on, off</StateLabel>
         <Card radius="group" separatorInset={16}>
@@ -1000,16 +1062,27 @@ function ControlSection() {
           <ToggleRow label="Notifications" value={notify} onValueChange={setNotify} />
           <ToggleRow label="Notifications" value={!notify} onValueChange={(v) => setNotify(!v)} />
         </Card>
+        <Note>Checkbox: on · off (Split, Leave)</Note>
+        <Row gap={16}>
+          <Checkbox checked={nathan} onToggle={() => setNathan(!nathan)} label="Include Nathan" />
+          <Checkbox checked={!nathan} onToggle={() => setNathan(!nathan)} label="Include you" />
+        </Row>
       </Gutter>
       <Title>Chips</Title>
       <Gutter>
-        <Note>Category: suggested · chosen · choosing</Note>
+        <Note>Category: no title yet · inferred · just changed by the model · chosen by you</Note>
         <Row gap={8}>
-          <CategoryChip emoji="🚆" label="Transit" state="suggested" />
+          <CategoryChip state="placeholder" />
+          <CategoryChip emoji="🚆" label="Transit" state="inferred" />
+        </Row>
+        <Row gap={8}>
+          <CategoryChip emoji="🏨" label="Lodging" state="suggested" />
           <CategoryChip emoji="🍽️" label="Food" state="chosen" />
         </Row>
-        <Row>
-          <CategoryChip emoji="🏨" label="Lodging" state="choosing" />
+        <Note>Choosing (the picker is open): suggested · chosen</Note>
+        <Row gap={12}>
+          <CategoryChip emoji="🏨" label="Lodging" state="suggested" choosing />
+          <CategoryChip emoji="🍽️" label="Food" state="chosen" choosing />
         </Row>
         <Note>Members: removable · toggle off / on</Note>
         <Row gap={8}>
@@ -1049,7 +1122,12 @@ function FieldSection() {
           accessibilityLabel="Title"
           value={title}
           onChangeText={setTitle}
-          trailing={<CategoryChip emoji="🚆" label="Transit" state="suggested" />}
+          trailing={<CategoryChip emoji="🚆" label="Transit" state="inferred" />}
+        />
+        <TextField
+          variant="url"
+          accessibilityLabel="Sync server"
+          defaultValue="https://sync.even.appalaya.com"
         />
         <TextField
           variant="row"
@@ -1063,17 +1141,14 @@ function FieldSection() {
           <TextField variant="inline" accessibilityLabel="Your name" defaultValue="Sam" />
         </View>
         <TextField variant="pill" accessibilityLabel="Note" placeholder="Note (optional)" />
-        <Note>Split cells: amount · active (keypad target) · percent</Note>
+        <Note>Split cells: amount · active (keypad target) · percent · a long amount shrinks</Note>
         <Card tone="fill" style={styles.cellRow}>
-          <TextField variant="cell" width={100} defaultValue="$12.00" accessibilityLabel="You" />
-          <TextField
-            variant="cell"
-            width={100}
-            defaultValue="$6.00"
-            active
-            accessibilityLabel="Jordan"
-          />
-          <TextField variant="cell" width={76} defaultValue="15%" accessibilityLabel="Maya" />
+          <AmountCell width={100} value="$12.00" accessibilityLabel="You" />
+          <AmountCell width={100} value="$6.00" active accessibilityLabel="Jordan" />
+          <AmountCell width={76} value="15%" accessibilityLabel="Maya" />
+        </Card>
+        <Card tone="fill" style={styles.cellRow}>
+          <AmountCell width={100} value="$123,456.78" accessibilityLabel="Nathan" />
         </Card>
         <SearchField placeholder="Search emoji" />
       </Gutter>
@@ -1107,6 +1182,11 @@ function EntrySection() {
     <>
       <Title>Amount entry</Title>
       <Gutter gap={12}>
+        <Note>Nothing typed yet · typing the title (one line) · typed</Note>
+        <AmountDisplay amount={0} currency={CUR} locale={LOC} empty />
+        <View style={styles.center}>
+          <AmountDisplay amount={minor} currency={CUR} locale={LOC} compact />
+        </View>
         <AmountDisplay amount={minor} currency={CUR} locale={LOC} />
         <Row gap={8}>
           <SelectPill label="Paid by" value="You" />

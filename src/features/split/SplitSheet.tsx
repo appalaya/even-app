@@ -8,16 +8,18 @@
 import { exponentOf, formatMinor, LIMITS, type GroupState, type MemberState } from '@even/core';
 import { router } from 'expo-router';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Keyboard, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Keyboard, ScrollView, StyleSheet, View } from 'react-native';
 
 import {
+  AmountCell,
   AppText,
   Avatar,
   Card,
+  Checkbox,
   Footnote,
+  Icon,
   Keypad,
   SegmentedControl,
-  TextField,
   type KeypadKey,
 } from '@/components';
 import { applyKey, entryToMinor, minorToEntry } from '@/features/addExpense/amountEntry';
@@ -25,8 +27,9 @@ import { updateDraft, useDraft, type SheetDraft } from '@/features/addExpense/dr
 import { listedMembers, memberLabel } from '@/features/addExpense/labels';
 import { RouteSheet, useRouteSheet } from '@/features/addExpense/RouteSheet';
 import { useGroup, useMe } from '@/state';
+import { useTheme } from '@/theme';
 
-import { Checkbox, ExtraField, SharesStepper } from './controls';
+import { ExtraField, SharesStepper } from './controls';
 import {
   amountOf,
   BPS_TOTAL,
@@ -141,6 +144,7 @@ function SplitEditor({
   split: SplitDraft;
   onChange: (split: SplitDraft) => void;
 }) {
+  const { tokens } = useTheme();
   const exponent = exponentOf(currency);
   const amount = entryToMinor(draft.amountText, exponent);
   const seed = draft.editId ?? draft.id;
@@ -222,7 +226,10 @@ function SplitEditor({
     );
     if (!included) {
       return (
-        <View key={id} style={[styles.row, styles.rowOut]}>
+        <View
+          key={id}
+          style={[styles.row, styles.rowOut, split.mode === 'equal' && styles.rowOutEqual]}
+        >
           {include}
           {avatar}
           <AppText variant="callout" color="textMuted" numberOfLines={1} style={styles.flex}>
@@ -278,31 +285,13 @@ function SplitEditor({
             {formatMinor(preview[id] ?? 0, currency)}
           </AppText>
         )}
-        <Pressable
+        <AmountCell
+          width={percent ? 76 : 100}
+          active={focus === id}
           onPress={() => focusOn(id)}
-          accessibilityRole="button"
           accessibilityLabel={`${percent ? 'Percent' : 'Amount'} for ${name}`}
-          accessibilityValue={{
-            text: percent
-              ? formatBps(bpsOf(split, id))
-              : formatMinor(amountOf(split, id), currency),
-          }}
-          accessibilityState={{ selected: focus === id }}
-        >
-          <View pointerEvents="none">
-            <TextField
-              variant="cell"
-              width={percent ? 76 : 100}
-              active={focus === id}
-              editable={false}
-              value={
-                percent ? formatBps(bpsOf(split, id)) : formatMinor(amountOf(split, id), currency)
-              }
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            />
-          </View>
-        </Pressable>
+          value={percent ? formatBps(bpsOf(split, id)) : formatMinor(amountOf(split, id), currency)}
+        />
       </View>
     );
   });
@@ -340,18 +329,33 @@ function SplitEditor({
         <Card tone="fill" separatorInset={split.mode === 'equal' ? 46 : 48} style={styles.list}>
           {rows}
         </Card>
-        <View style={styles.totalRow}>
-          <AppText variant="subhead" color="textSecondary">
-            {split.mode === 'equal' ? 'Total' : 'Remaining'}
-          </AppText>
-          <AppText weight="semibold" tabular>
-            {split.mode === 'equal'
-              ? formatMinor(amount, currency)
-              : split.mode === 'exact'
-                ? formatMinor(left, currency)
-                : formatBps(left)}
-          </AppText>
-        </View>
+        {split.mode !== 'equal' && left < 0 ? (
+          // Over-assigned (Split, extra states): the attention style, never red; Done stays off.
+          <View style={[styles.totalRow, styles.overRow]} accessibilityRole="alert">
+            <View style={styles.over}>
+              <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
+              <AppText variant="subhead" weight="bold">
+                Over by
+              </AppText>
+            </View>
+            <AppText weight="bold" tabular>
+              {split.mode === 'exact' ? formatMinor(-left, currency) : formatBps(-left)}
+            </AppText>
+          </View>
+        ) : (
+          <View style={styles.totalRow}>
+            <AppText variant="subhead" color="textSecondary">
+              {split.mode === 'equal' ? 'Total' : 'Remaining'}
+            </AppText>
+            <AppText weight="semibold" tabular>
+              {split.mode === 'equal'
+                ? formatMinor(amount, currency)
+                : split.mode === 'exact'
+                  ? formatMinor(left, currency)
+                  : formatBps(left)}
+            </AppText>
+          </View>
+        )}
         {split.mode === 'equal' ? (
           <AppText variant="caption" color="textMuted" tabular style={styles.note}>
             {sharesLine(split, amount, currency)}
@@ -389,6 +393,10 @@ const styles = StyleSheet.create({
     paddingRight: 10,
   },
   rowOut: { paddingRight: 16 },
+  /** Equal (Split, extra states: one person left out): 10 between the columns, as the equal rows. */
+  rowOutEqual: { gap: 10 },
+  over: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  overRow: { alignItems: 'center' },
   equalRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',

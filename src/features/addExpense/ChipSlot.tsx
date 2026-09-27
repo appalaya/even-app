@@ -1,9 +1,7 @@
 import { CATEGORY_EMOJI, CATEGORY_LABEL } from '@even/core';
-import { StyleSheet, View } from 'react-native';
 import Animated, { Keyframe } from 'react-native-reanimated';
 
 import { CategoryChip } from '@/components';
-import { strokes, useTheme } from '@/theme';
 
 import type { ChipState } from './chipMachine';
 
@@ -14,46 +12,42 @@ const SWAP = new Keyframe({
 }).duration(260);
 
 /**
- * The category chip beside the title. Kit states: `suggested` (keyword or model, with the tag), `chosen` (yours), and
- * `choosing` while the picker is open. The kit's `choosing` always carries the "suggested" tag, as the picker board
- * draws it over a suggestion; for a chip you already chose, the ring is drawn around the `chosen` chip here instead.
+ * The category chip beside the title (Add expense, extra states: "Category chip"):
+ * - no title yet and nothing chosen: the dashed "Category" placeholder;
+ * - inferred from the title (keyword or model), at rest: no tag;
+ * - the model just changed it: the swap animates and the "suggested" tag shows for about 1.5 s (`chip.tagged`);
+ * - chosen by you: looks the same as an inferred chip, never re-inferred.
+ * While the picker is open the chip carries the 2 pt accent ring (Category picker open).
  */
 export function ChipSlot({
   chip,
+  title,
   choosing,
   onPress,
 }: {
   chip: ChipState;
+  /** The title field's text: an empty title (and no choice of yours) shows the placeholder. */
+  title: string;
   choosing: boolean;
   onPress: () => void;
 }) {
-  const { tokens } = useTheme();
-  const user = chip.source === 'user';
-  const emoji = CATEGORY_EMOJI[chip.category];
-  const label = CATEGORY_LABEL[chip.category];
-  const body =
-    choosing && user ? (
-      <View
-        style={[styles.ring, { boxShadow: `0 0 0 ${strokes.ring}px ${tokens.accent}` }]}
-        accessibilityState={{ expanded: true }}
-      >
-        <CategoryChip emoji={emoji} label={label} state="chosen" onPress={onPress} />
-      </View>
-    ) : (
-      <CategoryChip
-        emoji={emoji}
-        label={label}
-        state={choosing ? 'choosing' : user ? 'chosen' : 'suggested'}
-        onPress={onPress}
-      />
-    );
+  const placeholder = chip.source !== 'user' && title.trim() === '';
+  const state = placeholder
+    ? 'placeholder'
+    : chip.source === 'user'
+      ? 'chosen'
+      : chip.tagged
+        ? 'suggested'
+        : 'inferred';
   return (
     <Animated.View key={chip.swaps} entering={chip.swaps > 0 ? SWAP : undefined}>
-      {body}
+      <CategoryChip
+        emoji={CATEGORY_EMOJI[chip.category]}
+        label={CATEGORY_LABEL[chip.category]}
+        state={state}
+        choosing={choosing}
+        onPress={onPress}
+      />
     </Animated.View>
   );
 }
-
-const styles = StyleSheet.create({
-  ring: { borderRadius: 20 },
-});

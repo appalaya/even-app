@@ -64,7 +64,14 @@ export const READABLE_STATUSES: readonly ReadableStatus[] = ['ok', 'invalid', 'u
 export const GROUP_STATES: readonly GroupLifecycle[] = ['active', 'closed', 'hidden', 'blocked'];
 const ORIGINS: readonly EventOrigin[] = ['local', 'remote'];
 const PUSH_STATES: readonly PushState[] = ['pending', 'rejected'];
-export const PREF_KEYS: readonly PrefKey[] = ['me.name', 'me.emoji', 'appearance', 'theme'];
+export const PREF_KEYS: readonly PrefKey[] = [
+  'me.name',
+  'me.emoji',
+  'appearance',
+  'theme',
+  'notifications.asked',
+  'notifications.ledger',
+];
 
 /**
  * Longest `events.envelope` text accepted. A maximal v1 envelope is about 11,000 characters (10,923 for `c`);

@@ -2,26 +2,31 @@
  * One group on Groups (Main board): a 76 pt `surface` card, radius 18, padding 14 18; the name 17/22 semibold with
  * the 7 pt sync dot 8 after it, "4 people" 14/19 `textSecondary` 3 below; at the trailing edge "you owe" 13/18
  * `textSecondary` over the amount 17/22 semibold tabular (1 apart), or "settled" 15/20 `textMuted`.
+ *
+ * Everything it shows comes from the list row (`useGroups()`), so the list renders from one subscription.
  */
 import { formatMinor } from '@even/core';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText, MoneyText, SyncDot } from '@/components';
-import { useGroup, type GroupListRow } from '@/state';
+import type { GroupListRow } from '@/state';
 import { radii, useTheme } from '@/theme';
 
 import { isWaiting, netLabel, peopleLabel } from './cardLabels';
 
+/** A group recovered from the keychain has no name until its first pull (design.md "Invites": "a group"). */
+export function cardName(row: GroupListRow): string {
+  return row.name.trim() === '' ? 'a group' : row.name;
+}
+
 export function GroupCard({ row, onPress }: { row: GroupListRow; onPress: () => void }) {
   const { tokens } = useTheme();
-  const { derived } = useGroup(row.localId);
-  const waiting = isWaiting(derived?.counts.outbox ?? null, row.sync.lastSyncedAt);
-  const people = peopleLabel(derived?.state?.members.values() ?? null, waiting);
+  const waiting = isWaiting(row.outbox, row.sync.lastSyncedAt);
+  const people = peopleLabel(row.memberCount, waiting);
   const currency = row.currency;
   const net =
     currency === null ? null : netLabel(row.balancesUnavailable ? null : row.myNet, currency);
-  // A group recovered from the keychain has no name until its first pull (design.md "Invites": "a group").
-  const name = row.name.trim() === '' ? 'a group' : row.name;
+  const name = cardName(row);
 
   const spoken = [
     name,

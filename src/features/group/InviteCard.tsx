@@ -1,17 +1,7 @@
-import { Clipboard, Share, StyleSheet, View } from 'react-native';
-import Animated, {
-  cancelAnimation,
-  Easing,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
-import Svg, { Circle, Path } from 'react-native-svg';
-import { useEffect } from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { Share, StyleSheet, View } from 'react-native';
 
-import { AppText, AvatarStack, Button, Card, type StackMember } from '@/components';
+import { AppText, AvatarStack, Button, Card, ProgressRing, type StackMember } from '@/components';
 import { layout, useTheme } from '@/theme';
 import type { InviteInfo } from '@/state';
 
@@ -78,44 +68,11 @@ export function InviteCard({
           haptic="success"
           style={styles.half}
           onPress={() => {
-            if (invite !== null) Clipboard.setString(invite.code);
+            if (invite !== null) void Clipboard.setStringAsync(invite.code);
           }}
         />
       </View>
     </Card>
-  );
-}
-
-/**
- * The 16 pt ring beside "Preparing your invite…": an `outline` track and an accent quarter arc (stroke 2.6), turning
- * once a second; still under Reduce Motion.
- */
-function ProgressRing() {
-  const { tokens } = useTheme();
-  const reduceMotion = useReducedMotion();
-  const turn = useSharedValue(0);
-  useEffect(() => {
-    if (reduceMotion) {
-      cancelAnimation(turn);
-      turn.set(0);
-      return;
-    }
-    turn.set(withRepeat(withTiming(1, { duration: 1000, easing: Easing.linear }), -1, false));
-    return () => cancelAnimation(turn);
-  }, [reduceMotion, turn]);
-  const style = useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 360}deg` }] }));
-  return (
-    <Animated.View style={style}>
-      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-        <Circle cx={12} cy={12} r={9} stroke={tokens.outline} strokeWidth={2.6} />
-        <Path
-          d="M12 3a9 9 0 0 1 9 9"
-          stroke={tokens.accent}
-          strokeWidth={2.6}
-          strokeLinecap="round"
-        />
-      </Svg>
-    </Animated.View>
   );
 }
 

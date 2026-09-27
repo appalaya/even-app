@@ -108,6 +108,17 @@ export class PrefsService {
     return status;
   }
 
+  /**
+   * The contextual notification request happens once (design.md "Background refresh": the first time a group with
+   * more than one member is opened). True the first time this is called on this install, and it records the ask;
+   * false ever after.
+   */
+  async claimNotificationAsk(): Promise<boolean> {
+    if ((await this.store.getPref('notifications.asked')) !== null) return false;
+    await this.store.setPref('notifications.asked', '1');
+    return true;
+  }
+
   /** Remembers the name and emoji first used for a group, if no default is set yet. */
   async seedMe(name: string, emoji: string | undefined): Promise<void> {
     if ((await this.store.getPref('me.name')) !== null) return;

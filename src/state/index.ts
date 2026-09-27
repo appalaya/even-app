@@ -27,6 +27,7 @@ export type {
   PaymentDraft,
   PreviewResult,
   RotateResult,
+  ServerCheck,
   UsageReport,
 } from './groups';
 export type {

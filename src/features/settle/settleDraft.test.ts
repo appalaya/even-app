@@ -13,15 +13,19 @@ describe('settleStart', () => {
     });
   });
 
-  it('defaults to you paying the first other member, with no amount', () => {
-    expect(settleStart({}, LISTED, 'me')).toEqual({ from: 'me', to: 'maya', amount: 0 });
+  it('opened from Balances: you pay, nobody chosen to receive yet, no amount', () => {
+    expect(settleStart({}, LISTED, 'me')).toEqual({ from: 'me', to: null, amount: 0 });
   });
 
   it('drops unknown members and unreadable amounts', () => {
     expect(settleStart({ from: 'ghost', to: 'me', amount: '12.5' }, LISTED, 'me')).toEqual({
       from: 'me',
-      to: 'maya',
+      to: null,
       amount: 0,
+    });
+    expect(settleStart({ from: 'maya', to: 'me' }, LISTED, 'me')).toMatchObject({
+      from: 'maya',
+      to: 'me',
     });
     expect(settleStart({ amount: '-3' }, LISTED, 'me').amount).toBe(0);
   });

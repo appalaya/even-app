@@ -140,7 +140,12 @@ export interface GroupListRow {
   localId: string;
   name: string;
   currency: string | null;
+  /** Your net in minor units; null when unknown or balances are unavailable. */
   myNet: number | null;
+  /** Members who count on a card ("4 people"): not archived, not placeholders; null before the log is readable. */
+  memberCount: number | null;
+  /** This phone's events no server has acknowledged yet (the card's "waiting to sync"). */
+  outbox: number;
   balancesUnavailable: boolean;
   lifecycle: GroupLifecycle;
   /** `group.archived`: sits in the collapsed Archived section. */
@@ -632,11 +637,19 @@ export class GroupStateStore {
       for (const from of derived.state?.rotatedFrom ?? []) {
         rotatedFrom.set(from, [...(rotatedFrom.get(from) ?? []), derived.localId]);
       }
+      let memberCount: number | null = null;
+      if (derived.state !== null) {
+        memberCount = 0;
+        for (const m of derived.state.members.values())
+          if (!m.archived && !m.unknown) memberCount += 1;
+      }
       rows.push({
         localId: derived.localId,
         name: derived.name,
         currency: derived.currency,
         myNet: derived.myNet,
+        memberCount,
+        outbox: derived.counts.outbox,
         balancesUnavailable: derived.balancesUnavailable,
         lifecycle: derived.row.state,
         archived: derived.state?.archived ?? false,

@@ -32,8 +32,10 @@ export interface MembersCardProps {
 
 /**
  * Group settings → Members (GroupSettings board): a 36 pt avatar, the name (16/21 medium, "(you)" regular muted)
- * over the joined line, then the pills this device may use on that member, 36 tall, 8 apart, inset 64 under the
- * name; 1 pt separators inset 64; "Add member" last behind the dashed accent circle.
+ * over the joined line, then the pills this device may use on that member, 36 tall padded 14, 8 apart, inset 64
+ * under the name; 1 pt separators inset 64; "Add member" last behind the dashed accent circle. An archived member
+ * (extra states) sorts last, greyed: the avatar at 40 %, the name `textMuted`, "archived · still in past expenses",
+ * and "Unarchive" in the accent.
  */
 export function MembersCard({ rows, readOnly, onAction, onAdd }: MembersCardProps) {
   return (
@@ -68,6 +70,7 @@ function MemberBlock({
   const { member, isMe, status } = row;
   const actions = readOnly ? [] : row.actions;
   const who = isMe ? 'you' : member.name;
+  const archived = member.archived && !isMe;
   return (
     <View>
       <ListRow
@@ -79,6 +82,7 @@ function MemberBlock({
             initials={member.initials}
             emoji={member.emoji}
             color={member.color}
+            dimmed={archived}
           />
         }
         title={
@@ -93,6 +97,7 @@ function MemberBlock({
             member.name
           )
         }
+        titleColor={archived ? 'textMuted' : 'text'}
         subtitle={status.joined ? <JoinedMark label={status.label} /> : status.label}
       />
       {actions.length > 0 && (
@@ -101,12 +106,12 @@ function MemberBlock({
             <Button
               key={action}
               label={LABEL[action]}
-              size="pill"
+              size="pillNarrow"
               variant="neutral"
-              weight="medium"
+              weight={action === 'unarchive' ? 'semibold' : 'medium'}
+              {...(action === 'unarchive' ? { labelColor: 'accent' as const } : {})}
               accessibilityLabel={`${LABEL[action]} ${who === 'you' ? 'yourself' : who}`}
               onPress={() => onAction(action, member)}
-              style={styles.pill}
             />
           ))}
         </View>
@@ -125,6 +130,4 @@ const styles = StyleSheet.create({
     paddingRight: 16,
     paddingBottom: 14,
   },
-  /** The board pads these pills 14 at each side (the kit's pill pads 16). */
-  pill: { paddingHorizontal: 14 },
 });

@@ -30,8 +30,16 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { SheetPanel, type SheetPanelProps } from '@/components';
-import { layout, useTheme } from '@/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import {
+  KEYBOARD_GAP,
+  SheetPanel,
+  sheetBottomPad,
+  useScrimLayer,
+  type SheetPanelProps,
+} from '@/components';
+import { useTheme } from '@/theme';
 
 /** Options for a route drawn as a sheet: transparent, no native transition (the sheet animates itself). */
 export const SHEET_ROUTE_OPTIONS = {
@@ -96,12 +104,16 @@ export interface RouteSheetProps extends SheetPanelProps {
 
 export function RouteSheet({ sheet, onDismiss, top = SHEET_TOP, ...panel }: RouteSheetProps) {
   const { tokens } = useTheme();
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const push = sheet.kind === 'push';
   const { progress } = sheet;
   const drag = useSharedValue(0);
   const height = useSharedValue(1000);
   const keyboard = useAnimatedKeyboard();
+  // A picker opened over this sheet (Paid by, Date) takes over its scrim: one scrim, as drawn.
+  const covered = useScrimLayer(!push);
+  const pad = sheetBottomPad(panel.bottom ?? 'home', insets);
 
   const pan = usePanGesture(
     push
@@ -141,14 +153,18 @@ export function RouteSheet({ sheet, onDismiss, top = SHEET_TOP, ...panel }: Rout
 
   const panelStyle = useAnimatedStyle(() => {
     const away = 1 - progress.get();
+    const kb = keyboard.height.get();
     return {
       transform: push
         ? [{ translateX: drag.get() + away * width }]
         : [{ translateY: drag.get() + away * height.get() }],
-      marginBottom: Math.max(0, keyboard.height.get() - layout.homeIndicator),
+      // With the keyboard up the content ends 12 above it, as the boards draw.
+      marginBottom: kb > 0 ? Math.max(0, kb + KEYBOARD_GAP - pad) : 0,
     };
   });
-  const scrimStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
+  const scrimStyle = useAnimatedStyle(() => ({
+    opacity: progress.get() * (1 - covered.get()),
+  }));
 
   const onLayout = (e: LayoutChangeEvent) => {
     height.set(e.nativeEvent.layout.height);

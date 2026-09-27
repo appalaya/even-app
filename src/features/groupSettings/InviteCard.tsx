@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
-import { AppText, Button, Card, Icon } from '@/components';
+import { AppText, Button, Card, Icon, ProgressRing } from '@/components';
 import { layout, radii, useTheme } from '@/theme';
 
 import { linkForDisplay } from './model';
@@ -16,25 +16,39 @@ export interface InviteCardProps {
 
 /**
  * Group settings → Invite (GroupSettings board): the link in a mono box, the one-sentence warning after a key, and
- * "Copy code" (soft) beside "Share link" (primary), 44 tall. Until the invite may be shared both buttons are
- * disabled, as the "Invite card, preparing" board draws them.
+ * "Copy code" (soft) beside "Share link" (primary), 44 tall. Until the invite may be shared (Group settings, extra
+ * states: "Invite still preparing") the link box is a 44 pt `fill` row with the progress ring and "Preparing your
+ * invite…", and both buttons are disabled.
  */
 export function InviteCard({ link, ready, onCopyCode, onShareLink }: InviteCardProps) {
   const { tokens } = useTheme();
   const enabled = ready && link !== null;
   return (
     <Card radius="group" style={styles.card} accessibilityLabel="Invite">
-      <View style={[styles.linkBox, { backgroundColor: tokens.fill }]}>
-        <AppText
-          variant="mono"
-          color="textSecondary"
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          accessibilityLabel="Invite link"
+      {ready ? (
+        <View style={[styles.linkBox, { backgroundColor: tokens.fill }]}>
+          <AppText
+            variant="mono"
+            color="textSecondary"
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            accessibilityLabel="Invite link"
+          >
+            {link === null ? ' ' : linkForDisplay(link)}
+          </AppText>
+        </View>
+      ) : (
+        <View
+          style={[styles.preparing, { backgroundColor: tokens.fill }]}
+          accessibilityRole="progressbar"
+          accessibilityLiveRegion="polite"
         >
-          {link === null ? ' ' : linkForDisplay(link)}
-        </AppText>
-      </View>
+          <ProgressRing />
+          <AppText variant="subheadLoose" color="textSecondary">
+            Preparing your invite…
+          </AppText>
+        </View>
+      )}
       <View style={styles.warning}>
         <View style={styles.warningIcon}>
           <Icon name="key" size={18} color={tokens.textSecondary} />
@@ -68,6 +82,14 @@ export function InviteCard({ link, ready, onCopyCode, onShareLink }: InviteCardP
 const styles = StyleSheet.create({
   card: { marginHorizontal: layout.gutter, padding: 16, gap: 12 },
   linkBox: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: radii.control },
+  preparing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: radii.control,
+  },
   warning: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   warningIcon: { paddingTop: 2 },
   buttons: { flexDirection: 'row', gap: layout.stackGap },

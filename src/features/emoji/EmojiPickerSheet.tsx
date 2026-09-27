@@ -1,7 +1,7 @@
 /**
  * The emoji picker sheet (EmojiPicker board): Cancel and "Emoji" in the header, "Search emoji", the "Suggested"
- * grid of 7 columns, and "Use initials" at the foot. Used by Create group and App settings; exported for Group
- * settings (stack D) to reuse for a member's avatar.
+ * grid of 7 columns, and "Use initials" at the foot. Used by Create group, Join, App settings and Group settings
+ * (a member's avatar).
  *
  * As drawn: the sheet's top edge 300 pt from the screen top on the 874 pt board (the safe-area top + 238); search
  * 8 below the header, inset 16; "Suggested" 13/18 semibold `textSecondary`, 16 above and 8 below, inset 20; cells

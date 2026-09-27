@@ -19,6 +19,6 @@ export const groupHrefs = {
     (transfer === undefined
       ? `/group/${enc(id)}/settle`
       : `/group/${enc(id)}/settle?from=${enc(transfer.from)}&to=${enc(transfer.to)}&amount=${transfer.amount}`) as Href,
-  /** Stack A's Join with the pasted invite (the closed banner's "Paste"). */
+  /** Join with the pasted invite (the closed banner's "Paste"). */
   joinWithCode: (code: string): Href => `/join?code=${enc(code)}` as Href,
 };

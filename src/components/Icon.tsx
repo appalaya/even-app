@@ -44,6 +44,8 @@ const ICONS = {
   chevronRight: { stroke: 2.4, join: 'round', shapes: [path('M9 5l7 7-7 7')] },
   /** Select pills (Add expense), "Archived · 2" · 14. */
   chevronDown: { stroke: 2.6, join: 'round', shapes: [path('M6 9l6 6 6-6')] },
+  /** An expanded row: "Archived · 2", "I'm not listed", "Advanced: sync server" (Groups, extra states) · 14. */
+  chevronUp: { stroke: 2.6, join: 'round', shapes: [path('M6 15l6-6 6 6')] },
   /** "Add expense" 20, "Add member" 16 (stroke 2.4); the add-a-name button 16 and a stepper 12 draw it at 2.6. */
   plus: { stroke: 2.4, join: 'miter', shapes: [path('M12 5v14M5 12h14')] },
   /** The shares stepper (Split, equal) · 12. */
@@ -107,6 +109,31 @@ const ICONS = {
   },
   /** The emoji picker's search field · 18. */
   search: { stroke: 2.2, join: 'miter', shapes: [circle(11, 11, 6.5), path('M16 16l4.5 4.5')] },
+  /** The currency picker's search field (Groups, extra states) · 16. */
+  searchList: { stroke: 2.4, join: 'round', shapes: [circle(11, 11, 7), path('M20 20l-3.5-3.5')] },
+  /** "Delete the copy on <old host>" (Group settings, extra states) · 18. */
+  trash: {
+    stroke: 2,
+    join: 'round',
+    shapes: [path('M4 7h16'), path('M9 7V4h6v3'), path('M6 7l1 13h10l1-13')],
+  },
+  /** The name-collision banner (Group screen copy) · 20. */
+  members: {
+    stroke: 2,
+    join: 'round',
+    shapes: [
+      circle(9, 8, 3.5),
+      path('M2.5 20a6.5 6.5 0 0 1 13 0'),
+      path('M15.5 4.7a3.5 3.5 0 0 1 0 6.6'),
+      path('M18 14.3a6.5 6.5 0 0 1 3.5 5.7'),
+    ],
+  },
+  /** A server's row in the keychain recovery offer (Groups, extra states) · 16. */
+  server: {
+    stroke: 2,
+    join: 'round',
+    shapes: [rect(3, 4, 18, 7, 2), rect(3, 13, 18, 7, 2), path('M7 7.5h.01M7 16.5h.01')],
+  },
   /** "on this phone" in Activity · 12. */
   device: { stroke: 2.2, join: 'round', shapes: [rect(7, 2.5, 10, 19, 2.5), path('M11 18.5h2')] },
   /** The avatar's edit badge (App settings, Create group) · 12. */

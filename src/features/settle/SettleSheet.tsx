@@ -1,14 +1,19 @@
 /**
- * Record a payment (boards Settle, SettleDark): From → To, the amount on the keypad, the date and an optional note,
- * "Record payment", and under it "Records that the money moved. Send it however you like." Prefilled from the
- * tapped settle-list row (`?from&to&amount`, amount in minor units).
+ * Record a payment (boards Settle, SettleStates, light and dark): From → To, the amount on the keypad, the date and
+ * an optional note, "Record payment", and under it "Records that the money moved. Send it however you like."
+ * Prefilled from the tapped settle-list row (`?from&to&amount`, amount in minor units); opened from Balances'
+ * "Settle up" it starts empty (you pay, "Choose" whom, "$0"). From and To open the member sheet (everyone except
+ * whoever is on the other side). Recorded, the button becomes "✓ Recorded" for 0.8 s with a light haptic, then the
+ * sheet closes.
  */
 import { exponentOf, LIMITS, type GroupState } from '@even/core';
-import { useCallback, useState } from 'react';
+import * as Haptics from 'expo-haptics';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 
 import {
   AmountDisplay,
+  AppText,
   Button,
   FieldLabel,
   Footnote,
@@ -19,18 +24,18 @@ import {
   type KeypadKey,
 } from '@/components';
 import { applyKey, entryToMinor, minorToEntry } from '@/features/addExpense/amountEntry';
+import { DateSheet } from '@/features/addExpense/DateSheet';
 import { todayIso } from '@/features/addExpense/draft';
 import {
   dateLabel,
   listedMembers,
   memberLabel,
-  recentDays,
   saveErrorMessage,
 } from '@/features/addExpense/labels';
-import { pick } from '@/features/addExpense/pickers';
+import { MemberPickerSheet } from '@/features/addExpense/MemberPickerSheet';
 import { RouteSheet, useRouteSheet } from '@/features/addExpense/RouteSheet';
 import { useApp, useGroup, useMe } from '@/state';
-import { useTheme } from '@/theme';
+import { radii, useTheme } from '@/theme';
 
 import { MemberSelect } from './MemberSelect';
 import { settleStart } from './settleDraft';
@@ -40,9 +45,11 @@ export interface SettleSheetProps {
   params: { from?: string; to?: string; amount?: string };
   /** Leaves the route once the sheet is down. */
   onClosed: () => void;
+  /** Development builds only (the dev seed's screenshots): open a picker, or show "✓ Recorded" and stay. */
+  dev?: { sheet?: 'to' | 'from' | 'date'; recorded?: boolean };
 }
 
-export function SettleSheet({ groupId, params, onClosed }: SettleSheetProps) {
+export function SettleSheet({ groupId, params, onClosed, dev }: SettleSheetProps) {
   const sheet = useRouteSheet('present');
   const { derived } = useGroup(groupId);
   const { memberId: meId } = useMe(groupId);
@@ -70,11 +77,15 @@ export function SettleSheet({ groupId, params, onClosed }: SettleSheetProps) {
           meId={meId}
           params={params}
           onSaved={close}
+          dev={dev}
         />
       ) : null}
     </RouteSheet>
   );
 }
+
+/** How long "✓ Recorded" shows before the sheet closes (Settle, extra states). */
+const RECORDED_MS = 800;
 
 function SettleForm({
   groupId,
@@ -83,6 +94,7 @@ function SettleForm({
   meId,
   params,
   onSaved,
+  dev,
 }: {
   groupId: string;
   state: GroupState;
@@ -90,8 +102,9 @@ function SettleForm({
   meId: string | null;
   params: SettleSheetProps['params'];
   onSaved: () => void;
+  dev?: SettleSheetProps['dev'];
 }) {
-  const { tokens, scheme } = useTheme();
+  const { tokens } = useTheme();
   const { groups } = useApp();
   const exponent = exponentOf(currency);
   const listed = listedMembers(state, meId);
@@ -104,43 +117,41 @@ function SettleForm({
   );
   const [from, setFrom] = useState(start.from);
   const [to, setTo] = useState(start.to);
-  const [amountText, setAmountText] = useState(() => minorToEntry(start.amount, exponent));
+  const [amountText, setAmountText] = useState(() =>
+    start.amount > 0 ? minorToEntry(start.amount, exponent) : '',
+  );
   const [date, setDate] = useState(todayIso);
   const [note, setNote] = useState('');
   const [typing, setTyping] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recorded, setRecorded] = useState(__DEV__ && dev?.recorded === true);
   const [error, setError] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<'From' | 'To' | 'date' | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Development: open a picker once the sheet is up (the dev seed's screenshots).
+  useEffect(() => {
+    if (!__DEV__ || dev?.sheet === undefined) return;
+    const which = dev.sheet === 'to' ? 'To' : dev.sheet === 'from' ? 'From' : 'date';
+    const timer = setTimeout(() => setSheet(which), 500);
+    return () => clearTimeout(timer);
+  }, [dev?.sheet]);
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
 
   const today = todayIso();
   const amount = entryToMinor(amountText, exponent);
   const canSave = amount > 0 && from !== null && to !== null && from !== to && !saving;
 
-  const choose = (role: 'From' | 'To') =>
-    pick({
-      title: role,
-      options: listed.map((m) => ({ label: memberLabel(m, meId), value: m.id })),
-      scheme,
-      tint: tokens.accent,
-      onPick: (id) => {
-        setError(null);
-        if (role === 'From') {
-          if (id === to) setTo(from);
-          setFrom(id);
-        } else {
-          if (id === from) setFrom(to);
-          setTo(id);
-        }
-      },
-    });
-  const pickDate = () =>
-    pick({
-      title: 'Date',
-      options: recentDays(today).map((d) => ({ label: dateLabel(d, today), value: d })),
-      scheme,
-      tint: tokens.accent,
-      onPick: setDate,
-    });
+  const openSheet = (which: 'From' | 'To' | 'date') => {
+    Keyboard.dismiss();
+    setSheet(which);
+  };
   const onKey = (key: KeypadKey) => {
+    if (recorded) return;
     setError(null);
     setAmountText((text) => applyKey(text, key, exponent));
   };
@@ -156,7 +167,9 @@ function SettleForm({
         date,
         ...(trimmed === '' ? {} : { note: trimmed }),
       });
-      onSaved();
+      setRecorded(true);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      closeTimer.current = setTimeout(onSaved, RECORDED_MS);
     } catch (e) {
       setSaving(false);
       setError(saveErrorMessage(e));
@@ -165,6 +178,8 @@ function SettleForm({
 
   const fromMember = from === null ? undefined : state.members.get(from);
   const toMember = to === null ? undefined : state.members.get(to);
+  const role = sheet === 'From' || sheet === 'To' ? sheet : null;
+  const other = role === 'From' ? to : role === 'To' ? from : null;
   return (
     <View style={styles.body}>
       <View style={styles.people}>
@@ -174,7 +189,7 @@ function SettleForm({
             role="From"
             member={fromMember}
             label={memberLabel(fromMember, meId)}
-            onPress={() => choose('From')}
+            onPress={() => openSheet('From')}
           />
         </View>
         <View style={styles.arrow}>
@@ -186,17 +201,17 @@ function SettleForm({
             role="To"
             member={toMember}
             label={memberLabel(toMember, meId)}
-            onPress={() => choose('To')}
+            onPress={() => openSheet('To')}
           />
         </View>
       </View>
       <Pressable onPress={Keyboard.dismiss} accessible={false} style={styles.amount}>
-        <AmountDisplay amount={amount} currency={currency} />
+        <AmountDisplay amount={amount} currency={currency} empty={amountText === ''} />
       </Pressable>
       <View style={styles.details}>
         <SelectPill
           value={dateLabel(date, today)}
-          onPress={pickDate}
+          onPress={() => openSheet('date')}
           accessibilityLabel={`Date: ${dateLabel(date, today)}`}
         />
         <TextField
@@ -213,17 +228,36 @@ function SettleForm({
           submitBehavior="blurAndSubmit"
           onFocus={() => setTyping(true)}
           onBlur={() => setTyping(false)}
-          error={error ?? undefined}
           containerStyle={styles.note}
         />
       </View>
-      <Button
-        label="Record payment"
-        haptic="success"
-        disabled={!canSave}
-        onPress={() => void onRecord()}
-        style={styles.record}
-      />
+      {error !== null && (
+        <View style={styles.error} accessibilityRole="alert">
+          <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
+          <AppText variant="footnote" weight="semibold" style={styles.errorText}>
+            {error}
+          </AppText>
+        </View>
+      )}
+      {recorded ? (
+        <View
+          style={[styles.recorded, { backgroundColor: tokens.accentSoft }]}
+          accessibilityRole="alert"
+          accessibilityLabel="Recorded"
+        >
+          <Icon name="check" size={20} color={tokens.accent} />
+          <AppText weight="semibold" color="accent">
+            Recorded
+          </AppText>
+        </View>
+      ) : (
+        <Button
+          label="Record payment"
+          disabled={!canSave}
+          onPress={() => void onRecord()}
+          style={[styles.record, error !== null && styles.recordAfterError]}
+        />
+      )}
       <Footnote align="center" spacingTop={8}>
         Records that the money moved. Send it however you like.
       </Footnote>
@@ -232,6 +266,30 @@ function SettleForm({
           <Keypad onKey={onKey} keyHeight={52} decimal={exponent > 0} />
         </View>
       )}
+      <MemberPickerSheet
+        visible={role !== null}
+        title={role ?? 'To'}
+        members={listed.filter((m) => m.id !== other)}
+        meId={meId}
+        value={role === 'From' ? from : to}
+        onPick={(id) => {
+          setError(null);
+          if (role === 'From') setFrom(id);
+          else setTo(id);
+          setSheet(null);
+        }}
+        onDismiss={() => setSheet(null)}
+      />
+      <DateSheet
+        visible={sheet === 'date'}
+        value={date}
+        today={today}
+        onDone={(picked) => {
+          setDate(picked);
+          setSheet(null);
+        }}
+        onDismiss={() => setSheet(null)}
+      />
     </View>
   );
 }
@@ -257,5 +315,25 @@ const styles = StyleSheet.create({
   details: { flexDirection: 'row', gap: 8, marginHorizontal: 16 },
   note: { flex: 1 },
   record: { marginTop: 16, marginHorizontal: 16 },
+  recordAfterError: { marginTop: 10 },
+  /** "✓ Recorded": the button's place, 52 tall, soft accent, a 20 pt check 8 before the label. */
+  recorded: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 52,
+    marginTop: 16,
+    marginHorizontal: 16,
+    borderRadius: radii.round,
+  },
+  error: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    marginHorizontal: 20,
+  },
+  errorText: { flexShrink: 1 },
   keys: { marginTop: 12, marginHorizontal: 16 },
 });

@@ -55,7 +55,14 @@ export function Screen({
     >
       {hasNav && (
         <View style={styles.nav}>
-          {back !== undefined && <BackButton label={back.label} onPress={back.onPress} />}
+          {back !== undefined && (
+            <BackButton
+              label={back.label}
+              onPress={back.onPress}
+              // A long name (a renamed group) truncates before the centred title instead of running under it.
+              maxWidth={title === undefined ? undefined : titleInset - NAV_PADDING_LEFT}
+            />
+          )}
           {title !== undefined && (
             <View pointerEvents="none" style={[styles.navTitle, { marginHorizontal: titleInset }]}>
               <AppText weight="semibold" numberOfLines={1} accessibilityRole="header">
@@ -104,18 +111,30 @@ export function Screen({
   );
 }
 
-/** Chevron and label, 17/22 in the accent; 44 pt tall. */
-export function BackButton({ label, onPress }: { label: string; onPress: () => void }) {
+/** Chevron and label, 17/22 in the accent; 44 pt tall. With `maxWidth`, the label truncates with an ellipsis. */
+export function BackButton({
+  label,
+  onPress,
+  maxWidth,
+}: {
+  label: string;
+  onPress: () => void;
+  maxWidth?: number;
+}) {
   const { tokens } = useTheme();
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`Back to ${label}`}
-      style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.back,
+        maxWidth === undefined ? null : { maxWidth },
+        pressed && styles.pressed,
+      ]}
     >
       <Icon name="chevronLeft" size={24} color={tokens.accent} />
-      <AppText color="accent" numberOfLines={1}>
+      <AppText color="accent" numberOfLines={1} style={styles.backLabel}>
         {label}
       </AppText>
     </Pressable>
@@ -129,22 +148,35 @@ export interface HeaderButtonProps {
   onPress: () => void;
   /** Glyph size: 22 in a nav bar (default), 24 beside a large title. */
   size?: 22 | 24;
+  /** Not available yet (Share while the invite is still being prepared): `textDisabled`, not pressable. */
+  disabled?: boolean;
 }
 
-/** A 44 × 44 icon button in the accent (gear, share). */
-export function HeaderButton({ icon, accessibilityLabel, onPress, size = 22 }: HeaderButtonProps) {
+/** A 44 × 44 icon button in the accent (gear, share); `textDisabled` when disabled, as a disabled text action. */
+export function HeaderButton({
+  icon,
+  accessibilityLabel,
+  onPress,
+  size = 22,
+  disabled = false,
+}: HeaderButtonProps) {
   const { tokens } = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [styles.headerButton, pressed && !disabled && styles.pressed]}
     >
-      <Icon name={icon} size={size} color={tokens.accent} />
+      <Icon name={icon} size={size} color={disabled ? tokens.textDisabled : tokens.accent} />
     </Pressable>
   );
 }
+
+/** The nav bar's leading padding (the back chevron sits 4 in, as drawn). */
+const NAV_PADDING_LEFT = 4;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
@@ -153,7 +185,7 @@ const styles = StyleSheet.create({
     minHeight: layout.navBarHeight,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 4,
+    paddingLeft: NAV_PADDING_LEFT,
     paddingRight: 8,
   },
   navTitle: {
@@ -173,6 +205,7 @@ const styles = StyleSheet.create({
     gap: 2,
     paddingRight: 8,
   },
+  backLabel: { flexShrink: 1 },
   headerButton: {
     width: layout.tapTarget,
     height: layout.tapTarget,

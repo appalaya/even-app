@@ -1,62 +1,14 @@
 /**
- * Split's row controls, composed from kit pieces and tokens because the kit has none of them (see the stack C
- * report): the include checkbox, the ×n shares stepper, and the "+ extra" field.
+ * Split's row controls, composed from kit pieces and tokens: the ×n shares stepper and the "+ extra" field. (The
+ * include checkbox is the kit's `Checkbox`.)
  */
 import { exponentOf, formatMinor } from '@even/core';
 import { useState } from 'react';
-import {
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { AppText, Icon } from '@/components';
 import { applyKey, entryToMinor, minorToEntry } from '@/features/addExpense/amountEntry';
 import { fontWeight, strokes, tabularNums, typography, useTheme } from '@/theme';
-
-/**
- * The include checkbox the Split boards draw (a 22 pt native checkbox in the accent): the accent square with a check
- * in `onAccent` when on; `surface` with a 1.5 pt `iconMuted` edge when off. Extends to a 44 pt target.
- */
-export function Checkbox({
-  checked,
-  onToggle,
-  label,
-  style,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-  /** "Include you", "Include Maya". */
-  label: string;
-  style?: StyleProp<ViewStyle>;
-}) {
-  const { tokens } = useTheme();
-  return (
-    <Pressable
-      onPress={onToggle}
-      hitSlop={11}
-      accessibilityRole="checkbox"
-      accessibilityLabel={label}
-      accessibilityState={{ checked }}
-      style={[
-        styles.box,
-        checked
-          ? { backgroundColor: tokens.accent }
-          : {
-              backgroundColor: tokens.surface,
-              borderWidth: strokes.selected,
-              borderColor: tokens.iconMuted,
-            },
-        style,
-      ]}
-    >
-      {checked && <Icon name="check" size={15} color={tokens.onAccent} strokeWidth={3} />}
-    </Pressable>
-  );
-}
 
 /**
  * The shares stepper (SplitEqual): 32 tall, fully round, a 1 pt `outline`; − and + at 12 pt in `textMuted` around
@@ -190,13 +142,6 @@ export function ExtraField({
 }
 
 const styles = StyleSheet.create({
-  box: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',

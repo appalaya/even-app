@@ -98,8 +98,13 @@ export interface CreateGroupInput {
   /** Your name in the group. */
   myName: string;
   myEmoji?: string;
-  /** Names to pre-add ("People" chips); they pick their name when they join. */
-  people?: readonly string[];
+  /**
+   * Names to pre-add ("People" chips); they pick their name when they join. A chip may carry the member id it will
+   * get (chosen when the chip was added, so its avatar previews the colour the member has after Create).
+   */
+  people?: readonly (string | { name: string; id: string })[];
+  /** Your member id, chosen up front so the avatar on the sheet previews your colour. */
+  myId?: string;
   /** "Advanced: sync server"; defaults to PROTOCOL.defaultServer. */
   serverUrl?: string;
 }
@@ -205,6 +210,11 @@ export interface UsageReport {
   info: ServerInfo;
   usage: GroupUsage;
 }
+
+/** `checkServer`: the server's info (and a group's usage against it), or why it cannot be used. */
+export type ServerCheck =
+  | { ok: true; serverUrl: string; info: ServerInfo; usage: GroupUsage | null }
+  | { ok: false; problem: 'invalid_url' | 'not_an_even_server' | 'unreachable' };
 
 export interface GroupServiceDeps {
   store: Store;
@@ -366,8 +376,12 @@ export class GroupService {
     if (!isCurrency(currency)) throw new StateError('invalid', 'unknown currency');
     const myName = normaliseName(input.myName);
     const myEmoji = input.myEmoji === undefined ? undefined : checkEmoji(input.myEmoji);
-    const people = (input.people ?? []).map((person) => normaliseName(person));
-    const keys = [myName, ...people].map(nameKey);
+    const people = (input.people ?? []).map((person) =>
+      typeof person === 'string'
+        ? { name: normaliseName(person), id: newId() }
+        : { name: normaliseName(person.name), id: person.id },
+    );
+    const keys = [myName, ...people.map((person) => person.name)].map(nameKey);
     if (new Set(keys).size !== keys.length) {
       throw new StateError('name_taken', 'two people have the same name');
     }
@@ -380,7 +394,10 @@ export class GroupService {
 
     const secret = newSecret();
     const { localId, encryptionKey: key } = deriveLocal(secret);
-    const memberId = newId();
+    const memberId = input.myId ?? newId();
+    const ids = [memberId, ...people.map((person) => person.id)];
+    if (new Set(ids).size !== ids.length)
+      throw new StateError('invalid', 'two members share an id');
     const drafts: Draft[] = [
       {
         payload: {
@@ -395,7 +412,7 @@ export class GroupService {
       { payload: { type: 'member.claimed', id: memberId }, by: memberId },
       { payload: { type: 'group.created', name, currency }, by: memberId },
       ...people.map((person): Draft => ({
-        payload: { type: 'member.added', member: { id: newId(), name: person } },
+        payload: { type: 'member.added', member: { id: person.id, name: person.name } },
         by: memberId,
       })),
     ];
@@ -553,15 +570,22 @@ export class GroupService {
   }
 
   /** "I'm not listed": adds yourself (by = the new member, a self-add) and claims the seat. Returns the member id. */
-  async joinAsNewMember(localId: string, name: string, emoji?: string): Promise<string> {
+  async joinAsNewMember(
+    localId: string,
+    name: string,
+    emoji?: string,
+    options: { id?: string } = {},
+  ): Promise<string> {
     const clean = normaliseName(name);
     const cleanEmoji = emoji === undefined ? undefined : checkEmoji(emoji);
-    const memberId = newId();
+    // "I'm not listed" previews the avatar colour the new seat gets: the sheet may choose the id first.
+    const memberId = options.id ?? newId();
     await this.append(
       localId,
       ({ state }) => {
         assertRoomForMember(state);
         assertNameFree(state, clean);
+        if (state.members.has(memberId)) throw new StateError('invalid', 'that member id is taken');
         const member =
           cleanEmoji === undefined
             ? { id: memberId, name: clean }
@@ -577,14 +601,24 @@ export class GroupService {
     return memberId;
   }
 
-  /** Adds someone else by name (unique among non-archived members, case-insensitive). Returns the member id. */
-  async addMember(localId: string, name: string, emoji?: string): Promise<string> {
+  /**
+   * Adds someone else by name (unique among non-archived members, case-insensitive). Returns the member id. `id`
+   * lets the Add member sheet preview the avatar colour the new member gets (core `memberColor` of the id): pass
+   * one from `newId()`; it must not name an existing member.
+   */
+  async addMember(
+    localId: string,
+    name: string,
+    emoji?: string,
+    options: { id?: string } = {},
+  ): Promise<string> {
     const clean = normaliseName(name);
     const cleanEmoji = emoji === undefined ? undefined : checkEmoji(emoji);
-    const memberId = newId();
+    const memberId = options.id ?? newId();
     await this.append(localId, ({ state }) => {
       assertRoomForMember(state);
       assertNameFree(state, clean);
+      if (state.members.has(memberId)) throw new StateError('invalid', 'that member id is taken');
       const member =
         cleanEmoji === undefined
           ? { id: memberId, name: clean }
@@ -886,12 +920,44 @@ export class GroupService {
     return deleted;
   }
 
-  /** Pull to refresh, or a tap on the status line's sync glyph (`manual`, debounced by the engine). */
+  /**
+   * Pull to refresh, a tap on the status line's sync glyph (`manual`, debounced by the engine), or the app returning
+   * to the foreground while a group is open (`foreground`: waits out a backoff; shares a running cycle).
+   */
   sync(
     localId: string,
-    trigger: Extract<SyncTrigger, 'pull_to_refresh' | 'manual'>,
+    trigger: Extract<SyncTrigger, 'pull_to_refresh' | 'manual' | 'foreground'>,
   ): Promise<SyncResult> {
     return this.engine.syncGroup(localId, { trigger });
+  }
+
+  /**
+   * "Check" on Move server, and a custom server on Create: reads the server's `/v1/info` (through the info cache,
+   * which fetches it on first use in this process). Problems use the error-copy panel's cases (Groups, create and join, extra states): not an https URL, not
+   * an Even server (wrong shape, 404, or no protocol 1), or no answer. With `localId`, also measures that group
+   * against the server's caps ("This group: 246 KB · 5% of the limit").
+   */
+  async checkServer(url: string, localId?: string): Promise<ServerCheck> {
+    let origin: string;
+    try {
+      origin = canonicalOrigin(url);
+    } catch {
+      return { ok: false, problem: 'invalid_url' };
+    }
+    let info: ServerInfo;
+    try {
+      info = await this.infoCache.get(origin, this.transportFor(origin));
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      return {
+        ok: false,
+        problem: code === 'not_an_even_server' ? 'not_an_even_server' : 'unreachable',
+      };
+    }
+    if (!info.protocol.includes(PROTOCOL.version))
+      return { ok: false, problem: 'not_an_even_server' };
+    const usage = localId === undefined ? null : await groupUsage(this.store, localId, info);
+    return { ok: true, serverUrl: origin, info, usage };
   }
 
   // ===== Rotation =====
@@ -1299,6 +1365,21 @@ export class GroupService {
   /** "Delete the copy on <old host>" after a move (never the current server; the engine refuses that). */
   deleteServerCopy(localId: string, serverUrl: string): Promise<DeleteServerCopyResult> {
     return this.engine.deleteServerCopy(localId, serverUrl);
+  }
+
+  /** A server's `/v1/info` from the cache (fetched on first use); null when it cannot be read. */
+  async serverInfo(serverUrl: string): Promise<ServerInfo | null> {
+    let origin: string;
+    try {
+      origin = canonicalOrigin(serverUrl);
+    } catch {
+      return null;
+    }
+    try {
+      return await this.infoCache.get(origin, this.transportFor(origin));
+    } catch {
+      return this.infoCache.peek(origin) ?? null;
+    }
   }
 
   /** The usage meter: this group's envelopes against the server's caps; null when the server's info is unknown. */

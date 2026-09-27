@@ -21,6 +21,8 @@ export interface MoneyTextProps {
   color?: TextColor;
   /** Show the currency code beside the big number (default true for `big`). */
   showCode?: boolean;
+  /** `inline` only: shrink a long figure to fit its column (down to 60 %) rather than wrap it. */
+  shrink?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export function MoneyText({
   weight = 'semibold',
   color = 'text',
   showCode = true,
+  shrink = false,
 }: MoneyTextProps) {
   const text = formatMinor(amount, currency, locale);
   if (size === 'big') {
@@ -52,6 +55,7 @@ export function MoneyText({
           color={color}
           numberOfLines={1}
           adjustsFontSizeToFit
+          minimumFontScale={0.5}
           maxFontSizeMultiplier={1.3}
           style={styles.shrink}
         >
@@ -66,7 +70,13 @@ export function MoneyText({
     );
   }
   return (
-    <AppText variant={variant} weight={weight} color={color} tabular>
+    <AppText
+      variant={variant}
+      weight={weight}
+      color={color}
+      tabular
+      {...(shrink ? { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.6 } : {})}
+    >
       {text}
     </AppText>
   );

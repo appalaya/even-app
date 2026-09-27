@@ -1,7 +1,12 @@
 /**
- * Add expense / Edit expense (boards AddExpense, CategoryPicker, CategoryChosen, light and dark): keypad first, the
- * title with its category chip, Paid by, the date, the Split row, and Save. Two required fields (amount and title);
- * Save is one tap with a success haptic. Advanced split is a push (`split.tsx`), not a modal in a modal.
+ * Add expense / Edit expense (boards AddExpense, AddExpenseStates, CategoryPicker, CategoryChosen, light and dark):
+ * keypad first, the title with its category chip, Paid by, the date, the Split row, and Save. Two required fields
+ * (amount and title); Save is one tap with a success haptic. Advanced split is a push (`split.tsx`), not a modal in
+ * a modal.
+ *
+ * States as drawn: first open ("$0" muted, the dashed "Category" chip, Save off); Edit expense ("Save changes");
+ * typing the title (the keypad hides, the amount shrinks to one line, Save sits above the keyboard); a failed save
+ * (the error line just above Save, everything typed kept); the Paid by and date pickers as sheets.
  */
 import { exponentOf, LIMITS, type Category, type GroupState } from '@even/core';
 import { router } from 'expo-router';
@@ -10,9 +15,11 @@ import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
 
 import {
   AmountDisplay,
+  AppText,
   Button,
   CategoryGrid,
   Footnote,
+  Icon,
   Keypad,
   SelectPill,
   TextField,
@@ -34,8 +41,9 @@ import {
   useDraft,
   type SheetDraft,
 } from './draft';
-import { dateLabel, listedMembers, memberLabel, recentDays, saveErrorMessage } from './labels';
-import { pick } from './pickers';
+import { DateSheet } from './DateSheet';
+import { dateLabel, listedMembers, memberLabel, saveErrorMessage } from './labels';
+import { MemberPickerSheet } from './MemberPickerSheet';
 import { RouteSheet, useRouteSheet } from './RouteSheet';
 import { leaveSheet, splitHref } from './routing';
 import { SplitRow } from './SplitRow';
@@ -46,6 +54,13 @@ export interface AddExpenseSheetProps {
   editId: string | null;
   /** `?draft=<id>`: reopen a draft (the dev seed prepares one). */
   draftId: string | null;
+  /** Development builds only (the dev seed's screenshots): type the title, or open a picker. */
+  dev?: AddExpenseDev;
+}
+
+export interface AddExpenseDev {
+  focusTitle?: boolean;
+  sheet?: 'payer' | 'date';
 }
 
 function newDraft(groupId: string): SheetDraft {
@@ -89,7 +104,12 @@ function editDraft(
   });
 }
 
-export function AddExpenseSheet({ groupId, editId, draftId: requested }: AddExpenseSheetProps) {
+export function AddExpenseSheet({
+  groupId,
+  editId,
+  draftId: requested,
+  dev,
+}: AddExpenseSheetProps) {
   const sheet = useRouteSheet('present');
   const { derived } = useGroup(groupId);
   const { memberId: meId } = useMe(groupId);
@@ -129,6 +149,7 @@ export function AddExpenseSheet({ groupId, editId, draftId: requested }: AddExpe
           meId={meId}
           onDraft={onDraft}
           onSaved={close}
+          dev={dev}
         />
       ) : null}
     </RouteSheet>
@@ -145,6 +166,7 @@ function DraftedForm({
   meId,
   onDraft,
   onSaved,
+  dev,
 }: {
   requested: string | null;
   editId: string | null;
@@ -154,6 +176,7 @@ function DraftedForm({
   meId: string | null;
   onDraft: (id: string | null) => void;
   onSaved: () => void;
+  dev?: AddExpenseDev;
 }) {
   const [draftId] = useState<string | null>(
     () =>
@@ -173,6 +196,7 @@ function DraftedForm({
       meId={meId}
       groupId={groupId}
       onSaved={onSaved}
+      dev={dev}
     />
   );
 }
@@ -187,6 +211,7 @@ function ExpenseForm({
   meId,
   groupId,
   onSaved,
+  dev,
 }: {
   draft: SheetDraft;
   state: GroupState;
@@ -194,8 +219,9 @@ function ExpenseForm({
   meId: string | null;
   groupId: string;
   onSaved: () => void;
+  dev?: AddExpenseDev;
 }) {
-  const { tokens, scheme } = useTheme();
+  const { tokens } = useTheme();
   const { groups } = useApp();
   const exponent = exponentOf(currency);
   const [controller] = useState(
@@ -213,16 +239,26 @@ function ExpenseForm({
   const [pickerOpen, setPickerOpen] = useState(draft.pickerOpen);
   const [typing, setTyping] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sheet, setSheet] = useState<'payer' | 'date' | null>(null);
+  // Development: open a picker once the sheet is up (the dev seed's screenshots).
+  useEffect(() => {
+    if (!__DEV__ || dev?.sheet === undefined) return;
+    const which = dev.sheet;
+    const timer = setTimeout(() => setSheet(which), 500);
+    return () => clearTimeout(timer);
+  }, [dev?.sheet]);
 
   const today = todayIso();
   const amount = entryToMinor(draft.amountText, exponent);
-  const activeIds = listedMembers(state, meId).map((m) => m.id);
+  const listed = listedMembers(state, meId);
+  const activeIds = listed.map((m) => m.id);
   const split = draft.split ?? equalDraft(activeIds);
-  const summary = summarize(split, amount, currency, activeIds);
+  const nameOf = (id: string) => memberLabel(state.members.get(id), meId);
+  const summary = summarize(split, amount, currency, activeIds, { nameOf });
   const paidBy = draft.paidBy ?? meId;
   const payer = paidBy === null ? undefined : state.members.get(paidBy);
   const canSave = amount > 0 && draft.title.trim() !== '' && paidBy !== null && !saving;
-  const showChip = draft.title.trim() !== '' || chip.source === 'user';
+  const editing = draft.editId !== null;
 
   const patch = (p: Partial<Omit<SheetDraft, 'id'>>) => updateDraft(draft.id, p);
 
@@ -247,25 +283,10 @@ function ExpenseForm({
     setPickerOpen(false);
     router.push(splitHref(draft.id));
   };
-  const pickPayer = () =>
-    pick({
-      title: 'Paid by',
-      options: listedMembers(state, meId, paidBy === null ? [] : [paidBy]).map((m) => ({
-        label: memberLabel(m, meId),
-        value: m.id,
-      })),
-      scheme,
-      tint: tokens.accent,
-      onPick: (id) => patch({ paidBy: id, error: null }),
-    });
-  const pickDate = () =>
-    pick({
-      title: 'Date',
-      options: recentDays(today).map((d) => ({ label: dateLabel(d, today), value: d })),
-      scheme,
-      tint: tokens.accent,
-      onPick: (date) => patch({ date }),
-    });
+  const openSheet = (which: 'payer' | 'date') => {
+    Keyboard.dismiss();
+    setSheet(which);
+  };
 
   const onSave = async () => {
     if (!canSave || paidBy === null) return;
@@ -306,13 +327,25 @@ function ExpenseForm({
 
   return (
     <View style={styles.body}>
-      <Pressable
-        onPress={Keyboard.dismiss}
-        accessible={false}
-        style={[styles.amount, pickerOpen && styles.amountPicking]}
-      >
-        <AmountDisplay amount={amount} currency={currency} />
-      </Pressable>
+      {typing ? (
+        <View style={styles.amountCompact}>
+          <AmountDisplay
+            amount={amount}
+            currency={currency}
+            empty={draft.amountText === ''}
+            compact
+            onPress={Keyboard.dismiss}
+          />
+        </View>
+      ) : (
+        <Pressable
+          onPress={Keyboard.dismiss}
+          accessible={false}
+          style={[styles.amount, pickerOpen && styles.amountPicking]}
+        >
+          <AmountDisplay amount={amount} currency={currency} empty={draft.amountText === ''} />
+        </Pressable>
+      )}
       <TextField
         variant="title"
         accessibilityLabel="Title"
@@ -327,27 +360,44 @@ function ExpenseForm({
           setPickerOpen(false);
         }}
         onBlur={() => setTyping(false)}
-        error={draft.error ?? undefined}
+        autoFocus={__DEV__ && dev?.focusTitle === true}
         containerStyle={styles.gutter}
         trailing={
-          showChip ? <ChipSlot chip={chip} choosing={pickerOpen} onPress={onChip} /> : undefined
+          <ChipSlot chip={chip} title={draft.title} choosing={pickerOpen} onPress={onChip} />
         }
       />
       <View style={styles.pills}>
-        <SelectPill label="Paid by" value={memberLabel(payer, meId)} onPress={pickPayer} />
+        <SelectPill
+          label="Paid by"
+          value={memberLabel(payer, meId)}
+          onPress={() => openSheet('payer')}
+        />
         <SelectPill
           value={dateLabel(draft.date, today)}
-          onPress={pickDate}
+          onPress={() => openSheet('date')}
           accessibilityLabel={`Date: ${dateLabel(draft.date, today)}`}
         />
       </View>
       <SplitRow label={summary.label} detail={summary.detail} onPress={openSplit} />
+      {typing && <View style={styles.flex} />}
+      {draft.error !== null && (
+        <View style={styles.error} accessibilityRole="alert">
+          <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
+          <AppText variant="footnote" weight="semibold" style={styles.flexShrink}>
+            {draft.error}
+          </AppText>
+        </View>
+      )}
       <Button
-        label="Save"
+        label={editing ? 'Save changes' : 'Save'}
         haptic="success"
         disabled={!canSave}
         onPress={() => void onSave()}
-        style={styles.save}
+        style={[
+          styles.save,
+          typing && styles.saveTyping,
+          draft.error !== null && styles.saveAfterError,
+        ]}
       />
       {typing ? null : pickerOpen ? (
         <>
@@ -363,12 +413,38 @@ function ExpenseForm({
           <Keypad onKey={onKey} decimal={exponent > 0} />
         </View>
       )}
+      <MemberPickerSheet
+        visible={sheet === 'payer'}
+        title="Paid by"
+        members={listedMembers(state, meId, paidBy === null ? [] : [paidBy])}
+        meId={meId}
+        value={paidBy}
+        onPick={(id) => {
+          patch({ paidBy: id, error: null });
+          setSheet(null);
+        }}
+        onDismiss={() => setSheet(null)}
+      />
+      <DateSheet
+        visible={sheet === 'date'}
+        value={draft.date}
+        today={today}
+        onDone={(date) => {
+          patch({ date, error: null });
+          setSheet(null);
+        }}
+        onDismiss={() => setSheet(null)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   body: { flex: 1 },
+  flex: { flex: 1 },
+  flexShrink: { flexShrink: 1 },
+  /** Typing the title: the amount on one line, 8 below the header and 12 above the title. */
+  amountCompact: { alignItems: 'center', marginTop: 8, marginBottom: 12, marginHorizontal: 16 },
   amount: {
     flexGrow: 1,
     alignItems: 'center',
@@ -380,5 +456,16 @@ const styles = StyleSheet.create({
   gutter: { marginHorizontal: 16 },
   pills: { flexDirection: 'row', gap: 8, marginTop: 12, marginHorizontal: 16 },
   save: { marginTop: 16, marginHorizontal: 16 },
+  /** Keyboard up: Save sits on the spacer, 12 above the keyboard. */
+  saveTyping: { marginTop: 0 },
+  /** Save failed: the line sits 14 under the Split row and Save 10 under it. */
+  saveAfterError: { marginTop: 10 },
+  error: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    marginHorizontal: 20,
+  },
   keys: { marginTop: 12, marginHorizontal: 16 },
 });

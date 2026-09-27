@@ -33,6 +33,8 @@ export interface MemberStatus {
 
 export function memberStatus(member: MemberState, myMemberId: string | null): MemberStatus {
   if (member.id === myMemberId) return { joined: true, label: 'joined · this phone' };
+  // Group settings, extra states: "Archived member".
+  if (member.archived) return { joined: false, label: 'archived · still in past expenses' };
   const devices = member.devices.length;
   if (devices === 0) return { joined: false, label: 'not joined yet' };
   if (devices === 1) return { joined: true, label: 'joined' };
@@ -88,14 +90,48 @@ export function limitsLabel(info: ServerInfo, locale?: string): string {
   return `${formatBytes(info.limits.max_group_bytes, locale)} · ${entries} entries`;
 }
 
+/** The Operator row: the server's `operator`, or "Self-hosted" when it names none (Group settings, extra states). */
+export function operatorLabel(info: ServerInfo): string {
+  const operator = info.operator?.trim() ?? '';
+  return operator === '' ? 'Self-hosted' : operator;
+}
+
+/** "246 KB · 5% of the limit" (Move server: this group against the new server's caps). */
+export function groupAgainstLabel(usage: GroupUsage, locale?: string): string {
+  const percent = `${usagePercent(usage.fraction)}% of the limit`;
+  if (usage.eventsFraction > usage.bytesFraction) {
+    return `${new Intl.NumberFormat(locale).format(usage.events)} entries · ${percent}`;
+  }
+  return `${formatBytes(usage.bytes, locale)} · ${percent}`;
+}
+
+/**
+ * The line under the usage meter from 80% (Group settings, extra states: "Usage at 80 % and up"; its footnote words
+ * the full case). Null below 80%.
+ */
+export function usageWarning(usage: GroupUsage): string | null {
+  if (usage.fraction >= 1) {
+    return 'This group is full. New entries stay on this phone. Export it and start a new one.';
+  }
+  if (usage.warn) {
+    return 'This group is near its server limit. Export it and start a new one for the next trip.';
+  }
+  return null;
+}
+
 /** "365 days after last change" (the server may delete a group with no write for this long). */
 export function retentionLabel(days: number): string {
   return `${days} ${days === 1 ? 'day' : 'days'} after last change`;
 }
 
-/** Whole percent, rounded down so a group never reads 100% before it is full. */
+/**
+ * Whole percent, rounded as the boards do ("246 KB of 5 MB · 5%" for 4.8 %), but never 100% before the group is
+ * full: below full it stops at 99.
+ */
 export function usagePercent(fraction: number): number {
-  return Math.max(0, Math.floor(fraction * 100 + 1e-9));
+  const percent = fraction * 100;
+  if (fraction >= 1) return Math.floor(percent + 1e-9);
+  return Math.max(0, Math.min(99, Math.round(percent)));
 }
 
 /**

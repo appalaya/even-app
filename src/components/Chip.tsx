@@ -7,48 +7,81 @@ import { Avatar } from './Avatar';
 import { Icon } from './Icon';
 
 export interface CategoryChipProps {
-  emoji: string;
-  label: string;
+  /** The category's emoji; not drawn for `placeholder`. */
+  emoji?: string;
+  /** The category's label; `placeholder` always reads "Category". */
+  label?: string;
   /**
-   * `suggested`: inferred from the title, with the "suggested" tag (Add expense).
-   * `chosen`: picked by you, no tag (Category chosen by you).
-   * `choosing`: the picker is open: the suggested chip with a 2 pt accent ring (Category picker open).
+   * As the Add expense boards draw the chip (Add expense, extra states: "Category chip"):
+   * - `placeholder`: no title yet: a dashed `outlineStrong` outline and "Category" in `textSecondary` (first open);
+   * - `inferred`: from the title (keyword or model), at rest: soft accent, no tag;
+   * - `suggested`: the model just changed it: the same chip with the "suggested" tag, shown for about 1.5 s;
+   * - `chosen`: picked by you: looks the same as `inferred`, and is never re-inferred.
    */
-  state: 'suggested' | 'chosen' | 'choosing';
+  state: 'placeholder' | 'inferred' | 'suggested' | 'chosen';
+  /** The category picker is open under it: a 2 pt accent ring around the chip (Category picker open). */
+  choosing?: boolean;
   onPress?: () => void;
 }
 
 /**
  * The category chip inside the title field: 40 tall, fully round, soft accent, emoji 18/22, label 15/20
- * semibold and "suggested" 13/18 medium, all in the accent.
+ * semibold and "suggested" 13/18 medium, all in the accent; the placeholder is outlined instead.
  */
-export function CategoryChip({ emoji, label, state, onPress }: CategoryChipProps) {
+export function CategoryChip({
+  emoji,
+  label,
+  state,
+  choosing = false,
+  onPress,
+}: CategoryChipProps) {
   const { tokens } = useTheme();
-  const tagged = state !== 'chosen';
+  const ring = choosing ? `0 0 0 ${strokes.ring}px ${tokens.accent}` : undefined;
+  if (state === 'placeholder') {
+    return (
+      <Pressable
+        onPress={onPress}
+        hitSlop={{ top: 2, bottom: 2 }}
+        accessibilityRole="button"
+        accessibilityLabel="Category: none yet. Choose."
+        accessibilityState={{ expanded: choosing }}
+        style={[
+          styles.category,
+          styles.placeholder,
+          { borderColor: tokens.outlineStrong, boxShadow: ring },
+        ]}
+      >
+        <AppText variant="subhead" weight="medium" color="textSecondary">
+          Category
+        </AppText>
+      </Pressable>
+    );
+  }
+  const tagged = state === 'suggested';
+  const name = label ?? '';
   const spoken =
     state === 'chosen'
-      ? `Category: ${label}, chosen by you. Tap to change.`
-      : state === 'choosing'
-        ? `Category: ${label}, suggested. Choosing.`
-        : `Category: ${label}, suggested. Tap to change.`;
+      ? `Category: ${name}, chosen by you. ${choosing ? 'Choosing.' : 'Tap to change.'}`
+      : tagged
+        ? `Category: ${name}, suggested. ${choosing ? 'Choosing.' : 'Tap to change.'}`
+        : `Category: ${name}. ${choosing ? 'Choosing.' : 'Tap to change.'}`;
   return (
     <Pressable
       onPress={onPress}
       hitSlop={{ top: 2, bottom: 2 }}
       accessibilityRole="button"
       accessibilityLabel={spoken}
-      accessibilityState={{ expanded: state === 'choosing' }}
+      accessibilityState={{ expanded: choosing }}
       style={[
         styles.category,
-        { backgroundColor: tokens.accentSoft, paddingRight: tagged ? 12 : 14 },
-        state === 'choosing' && { boxShadow: `0 0 0 ${strokes.ring}px ${tokens.accent}` },
+        { backgroundColor: tokens.accentSoft, paddingRight: tagged ? 12 : 14, boxShadow: ring },
       ]}
     >
       <AppText style={styles.emoji} maxFontSizeMultiplier={1.2}>
         {emoji}
       </AppText>
       <AppText variant="subhead" weight="semibold" color="accent">
-        {label}
+        {name}
       </AppText>
       {tagged && (
         <AppText variant="caption" weight="medium" color="accent">
@@ -123,7 +156,7 @@ export function MemberChip({
         selected && { boxShadow: `inset 0 0 0 ${strokes.selected}px ${tokens.accent}` },
       ]}
     >
-      <Avatar size={32} name={name} initials={initials} emoji={emoji} color={color} />
+      <Avatar size={32} name={name} initials={initials} emoji={emoji} color={color} on="chip" />
       <AppText
         variant="subhead"
         weight={selected ? 'semibold' : 'regular'}
@@ -190,6 +223,12 @@ const styles = StyleSheet.create({
     paddingLeft: 10,
     borderRadius: 20,
     flexShrink: 0,
+  },
+  placeholder: {
+    paddingLeft: 14,
+    paddingRight: 14,
+    borderWidth: strokes.hairline,
+    borderStyle: 'dashed',
   },
   emoji: { fontSize: 18, lineHeight: 22 },
   removable: {

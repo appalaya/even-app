@@ -23,16 +23,17 @@ export function payloadFromUrl(url: string | null | undefined): string | null {
 }
 
 /**
- * The line under the code field when a pasted code cannot be used. JoinCodeError draws the checksum case; the
- * boards draw no other, so every problem shows the same line (listed in the stack report).
+ * The line under the code field when a pasted code cannot be used, as the error-copy panel words it (Groups, create
+ * and join, extra states): a damaged or cut-short code, or one for a newer Even (which also offers Update).
  */
 export function problemMessage(problem: InviteProblem): string {
   switch (problem) {
     case 'checksum':
     case 'malformed':
     case 'server':
-    case 'version':
       return "That code isn't complete. Copy it again.";
+    case 'version':
+      return 'This invite needs a newer Even.';
   }
 }
 

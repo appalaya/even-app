@@ -5,28 +5,33 @@
  * empty store and groups left in the keychain, a sheet offers to recover them.
  */
 import { router, useLocalSearchParams } from 'expo-router';
+import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { AppText, Button, HeaderButton, Screen, Wordmark } from '@/components';
+import { AppText, Button, HeaderButton, Icon, Screen, Wordmark } from '@/components';
 import { ArchivedSection } from '@/features/groups/ArchivedSection';
 import { GroupCard } from '@/features/groups/GroupCard';
 import { GroupsEmpty } from '@/features/groups/GroupsEmpty';
 import { ImportGroupFileButton } from '@/features/groups/ImportGroupFileButton';
+import { ImportRefusedSheet } from '@/features/groups/ImportRefusedSheet';
 import { hrefs } from '@/features/groups/routes';
 import { useImportGroupFile } from '@/features/groups/useImportGroupFile';
 import { useKeychainRecovery } from '@/features/groups/useKeychainRecovery';
 import { ConfirmSheet } from '@/features/join/ConfirmSheet';
-import { recoverQuestion } from '@/features/join/invite';
+import { hostOf, recoverQuestion } from '@/features/join/invite';
 import { useGroups } from '@/state';
+import { radii, useTheme } from '@/theme';
 
 /** Dev only: long-press the title to open the UI kit gallery. */
 const openKit = __DEV__ ? () => router.push('/dev/kit') : undefined;
 
 export default function GroupsScreen() {
+  const { tokens } = useTheme();
   const list = useGroups();
   const params = useLocalSearchParams<{ motionAt?: string; archived?: string }>();
   const recovery = useKeychainRecovery();
-  const { importGroupFile, busy } = useImportGroupFile();
+  const { importGroupFile, busy, refused, openAnyway, dismissRefused } = useImportGroupFile();
+  const [archivedOpen, setArchivedOpen] = useState(__DEV__ && params.archived === 'open');
 
   const settings = (
     <HeaderButton
@@ -40,15 +45,43 @@ export default function GroupsScreen() {
   const create = () => router.push(hrefs.create);
   const join = () => router.push(hrefs.join);
 
+  // Groups, create and join, extra states: "First launch, keys found".
   const recoverySheet = (
     <ConfirmSheet
       visible={recovery.offer > 0}
       onDismiss={recovery.dismiss}
       question={recoverQuestion(recovery.offer)}
+      body="Even was on this phone before, and its keys are still in your keychain. Recover brings the groups back from their servers."
+      drawnTop={420}
       confirmLabel="Recover"
       onConfirm={() => void recovery.recover()}
       cancelLabel="Not now"
       busy={recovery.busy}
+    >
+      {recovery.servers.map((server) => (
+        <View
+          key={server.serverUrl}
+          style={[styles.server, { backgroundColor: tokens.fill }]}
+          accessible
+          accessibilityLabel={`${hostOf(server.serverUrl)}, ${server.count} ${server.count === 1 ? 'group' : 'groups'}`}
+        >
+          <Icon name="server" size={16} color={tokens.textSecondary} />
+          <AppText variant="subhead" numberOfLines={1} style={styles.serverHost}>
+            {hostOf(server.serverUrl)}
+          </AppText>
+          <AppText variant="subhead" color="textSecondary" tabular>
+            {`${server.count} ${server.count === 1 ? 'group' : 'groups'}`}
+          </AppText>
+        </View>
+      ))}
+    </ConfirmSheet>
+  );
+  const importSheet = (
+    <ImportRefusedSheet
+      refused={refused}
+      busy={busy}
+      onOpen={() => void openAnyway()}
+      onDismiss={dismissRefused}
     />
   );
 
@@ -69,6 +102,7 @@ export default function GroupsScreen() {
       >
         <GroupsEmpty onCreate={create} onJoin={join} motionAt={motionAt} />
         {recoverySheet}
+        {importSheet}
       </Screen>
     );
   }
@@ -99,10 +133,16 @@ export default function GroupsScreen() {
       <ArchivedSection
         rows={archived}
         onOpen={open}
-        initiallyOpen={__DEV__ && params.archived === 'open'}
+        open={archivedOpen}
+        onToggle={() => setArchivedOpen((o) => !o)}
       />
-      <ImportGroupFileButton onPress={() => void importGroupFile()} disabled={busy} />
+      <ImportGroupFileButton
+        onPress={() => void importGroupFile()}
+        disabled={busy}
+        spacingTop={archived.length > 0 && archivedOpen ? 8 : 12}
+      />
       {recoverySheet}
+      {importSheet}
     </Screen>
   );
 }
@@ -117,6 +157,17 @@ function Title() {
 
 const styles = StyleSheet.create({
   list: { gap: 10, paddingHorizontal: 16 },
+  /** The recovery offer's server row: 48 tall on `fill`, radius 14, 16 below the paragraph. */
+  server: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    borderRadius: radii.tile,
+  },
+  serverHost: { flex: 1 },
   footer: { flexDirection: 'row', gap: 10 },
   half: { flex: 1 },
 });

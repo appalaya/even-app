@@ -5,6 +5,7 @@ import type { GroupUsage } from '../../services/sync/usage';
 import type { ServerInfo } from '../../services/sync/types';
 import {
   formatBytes,
+  groupAgainstLabel,
   hostOf,
   limitsLabel,
   linkForDisplay,
@@ -12,10 +13,12 @@ import {
   memberRows,
   memberStatus,
   meterFill,
+  operatorLabel,
   removableMembers,
   retentionLabel,
   usageLabel,
   usagePercent,
+  usageWarning,
 } from './model';
 
 function member(id: string, name: string, extra: Partial<MemberState> = {}): MemberState {
@@ -70,6 +73,10 @@ describe('member status line', () => {
     expect(memberStatus(maya, 'sam')).toEqual({ joined: true, label: 'joined · 2 devices' });
     expect(memberStatus(jordan, 'sam')).toEqual({ joined: true, label: 'joined' });
     expect(memberStatus(nathan, 'sam')).toEqual({ joined: false, label: 'not joined yet' });
+    expect(memberStatus({ ...jordan, archived: true }, 'sam')).toEqual({
+      joined: false,
+      label: 'archived · still in past expenses',
+    });
   });
 });
 
@@ -146,10 +153,34 @@ describe('server labels', () => {
     expect(usageLabel(usage(100 * 1024, 8_100), 'en-US')).toBe('8,100 of 10,000 entries · 81%');
   });
 
-  it('never reads 100% before the group is full; the meter stops at full', () => {
+  it('rounds as the boards do, never reads 100% before the group is full; the meter stops at full', () => {
+    expect(usagePercent((246 * 1024) / 5_242_880)).toBe(5);
     expect(usagePercent(0.996)).toBe(99);
     expect(usagePercent(1)).toBe(100);
     expect(meterFill(usage(3_000_000, 0))).toBe(1);
+  });
+
+  it('warns from 80% and words a full group (extra states)', () => {
+    expect(usageWarning(usage(246 * 1024, 700))).toBeNull();
+    expect(usageWarning(usage(1.7 * 1024 * 1024, 700))).toBe(
+      'This group is near its server limit. Export it and start a new one for the next trip.',
+    );
+    expect(usageWarning(usage(2_097_152, 700))).toBe(
+      'This group is full. New entries stay on this phone. Export it and start a new one.',
+    );
+    expect(usageLabel(usage(1.7 * 1024 * 1024, 700), 'en-US')).toBe('1.7 MB of 2 MB · 85%');
+  });
+
+  it('names the operator, or "Self-hosted", and a group against another server', () => {
+    expect(operatorLabel(INFO)).toBe('Even (appalaya.com)');
+    expect(operatorLabel({ ...INFO, operator: undefined })).toBe('Self-hosted');
+    const five = {
+      ...usage(246 * 1024, 700),
+      fraction: 0.05,
+      bytesFraction: 0.05,
+      eventsFraction: 0.014,
+    };
+    expect(groupAgainstLabel(five, 'en-US')).toBe('246 KB · 5% of the limit');
   });
 
   it('host and link drop the scheme', () => {

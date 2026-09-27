@@ -1,7 +1,7 @@
 /**
  * What the Group screen shows, derived from the state layer's `DerivedGroup` (reducer output plus balances). Pure (no
  * React Native), so Vitest runs it. Each rule below is read off the boards; where a board is silent the choice is
- * named in a comment and listed in the stack report.
+ * named in a comment.
  */
 import {
   type ActivityItem,
@@ -104,7 +104,8 @@ export interface BalanceRow {
 
 /**
  * Balances → "Everyone": you first, then everyone else by the size of their balance (the board: You, Maya $172,
- * Nathan $128, Jordan $8), ties by name. Archived members stay while they still owe or are owed.
+ * Nathan $128, Jordan $8), ties by name; so a settled member sorts last ("Nathan is settled", Group screen copy).
+ * Archived members stay while they still owe or are owed.
  */
 export function balanceRows(
   state: GroupState,

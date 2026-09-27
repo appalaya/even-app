@@ -8,11 +8,12 @@ import {
   type MemberState,
 } from '@even/core';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import {
   AppText,
   Avatar,
+  Banner,
   Button,
   Card,
   Icon,
@@ -21,9 +22,9 @@ import {
   Screen,
   SectionHeader,
 } from '@/components';
-import { layout, radii, strokes, useTheme } from '@/theme';
+import { layout, useTheme } from '@/theme';
 
-import { dateTimeLower, isoDateLabel } from '../group/format';
+import { dateTime, isoDateLabel } from '../group/format';
 import {
   activeMemberIds,
   flagMessage,
@@ -83,29 +84,24 @@ export function ExpenseDetailView({
 
   const footer = writable ? (
     <View style={styles.footer}>
-      <Pressable
-        onPress={onDelete}
-        accessibilityRole="button"
-        accessibilityLabel="Delete"
-        style={({ pressed }) => [styles.delete, pressed && styles.pressed]}
-      >
-        <AppText weight="semibold" style={{ color: tokens.attention }}>
-          Delete
-        </AppText>
-      </Pressable>
+      <Button label="Delete" variant="dangerQuiet" onPress={onDelete} />
       <Button label="Edit" variant="secondary" onPress={onEdit} style={styles.edit} />
     </View>
   ) : undefined;
 
   return (
     <Screen back={{ label: groupName, onPress: onBack }} footer={footer}>
-      {flag !== null && <FlagBanner message={flagMessage(flag)} />}
+      {flag !== null && (
+        <View style={styles.flag}>
+          <Banner variant="flagged" message={flagMessage(flag, currency, state.currency)} />
+        </View>
+      )}
       <View style={styles.head} accessibilityLabel="Expense">
         <CategoryPill
           emoji={CATEGORY_EMOJI[expense.category]}
           label={CATEGORY_LABEL[expense.category]}
         />
-        <AppText variant="title1" style={styles.title} accessibilityRole="header">
+        <AppText variant="heading" accessibilityRole="header">
           {expense.title}
         </AppText>
         <MoneyText amount={expense.amount} currency={currency} size="big" />
@@ -165,7 +161,7 @@ export function ExpenseDetailView({
         </View>
       )}
       <AppText variant="caption" color="textMuted" style={styles.addedBy}>
-        {`Added by ${addedBy} · ${dateTimeLower(expense.addedAt, now)}`}
+        {`Added by ${addedBy} · ${dateTime(expense.addedAt, now)}`}
       </AppText>
 
       <SectionHeader spacingTop={24}>History</SectionHeader>
@@ -180,7 +176,7 @@ export function ExpenseDetailView({
                 {row.text}
               </AppText>
               <AppText variant="caption" color="textMuted">
-                {dateTimeLower(row.at, now)}
+                {dateTime(row.at, now)}
               </AppText>
             </View>
             {row.current ? (
@@ -249,25 +245,6 @@ function CategoryPill({ emoji, label }: { emoji: string; label: string }) {
   );
 }
 
-/**
- * Expense detail · flagged: the warning glyph and the reason on `surface` with a 1 pt `border`, radius 14, padded
- * 8 · 14, at least 56 tall. Unlike the kit's banners it has no action.
- */
-function FlagBanner({ message }: { message: string }) {
-  const { tokens } = useTheme();
-  return (
-    <View
-      accessibilityRole="alert"
-      style={[styles.flag, { backgroundColor: tokens.surface, borderColor: tokens.border }]}
-    >
-      <Icon name="warning" size={20} color={tokens.textSecondary} />
-      <AppText variant="subhead" style={styles.flex}>
-        {message}
-      </AppText>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   gutter: { marginHorizontal: layout.gutter },
@@ -277,8 +254,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingHorizontal: layout.textInset,
   },
-  /** 28/34 bold −0.3: the canvas's expense title (the type scale has no 28 pt step). */
-  title: { fontSize: 28, lineHeight: 34, letterSpacing: -0.3 },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -328,20 +303,7 @@ const styles = StyleSheet.create({
   versionAction: { paddingRight: 6 },
   versionText: { flex: 1, minWidth: 0, gap: 2 },
   current: { paddingHorizontal: 4 },
-  flag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    minHeight: 56,
-    marginTop: 8,
-    marginHorizontal: layout.gutter,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderWidth: strokes.hairline,
-    borderRadius: radii.tile,
-  },
+  flag: { marginTop: 8, marginHorizontal: layout.gutter },
   footer: { flexDirection: 'row', alignItems: 'center', gap: layout.stackGap },
-  delete: { minHeight: 52, paddingHorizontal: 20, justifyContent: 'center' },
   edit: { flex: 1 },
-  pressed: { opacity: 0.5 },
 });

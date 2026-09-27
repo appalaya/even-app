@@ -21,17 +21,23 @@ import { FieldLabel } from './SectionHeader';
  * - `row`    48 · radius 16 · 17/22, a trailing 36 pt add button (Create group: "Add a name"); without the button,
  *            padding 16 at both ends (States: "Add a name", the Name field in error).
  * - `inline` 44 · radius 12 · 17/22 ("Your name", "Name"); on `surface` when the card around it is `fill`.
+ * - `url`    48 · radius 12 · 16/21, padding 14 (Create group: the sync server, Advanced open; Move server's "New
+ *            server" draws radius 14, via `radius`).
  * - `pill`   44 · radius 22 · 15/20 (Settle: "Note (optional)").
  * - `cell`   40 · radius 10 · 16/21 medium, right-aligned tabular, on `surface`; a 2 pt accent ring while focused
  *            (Split amounts and percentages).
  * - `code`   208 · radius 18 · 15/22 mono, multiline, a Paste button in the corner (Join with code).
+ *
+ * While focused, `large`, `title`, `row` and `cell` draw a 2 pt accent ring (Add expense typing the title; Rename
+ * group; Add member; a Split cell).
  *
  * Placeholder text is `textMuted` (Palette, States). An `error` draws a 1.5 pt inset ring in `text` on any shape
  * and the message under it: on `code` a 20 pt warning glyph, 10 pt gap, 16/22 semibold, 14 below the field
  * (JoinCodeError); on every other shape a 16 pt glyph (stroke 2.2), 8 pt gap, 14/19 semibold, 8 below, inset 4
  * (States: "Someone here is already called Maya. Try Maya K.").
  */
-export type TextFieldVariant = 'large' | 'title' | 'row' | 'inline' | 'pill' | 'cell' | 'code';
+export type TextFieldVariant =
+  'large' | 'title' | 'row' | 'inline' | 'url' | 'pill' | 'cell' | 'code';
 
 interface Spec {
   minHeight: number;
@@ -69,6 +75,13 @@ const SPECS: Record<TextFieldVariant, Spec> = {
     paddingLeft: 14,
     paddingRight: 14,
     text: typography.body,
+  },
+  url: {
+    minHeight: 48,
+    radius: radii.control,
+    paddingLeft: 14,
+    paddingRight: 14,
+    text: typography.callout,
   },
   pill: { minHeight: 44, radius: 22, paddingLeft: 16, paddingRight: 16, text: typography.subhead },
   cell: {
@@ -115,6 +128,8 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   active?: boolean;
   /** Fixed width (`cell`: 100 for amounts, 76 for percentages). */
   width?: number;
+  /** Overrides the variant's corner radius (Move server's field: 14). */
+  radius?: number;
   containerStyle?: ViewProps['style'];
 }
 
@@ -130,6 +145,7 @@ export function TextField({
   on = 'surface',
   active = false,
   width,
+  radius,
   containerStyle,
   onFocus,
   onBlur,
@@ -140,10 +156,16 @@ export function TextField({
   const spec = SPECS[variant];
   const background =
     variant === 'cell' || (variant === 'inline' && on === 'fill') ? tokens.surface : tokens.fill;
+  const focusRing =
+    variant === 'large' ||
+    variant === 'title' ||
+    variant === 'row' ||
+    variant === 'url' ||
+    variant === 'cell';
   const ring =
     error !== undefined
       ? `inset 0 0 0 ${strokes.selected}px ${tokens.text}`
-      : variant === 'cell' && (focused || active)
+      : (focusRing && focused) || (variant === 'cell' && active)
         ? `0 0 0 ${strokes.ring}px ${tokens.accent}`
         : undefined;
   const paddingRight =
@@ -155,7 +177,7 @@ export function TextField({
         styles.field,
         {
           minHeight: spec.minHeight,
-          borderRadius: spec.radius,
+          borderRadius: radius ?? spec.radius,
           paddingLeft: variant === 'code' ? 0 : spec.paddingLeft,
           paddingRight: variant === 'code' ? 0 : paddingRight,
           backgroundColor: background,

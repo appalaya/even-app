@@ -1,8 +1,9 @@
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
-import { Alert, Clipboard, Linking, StyleSheet, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Alert, Linking, StyleSheet, View } from 'react-native';
 
-import { Banner, movedMessage } from '@/components';
+import { Banner, collisionMessage, movedMessage } from '@/components';
 import { useApp, type DerivedGroup } from '@/state';
 import { layout } from '@/theme';
 
@@ -12,21 +13,36 @@ import { groupHrefs } from './routes';
 /** Where "Update" leads until the store listing exists: the landing page carries the store badges. */
 const UPDATE_URL = 'https://even.appalaya.com';
 
-/** Whether any banner shows (the header sits 4 pt closer under one: Group · dark). */
-export function showsBanner(derived: DerivedGroup): boolean {
-  return (
-    derived.updateRequired ||
-    derived.skipped.total > 0 ||
+/**
+ * Two or more non-archived members share a name (the reducer's `nameCollisions`): the first such name and how many
+ * share it, for "Two members are named Maya. Rename one in settings." (Group screen copy).
+ */
+export function collisionOf(derived: DerivedGroup): { name: string; count: number } | null {
+  const state = derived.state;
+  const first = state?.nameCollisions[0];
+  if (state == null || first === undefined || first.length < 2) return null;
+  const name = state.members.get(first[0] ?? '')?.name ?? '';
+  return name === '' ? null : { name, count: first.length };
+}
+
+/**
+ * Whether the last banner is one of Group's flush ones (the header sits 4 pt closer under it: Group · dark, "2 entries
+ * couldn't be read"). Under the padded banners (States; Group screen copy) the header keeps its 18.
+ */
+export function lastBannerFlush(derived: DerivedGroup): boolean {
+  const padded =
     derived.readOnly === 'closed' ||
-    derived.readOnly === 'archived' ||
-    (derived.moveOffer !== null && derived.state !== null)
-  );
+    (derived.moveOffer !== null && derived.state !== null) ||
+    collisionOf(derived) !== null;
+  if (derived.readOnly === 'archived') return true;
+  return !padded && !derived.updateRequired && derived.skipped.total > 0;
 }
 
 /**
  * The banners under Group's nav bar, each as its board draws it (Group · dark: unreadable entries; States: update
- * required, group closed, group moved; Group, archived). Hidden entries of a newer version already say "Update", so
- * the unreadable count stands aside while that banner shows.
+ * required, group closed, group moved; Group, archived; Group screen copy: two members with one name, a closed
+ * group). Hidden entries of a newer version already say "Update", so the unreadable count stands aside while that
+ * banner shows.
  */
 export function GroupBanners({ derived }: { derived: DerivedGroup }) {
   const { groups } = useApp();
@@ -57,7 +73,7 @@ export function GroupBanners({ derived }: { derived: DerivedGroup }) {
         key="closed"
         variant="closed"
         onAction={() => {
-          void Clipboard.getString().then((text) =>
+          void Clipboard.getStringAsync().then((text) =>
             router.push(groupHrefs.joinWithCode(text.trim())),
           );
         }}
@@ -80,6 +96,17 @@ export function GroupBanners({ derived }: { derived: DerivedGroup }) {
             () => Alert.alert(`Couldn't move to ${host}`, 'Try again in a moment.'),
           );
         }}
+      />,
+    );
+  }
+  const collision = collisionOf(derived);
+  if (collision !== null && derived.readOnly !== 'closed') {
+    banners.push(
+      <Banner
+        key="collision"
+        variant="collision"
+        message={collisionMessage(collision.name, collision.count)}
+        onAction={() => router.push(groupHrefs.settings(localId))}
       />,
     );
   }

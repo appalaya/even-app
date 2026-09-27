@@ -8,12 +8,16 @@
  *   they join. You can add more later.";
  * - You in this group: a `fill` card (padding 16, gap 14) with the 72 pt avatar and pencil badge (opens the emoji
  *   picker) and "Your name" on `surface`; "Filled in from your defaults in Settings.";
- * - "Advanced: sync server", an outlined row showing the default host, collapsed;
+ * - "Advanced: sync server", an outlined row showing the default host, collapsed; open (Groups, extra states:
+ *   "Create, Advanced open") the outline holds the row, the URL field (48, radius 12, 16/21) and "Only change this
+ *   if you run your own Even server.";
  * - "Create group" pinned at the foot, 24 below the content at least.
  * On Create: the GroupService writes the creator's `member.added` and `member.claimed`, then `group.created`, then one
- * `member.added` per pre-added name (design.md "Invites" → Create), and the app opens the new group.
+ * `member.added` per pre-added name (design.md "Invites" → Create), and the app opens the new group. A server other
+ * than the default is checked first (`/v1/info`). The error copy is the panel's: under the server field as you leave
+ * it or after Create, and "Couldn't create the group. Try again." just above Create group.
  */
-import { memberColor, PROTOCOL } from '@even/core';
+import { memberColor, newId, PROTOCOL } from '@even/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,15 +41,26 @@ import { currencyName, defaultCurrency } from './currencies';
 import { CurrencyPickerSheet } from './CurrencyPickerSheet';
 import { FieldError } from './FieldError';
 import { isNameTaken, nameTakenMessage } from './names';
+import { serverAddressProblem, serverProblemMessage } from './serverCopy';
+
+/** A pre-added name and the member id it will have (so its avatar previews the member's real colour). */
+export interface PersonDraft {
+  name: string;
+  id: string;
+}
 
 export interface CreateGroupPrefill {
   name?: string;
   currency?: string;
-  people?: readonly string[];
+  people?: readonly PersonDraft[];
   myName?: string;
   myEmoji?: string | null;
   /** Open the emoji picker at once (dev screenshots of the EmojiPicker board). */
   openEmojiPicker?: boolean;
+  /** Open the currency picker at once (dev screenshots of the currency picker). */
+  openCurrencyPicker?: boolean;
+  /** Open "Advanced: sync server" (dev screenshots). */
+  advancedOpen?: boolean;
   /** Scroll to the end once open (dev screenshots of the board's full scroll). */
   scrollToEnd?: boolean;
 }
@@ -60,30 +75,39 @@ export interface CreateGroupSheetProps {
 export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: CreateGroupSheetProps) {
   const { tokens } = useTheme();
   const insets = useSafeAreaInsets();
-  const { groups, deviceId } = useApp();
+  const { groups } = useApp();
   const { prefs } = usePrefs();
   // A dev prefill stands in for the phone's region (the simulator's is US; the board's phone is in Canada).
   const deviceCurrency = useMemo(() => prefill?.currency ?? defaultCurrency(), [prefill?.currency]);
 
   const [name, setName] = useState(prefill?.name ?? '');
   const [currency, setCurrency] = useState(prefill?.currency ?? deviceCurrency);
-  const [people, setPeople] = useState<string[]>([...(prefill?.people ?? [])]);
+  const [people, setPeople] = useState<PersonDraft[]>([...(prefill?.people ?? [])]);
+  // Your member id is chosen now, so the avatar here is the colour you will have.
+  const [myId] = useState(() => newId());
+  const [scrolled, setScrolled] = useState(false);
   const [person, setPerson] = useState('');
   const [personError, setPersonError] = useState<string | undefined>();
   const [myName, setMyName] = useState(prefill?.myName ?? '');
   const [myEmoji, setMyEmoji] = useState<string | null>(prefill?.myEmoji ?? null);
   const [fromDefaults, setFromDefaults] = useState(prefill?.myName !== undefined);
-  const [advanced, setAdvanced] = useState(false);
+  const [advanced, setAdvanced] = useState(prefill?.advancedOpen === true);
   const [server, setServer] = useState<string>(PROTOCOL.defaultServer);
   const [serverError, setServerError] = useState<string | undefined>();
   const [formError, setFormError] = useState<string | undefined>();
   const [picker, setPicker] = useState<'emoji' | 'currency' | null>(null);
   // iOS presents one sheet at a time: open the picker once this sheet is up.
   useEffect(() => {
-    if (prefill?.openEmojiPicker !== true) return;
-    const timer = setTimeout(() => setPicker('emoji'), 450);
+    const open =
+      prefill?.openEmojiPicker === true
+        ? 'emoji'
+        : prefill?.openCurrencyPicker === true
+          ? 'currency'
+          : null;
+    if (open === null) return;
+    const timer = setTimeout(() => setPicker(open), 450);
     return () => clearTimeout(timer);
-  }, [prefill?.openEmojiPicker]);
+  }, [prefill?.openEmojiPicker, prefill?.openCurrencyPicker]);
   const [busy, setBusy] = useState(false);
   const scroller = useRef<ScrollViewInstance>(null);
   useEffect(() => {
@@ -106,11 +130,11 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
   const addPerson = () => {
     const clean = person.trim();
     if (clean === '') return;
-    if (isNameTaken(clean, [...people, myName])) {
+    if (isNameTaken(clean, [...people.map((p) => p.name), myName])) {
       setPersonError(nameTakenMessage(clean));
       return;
     }
-    setPeople((list) => [...list, clean]);
+    setPeople((list) => [...list, { name: clean, id: newId() }]);
     setPerson('');
     setPersonError(undefined);
   };
@@ -122,32 +146,43 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
     setBusy(true);
     setFormError(undefined);
     setServerError(undefined);
+    const serverUrl = server.trim() === '' ? PROTOCOL.defaultServer : server.trim();
+    if (serverUrl !== PROTOCOL.defaultServer) {
+      const check = await groups.checkServer(serverUrl);
+      if (!check.ok) {
+        setBusy(false);
+        setAdvanced(true);
+        setServerError(serverProblemMessage(check.problem));
+        return;
+      }
+    }
     try {
       const pending = person.trim();
       const everyone =
-        pending !== '' && !isNameTaken(pending, [...people, myName])
-          ? [...people, pending]
+        pending !== '' && !isNameTaken(pending, [...people.map((p) => p.name), myName])
+          ? [...people, { name: pending, id: newId() }]
           : people;
       const { localId } = await groups.createGroup({
         name: name.trim(),
         currency,
         myName: myName.trim(),
+        myId,
         ...(myEmoji === null ? {} : { myEmoji }),
         people: everyone,
-        serverUrl: server.trim(),
+        serverUrl,
       });
       onCreated(localId);
     } catch (error) {
       setBusy(false);
       if (isStateError(error, 'invalid_url')) {
         setAdvanced(true);
-        setServerError("That isn't an https server address.");
+        setServerError(serverProblemMessage('invalid_url'));
       } else if (isStateError(error, 'clock')) {
         setFormError("Check your phone's date.");
       } else if (isStateError(error, 'name_taken')) {
         setFormError('Two people here have the same name.');
       } else {
-        setFormError("The group couldn't be created.");
+        setFormError("Couldn't create the group. Try again.");
         console.warn('create group failed', error instanceof Error ? error.message : error);
       }
     }
@@ -165,9 +200,15 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
       >
         <ScrollView
           ref={scroller}
-          style={styles.flex}
+          style={[
+            styles.flex,
+            scrolled && { borderTopWidth: strokes.hairline, borderTopColor: tokens.separator },
+          ]}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={32}
+          // Scrolled, a hairline separates the content from the header (Groups, extra states: Advanced open).
+          onScroll={(e) => setScrolled(e.nativeEvent.contentOffset.y > 0)}
         >
           <TextField
             variant="large"
@@ -225,11 +266,10 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
               <View style={styles.chips}>
                 {people.map((p) => (
                   <MemberChip
-                    key={p}
-                    name={p}
-                    // No member id exists until Create; the name picks a stable palette colour meanwhile.
-                    color={memberColor(p)}
-                    onRemove={() => setPeople((list) => list.filter((other) => other !== p))}
+                    key={p.id}
+                    name={p.name}
+                    color={memberColor(p.id)}
+                    onRemove={() => setPeople((list) => list.filter((other) => other.id !== p.id))}
                   />
                 ))}
               </View>
@@ -254,7 +294,7 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
                   size={72}
                   name={myName === '' ? undefined : myName}
                   emoji={myEmoji ?? undefined}
-                  memberId={deviceId}
+                  memberId={myId}
                   on="fill"
                   badge="pencil"
                   badgeRing={tokens.fill}
@@ -278,47 +318,61 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
             {fromDefaults && <Helper>Filled in from your defaults in Settings.</Helper>}
           </View>
 
-          <Pressable
-            onPress={() => setAdvanced((open) => !open)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: advanced }}
-            style={({ pressed }) => [
-              styles.advanced,
-              { borderColor: tokens.border },
-              pressed && { backgroundColor: tokens.rowPressed },
-            ]}
-          >
-            <View style={styles.advancedText}>
-              <AppText variant="subhead" color="textSecondary">
-                Advanced: sync server
-              </AppText>
-              <AppText variant="caption" color="textMuted" numberOfLines={1}>
-                {hostOf(server.trim() === '' ? PROTOCOL.defaultServer : server.trim())}
-              </AppText>
-            </View>
-            <View style={advanced && styles.flipped}>
-              <Icon name="chevronDown" size={14} color={tokens.iconMuted} />
-            </View>
-          </Pressable>
-          {advanced && (
-            <TextField
-              variant="row"
-              value={server}
-              onChangeText={(text) => {
-                setServer(text);
-                setServerError(undefined);
-              }}
-              accessibilityLabel="Sync server"
-              placeholder={PROTOCOL.defaultServer}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              error={serverError}
-              containerStyle={styles.server}
-            />
-          )}
-          {formError !== undefined && <FieldError message={formError} style={styles.formError} />}
+          <View style={[styles.advanced, { borderColor: tokens.border }]}>
+            <Pressable
+              onPress={() => setAdvanced((open) => !open)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: advanced }}
+              style={({ pressed }) => [
+                styles.advancedRow,
+                advanced ? styles.advancedRowOpen : styles.advancedRowClosed,
+                pressed && { backgroundColor: tokens.rowPressed },
+              ]}
+            >
+              <View style={styles.advancedText}>
+                <AppText variant="subhead" color="textSecondary">
+                  Advanced: sync server
+                </AppText>
+                {!advanced && (
+                  <AppText variant="caption" color="textMuted" numberOfLines={1}>
+                    {hostOf(server.trim() === '' ? PROTOCOL.defaultServer : server.trim())}
+                  </AppText>
+                )}
+              </View>
+              <Icon
+                name={advanced ? 'chevronUp' : 'chevronDown'}
+                size={14}
+                color={tokens.iconMuted}
+              />
+            </Pressable>
+            {advanced && (
+              <View style={styles.serverBody}>
+                <TextField
+                  variant="url"
+                  value={server}
+                  onChangeText={(text) => {
+                    setServer(text);
+                    setServerError(undefined);
+                  }}
+                  onBlur={() => {
+                    const problem = serverAddressProblem(server);
+                    if (problem !== null) setServerError(serverProblemMessage(problem));
+                  }}
+                  accessibilityLabel="Sync server"
+                  placeholder={PROTOCOL.defaultServer}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  error={serverError}
+                />
+                <AppText variant="caption" color="textMuted" style={styles.helper}>
+                  Only change this if you run your own Even server.
+                </AppText>
+              </View>
+            )}
+          </View>
         </ScrollView>
+        {formError !== undefined && <FieldError message={formError} style={styles.formError} />}
         <Button
           label="Create group"
           onPress={() => void create()}
@@ -340,7 +394,7 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
             setPicker(null);
           }}
           name={myName === '' ? '?' : myName}
-          memberId={deviceId}
+          memberId={myId}
         />
         <CurrencyPickerSheet
           visible={picker === 'currency'}
@@ -385,21 +439,26 @@ const styles = StyleSheet.create({
   avatar: { alignSelf: 'center' },
   yourName: { gap: 6 },
   advanced: {
+    marginTop: 16,
+    marginHorizontal: 16,
+    borderRadius: radii.group,
+    borderWidth: strokes.hairline,
+    overflow: 'hidden',
+  },
+  advancedRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    minHeight: 56,
-    marginTop: 16,
-    marginHorizontal: 16,
-    paddingVertical: 8,
     paddingLeft: 16,
     paddingRight: 14,
-    borderRadius: radii.group,
-    borderWidth: strokes.hairline,
   },
+  /** Collapsed: min 56, padding 8 · 14 · 8 · 16, the host under the label (CreateGroup). */
+  advancedRowClosed: { minHeight: 54, paddingVertical: 8 },
+  /** Open: min 52 inside the outline, no host line (Groups, extra states). */
+  advancedRowOpen: { minHeight: 52 },
   advancedText: { flex: 1, gap: 1 },
-  flipped: { transform: [{ rotate: '180deg' }] },
-  server: { marginTop: 8, marginHorizontal: 16 },
-  formError: { marginTop: 16, marginHorizontal: 16 },
+  serverBody: { gap: 8, paddingHorizontal: 12, paddingBottom: 14 },
+  /** "Couldn't create the group. Try again." just above Create group, as Save's error on Add expense. */
+  formError: { marginBottom: 10, marginHorizontal: 16 },
   create: { marginHorizontal: 16 },
 });

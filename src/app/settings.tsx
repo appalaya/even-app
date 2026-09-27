@@ -20,6 +20,7 @@ import {
   SectionHeader,
   SegmentedControl,
 } from '@/components';
+import { ImportRefusedSheet } from '@/features/groups/ImportRefusedSheet';
 import { hrefs } from '@/features/groups/routes';
 import { useImportGroupFile } from '@/features/groups/useImportGroupFile';
 import { LINKS, versionLabel } from '@/features/settings/about';
@@ -42,7 +43,7 @@ const VERSION = versionLabel(
 export default function SettingsScreen() {
   const { tokens } = useTheme();
   const { prefs, setAppearance } = usePrefs();
-  const { importGroupFile, busy } = useImportGroupFile();
+  const { importGroupFile, busy, refused, openAnyway, dismissRefused } = useImportGroupFile();
   const { picker } = useLocalSearchParams<{ picker?: string }>();
 
   const back = () => (router.canGoBack() ? router.back() : router.replace(hrefs.groups));
@@ -113,6 +114,12 @@ export default function SettingsScreen() {
         />
         <ListRow title="Version" detail={VERSION} minHeight={48} paddingRight={16} />
       </Card>
+      <ImportRefusedSheet
+        refused={refused}
+        busy={busy}
+        onOpen={() => void openAnyway()}
+        onDismiss={dismissRefused}
+      />
     </Screen>
   );
 }

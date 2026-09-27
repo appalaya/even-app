@@ -1,5 +1,6 @@
 /**
- * The stack B seed against the boards' numbers, through the same reducer, balances and view models the screens use.
+ * The dev seed's Group scenarios against the boards' numbers, through the same reducer, balances and view models the
+ * screens use.
  */
 import { formatMinor, nets, reduce, simplify, type GroupState } from '@even/core';
 import { describe, expect, it } from 'vitest';
@@ -19,14 +20,24 @@ import {
   myTransfers,
   sortedExpenses,
 } from '../features/group/model';
-import { buildScenario, flaggedPreview, SEED_STATES, seedSecret, type SeedState } from './seedB';
+import {
+  buildCopyScenario,
+  buildScenario,
+  flaggedPreview,
+  GROUP_SCENARIOS,
+  SEED_STATES,
+  seedSecret,
+  type GroupScenario,
+} from './seed';
 
 const NOW = new Date(2026, 8, 26, 15, 0).getTime();
 const DEVICE = 'thisDeviceAAAAAAAAAAAA';
 const money = (minor: number) => formatMinor(minor, 'CAD', 'en-US');
 
-function load(state: SeedState) {
-  const spec = buildScenario(state, DEVICE, NOW);
+function load(state: GroupScenario | Parameters<typeof buildCopyScenario>[0]) {
+  const spec = (GROUP_SCENARIOS as readonly string[]).includes(state)
+    ? buildScenario(state as GroupScenario, DEVICE, NOW)
+    : buildCopyScenario(state as Parameters<typeof buildCopyScenario>[0], DEVICE, NOW);
   const group = reduce(spec.entries, { format: money });
   const balances = nets(group);
   return { spec, group, balances, transfers: simplify(balances), me: spec.me.id };
@@ -36,13 +47,41 @@ function nameOf(group: GroupState, id: string): string {
   return group.members.get(id)?.name ?? '?';
 }
 
-describe('seed-b scenarios', () => {
-  it('builds every state from valid events', () => {
-    for (const state of SEED_STATES) {
+describe('seed scenarios', () => {
+  it('builds every Group state from valid events', () => {
+    for (const state of GROUP_SCENARIOS) {
       const { spec, group } = load(state);
       expect(spec.entries.length).toBeGreaterThan(0);
       expect(group.flagged).toEqual([]);
     }
+    // Every Group scenario is a seed state the route can open.
+    for (const state of GROUP_SCENARIOS) expect(SEED_STATES).toContain(state);
+  });
+
+  it("Group screen copy: owed on Maya's phone, a settled member, two Mayas, a USD entry", () => {
+    const owed = load('owed');
+    expect(owed.balances.get(owed.me)).toBe(17200);
+    expect(
+      myTransfers(owed.transfers, owed.me).map((t) => [nameOf(owed.group, t.from), t.amount]),
+    ).toEqual([
+      ['Nathan', 12800],
+      ['Sam', 4400],
+    ]);
+    const settled = load('settled-member');
+    expect(
+      balanceRows(settled.group, settled.balances, settled.me).map((r) => [r.member.name, r.net]),
+    ).toEqual([
+      ['Sam', -5200],
+      ['Maya', 4400],
+      ['Jordan', 800],
+      ['Nathan', 0],
+    ]);
+    const collision = load('collision');
+    expect(collision.group.nameCollisions).toHaveLength(1);
+    expect(doneSummary(collision.group, collision.me).total).toBe(4);
+    const usd = load('expense-currency');
+    expect(usd.group.flagged.map((f) => f.reason)).toEqual(['currency_mismatch']);
+    expect(usd.balances.get(usd.me)).toBe(-5200);
   });
 
   it('Group: you owe $52.00, pay Maya $44.00 and Jordan $8.00; 3 of 4 done', () => {
@@ -110,12 +149,12 @@ describe('seed-b scenarios', () => {
   });
 
   it('Group, even and archived: nobody owes anything', () => {
-    for (const state of ['even', 'archived'] as const) {
+    for (const state of ['even', 'group-archived'] as const) {
       const { transfers, balances, me } = load(state);
       expect(transfers).toEqual([]);
       expect(balances.get(me)).toBe(0);
     }
-    const { group, me } = load('archived');
+    const { group, me } = load('group-archived');
     expect(group.archived).toBe(true);
     const [today, yesterday] = activitySections(group, me);
     expect(today?.rows.map((r) => `${r.subject ?? ''}${r.rest}`)).toEqual([
@@ -155,7 +194,7 @@ describe('seed-b scenarios', () => {
   });
 
   it('Expense detail: the dinner history as drawn', () => {
-    const { spec, group, me } = load('expense');
+    const { spec, group, me } = load('expense-detail');
     const dinner = group.expenses.get(spec.open.expenseId ?? '');
     expect(dinner).toBeDefined();
     if (dinner === undefined) return;

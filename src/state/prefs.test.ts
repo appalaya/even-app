@@ -87,4 +87,13 @@ describe.each(STORE_KINDS)('prefs on the %s store', (kind) => {
     await prefs.seedMe('Other', '🐻');
     expect(await prefs.load()).toMatchObject({ name: 'Maya', emoji: '🦊' });
   });
+
+  it('claims the contextual notification ask exactly once per install', async () => {
+    const { store, prefs } = await service();
+    expect(await store.getPref('notifications.asked')).toBeNull();
+    expect(await prefs.claimNotificationAsk()).toBe(true);
+    expect(await store.getPref('notifications.asked')).toBe('1');
+    expect(await prefs.claimNotificationAsk()).toBe(false);
+    expect(await new PrefsService(store).claimNotificationAsk()).toBe(false);
+  });
 });

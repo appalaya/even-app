@@ -19,12 +19,15 @@ export function MemberAvatar({
   member,
   size,
   on,
+  dimmed = false,
 }: {
   member: MemberState | null;
   size: 28 | 30 | 32;
   on?: 'surface' | 'inset' | 'fill';
+  /** Read only (a closed group's settle list): 40 %. */
+  dimmed?: boolean;
 }) {
-  if (member === null) return <Avatar size={size} initials="?" on={on} />;
+  if (member === null) return <Avatar size={size} initials="?" on={on} dimmed={dimmed} />;
   return (
     <Avatar
       size={size}
@@ -32,15 +35,26 @@ export function MemberAvatar({
       initials={member.initials}
       color={member.color}
       on={on}
+      dimmed={dimmed}
       {...(member.emoji === undefined ? {} : { emoji: member.emoji })}
     />
   );
 }
 
+/** "Read-only. Record payments in the new group once you have its invite." (Group screen copy, closed.) */
+export function ClosedNote() {
+  return (
+    <AppText variant="caption" color="textMuted" style={styles.closedNote}>
+      Read-only. Record payments in the new group once you have its invite.
+    </AppText>
+  );
+}
+
 /**
  * The big number (Group): "You owe" / "You're owed" at 17/22 in `textSecondary`, the amount at 56/64 with the code,
- * then the status line 4 below. At a zero net (Group, even): "You're even" at 44/52 and the status line 6 below; read
- * only (Group, archived) it is `textSecondary` and carries "Everyone's settled" 8 below instead of a status line.
+ * then the status line 4 below. At a zero net (Group, even): "You're even" at 44/52 and the status line 6 below. Read
+ * only (Group, archived; Group screen copy, closed) the figure is `textSecondary` and there is no status line; an
+ * even archived group carries "Everyone's settled" 8 below instead.
  */
 export function BalanceSection({
   net,
@@ -72,7 +86,12 @@ export function BalanceSection({
       ) : (
         <>
           <AppText color="textSecondary">{net < 0 ? 'You owe' : "You're owed"}</AppText>
-          <MoneyText amount={Math.abs(net)} currency={currency} size="big" />
+          <MoneyText
+            amount={Math.abs(net)}
+            currency={currency}
+            size="big"
+            color={readOnly ? 'textSecondary' : 'text'}
+          />
         </>
       )}
       {readOnly
@@ -128,9 +147,10 @@ export function ArchiveOffer({ onPress }: { onPress: () => void }) {
 }
 
 /**
- * The settle list: your simplified transfers as 60 pt rows ("You pay Maya · $44.00 ›"), 20 below the header. Once
- * everyone is done (Group, everyone done) it takes the "Settle up" title and the soft-accent card with accent
- * chevrons. Read only, the rows are not pressable.
+ * The settle list: your simplified transfers as 60 pt rows, 20 below the header, in both directions ("You pay Maya ·
+ * $44.00 ›", "Nathan pays you · $128.00 ›"; Group screen copy). Once everyone is done (Group, everyone done) it takes
+ * the "Settle up" title and the soft-accent card with accent chevrons. Read only (Group screen copy, closed) the rows
+ * are greyed: avatars at 40 %, words and amounts (medium) in `textMuted`, no chevron, not pressable, padded 16.
  */
 export function SettleList({
   transfers,
@@ -139,6 +159,7 @@ export function SettleList({
   currency,
   allDone,
   onSettle,
+  readOnly = false,
 }: {
   transfers: readonly Transfer[];
   myId: string | null;
@@ -146,6 +167,7 @@ export function SettleList({
   currency: string;
   allDone: boolean;
   onSettle: ((transfer: Transfer) => void) | null;
+  readOnly?: boolean;
 }) {
   if (transfers.length === 0) return null;
   const rows = transfers.map((t) => {
@@ -153,6 +175,22 @@ export function SettleList({
     const other = members.get(mine ? t.to : t.from) ?? null;
     const name = other?.name ?? 'Someone';
     const title = mine ? `You pay ${name}` : `${name} pays you`;
+    if (readOnly) {
+      return (
+        <ListRow
+          key={`${t.from}>${t.to}`}
+          variant="settle"
+          leading={<MemberAvatar member={other} size={32} dimmed />}
+          title={title}
+          titleColor="textMuted"
+          detail={
+            <MoneyText amount={t.amount} currency={currency} weight="medium" color="textMuted" />
+          }
+          paddingRight={16}
+          accessibilityLabel={title}
+        />
+      );
+    }
     return (
       <ListRow
         key={`${t.from}>${t.to}`}
@@ -214,5 +252,6 @@ const styles = StyleSheet.create({
     borderWidth: strokes.hairline,
   },
   settleCard: { marginTop: 20, marginHorizontal: layout.gutter },
+  closedNote: { marginTop: 8, marginHorizontal: layout.textInset },
   settleTint: { marginHorizontal: layout.gutter },
 });

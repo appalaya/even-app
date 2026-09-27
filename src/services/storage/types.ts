@@ -162,7 +162,17 @@ export type PrefKey =
   /** App settings → Appearance: `system` | `light` | `dark`. */
   | 'appearance'
   /** App theme id (themes are a later feature); absent means `even`. */
-  | 'theme';
+  | 'theme'
+  /**
+   * `1` once the contextual notification permission request has been made (the first time a group with more than
+   * one member is opened; design.md "Background refresh"), so it is asked at most once.
+   */
+  | 'notifications.asked'
+  /**
+   * "Last notified", per group, as JSON: `{ [localId]: { at, count } }` (services/notifications/coalesce.ts). Local
+   * ids and counts only, nothing decrypted.
+   */
+  | 'notifications.ledger';
 
 // ---------- The store ----------
 

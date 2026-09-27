@@ -14,8 +14,9 @@
  * - A reply is applied only if that title still matches the field and `source` is not `user`; otherwise it is
  *   discarded (`chipAfterReply`). An applied reply sets `source = model`, so a model result can be refined by a
  *   later model result but never overwrite a tap. The swap animates (UI).
- * - Every inferred chip (`keyword` or `model`) wears the "suggested" tag until the user taps, so a choice the user
- *   did not make is never invisible (UI).
+ * - A keyword-inferred chip carries no tag. When the model changes the chip, the swap animates and the chip wears
+ *   the "suggested" tag for about 1.5 s, so a change the user did not make is never invisible; a chip the user
+ *   chose never wears it (UI: `features/addExpense/chipMachine.ts`).
  * - Tapping Save freezes the chip: the event carries whatever it shows, never a later guess (UI).
  * Replies and taps are both handled on the JavaScript thread in arrival order, so a tap is never lost.
  *

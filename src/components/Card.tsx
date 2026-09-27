@@ -46,7 +46,8 @@ export function Card({
   const { tokens } = useTheme();
   const bg = BACKGROUND[tone];
   const items = Children.toArray(children);
-  const onFill = tone === 'fill' || tone === 'inset';
+  const separatorTone =
+    tone === 'fill' || tone === 'inset' ? 'inset' : tone === 'tint' ? 'tint' : 'surface';
   return (
     <View
       accessibilityLabel={accessibilityLabel}
@@ -65,7 +66,7 @@ export function Card({
         ? children
         : items.map((child, i) => (
             <Fragment key={i}>
-              {i > 0 && <Separator inset={separatorInset} tone={onFill ? 'inset' : 'surface'} />}
+              {i > 0 && <Separator inset={separatorInset} tone={separatorTone} />}
               {child}
             </Fragment>
           ))}
@@ -73,13 +74,16 @@ export function Card({
   );
 }
 
-/** A 1 pt rule inside a list, inset from the leading edge; `inset` tone on fill and inset lists. */
+/**
+ * A 1 pt rule inside a list, inset from the leading edge; `inset` tone on fill and inset lists, `tint` inside the
+ * soft-accent card (Group, everyone done).
+ */
 export function Separator({
   inset = 0,
   tone = 'surface',
 }: {
   inset?: number;
-  tone?: 'surface' | 'inset';
+  tone?: 'surface' | 'inset' | 'tint';
 }) {
   const { tokens } = useTheme();
   return (
@@ -87,7 +91,12 @@ export function Separator({
       style={{
         height: strokes.hairline,
         marginLeft: inset,
-        backgroundColor: tone === 'inset' ? tokens.separatorInset : tokens.separator,
+        backgroundColor:
+          tone === 'inset'
+            ? tokens.separatorInset
+            : tone === 'tint'
+              ? tokens.separatorTint
+              : tokens.separator,
       }}
     />
   );

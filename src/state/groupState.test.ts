@@ -131,6 +131,9 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
       name: 'Banff 2026',
       currency: 'CAD',
       myNet: -4_500,
+      // Everything a Groups card shows rides on the row: two people, nothing unsent on B.
+      memberCount: 2,
+      outbox: 0,
       needsClaim: false,
     });
     // Snapshots are replaced, never mutated: the same object until something changes.
@@ -382,6 +385,8 @@ describe('sortGroupRows', () => {
     name: localId,
     currency: 'CAD',
     myNet: 0,
+    memberCount: 2,
+    outbox: 0,
     balancesUnavailable: false,
     lifecycle: 'active',
     archived,

@@ -73,6 +73,15 @@ export interface ThemeTokens {
   separator: string;
   /** Hairlines inside a list on `fill` or `surfaceInset`; emoji-avatar backdrop there. */
   separatorInset: string;
+  /** Hairlines inside the soft-accent card (the settle list once everyone is done; Group, everyone done). */
+  separatorTint: string;
+  /**
+   * Emoji-avatar backdrop inside a toggle chip on `fill` (RegenerateInvite, "Remove someone?"): the board draws
+   * `separator` in light and `separatorInset` in dark.
+   */
+  avatarOnChip: string;
+  /** The dashed outline of something not chosen yet: the "Category" chip, the "Choose" circle on Settle. */
+  outlineStrong: string;
   /** The sheet grabber. */
   grabber: string;
   /** Dims the screen behind a sheet. */
@@ -89,6 +98,11 @@ export interface ThemeTokens {
   accentBar: string;
   /** Banners. Never used for money. (No canvas board uses it yet; banners there are neutral.) */
   attention: string;
+  /**
+   * Destructive text actions: Delete on Expense detail, "Leave anyway", "Delete the copy on <old host>" (Expense
+   * detail and Group settings, extra states boards). Never used for money or for errors (errors are `text`).
+   */
+  danger: string;
 
   /** A pressable list row while pressed, on `surface` (States board: the settle row). */
   rowPressed: string;

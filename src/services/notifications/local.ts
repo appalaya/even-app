@@ -3,15 +3,14 @@
  * - `scheduleActivityNotifications(results)`: after a background cycle, one notification per group for the new
  *   `ok` events other devices wrote (planned by activity.ts / coalesce.ts), posted at once; a newer one replaces
  *   the group's previous one and carries its count on while it is still showing;
- * - `ensureNotificationPermission()`: the contextual permission request, for the first time the user opens a group
- *   with more than one member (never at launch); a no-op once the OS has an answer;
+ * - `ensureNotificationPermission()`: the contextual permission request (never at launch); a no-op once the OS has
+ *   an answer. `askForNotificationsOnce()` is what the group screen calls the first time a group with more than one
+ *   member is opened: it asks at most once per install (`prefs` row `notifications.asked`);
  * - `clearActivityNotification(localId)`: for the group screen, once its activity has been seen.
  *
- * "Last notified" per group (when, and how many events) is kept in a small JSON file in the app's documents
- * directory: the `prefs` table's keys are a closed, runtime-checked set (storage/types.ts `PrefKey`), which this
- * module may not extend. The file holds local group ids and counts only, nothing decrypted.
+ * "Last notified" per group (when, and how many events) is the `prefs` row `notifications.ledger`
+ * (coalesce.ts `prefsLedger`): local group ids and counts only, nothing decrypted.
  */
-import { File, Paths } from 'expo-file-system';
 import * as Notifications from 'expo-notifications';
 
 import { openAppServices } from '../../state/openAppServices';
@@ -22,34 +21,13 @@ import { planActivityNotifications } from './activity';
 import {
   activityIdentifier,
   nextLedger,
-  parseLedger,
-  type Ledger,
+  prefsLedger,
   type LedgerStore,
   type PlannedNotification,
 } from './coalesce';
 
-const LEDGER_FILE = 'notified.json';
-
 /** expo-notifications' `IosAuthorizationStatus.PROVISIONAL`. */
 const IOS_PROVISIONAL = 3;
-
-/** The ledger as a JSON file in the documents directory (kept across launches, not backed up to other phones). */
-export const fileLedger: LedgerStore = {
-  async read() {
-    const file = new File(Paths.document, LEDGER_FILE);
-    if (!file.exists) return {};
-    try {
-      return parseLedger(await file.text());
-    } catch {
-      return {};
-    }
-  },
-  async write(ledger: Ledger) {
-    const file = new File(Paths.document, LEDGER_FILE);
-    if (!file.exists) file.create({ overwrite: true });
-    await file.write(JSON.stringify(ledger));
-  },
-};
 
 /** Granted, or provisional on iOS (delivered quietly to Notification Center). */
 async function permitted(): Promise<boolean> {
@@ -87,7 +65,7 @@ export async function scheduleActivityNotifications(
   if (!results.some((r) => r.outcome === 'synced' && r.newOkIds.length > 0)) return [];
   if (!(await permitted())) return [];
   const services = options.services ?? (await openAppServices());
-  const ledger = options.ledger ?? fileLedger;
+  const ledger = options.ledger ?? prefsLedger(services.store);
   const recorded = await ledger.read();
   const showing = await shownIdentifiers();
   const planned = await planActivityNotifications(services, results, (localId) => {
@@ -131,18 +109,33 @@ export async function ensureNotificationPermission(
   return (services ?? (await openAppServices())).prefs.requestNotifications();
 }
 
+/**
+ * The group screen's contextual ask: the first time a group with more than one member is opened on this install,
+ * ask for notification permission (unless the OS already has an answer); never again after that. Resolves with the
+ * status, or null when it had already asked.
+ */
+export async function askForNotificationsOnce(
+  services?: AppServices,
+): Promise<NotificationStatus | null> {
+  const app = services ?? (await openAppServices());
+  if (!(await app.prefs.claimNotificationAsk())) return null;
+  return ensureNotificationPermission(app);
+}
+
 /** Removes a group's activity notification and forgets its count (the group screen calls this when it opens). */
 export async function clearActivityNotification(
   localId: string,
-  ledger: LedgerStore = fileLedger,
+  services?: AppServices,
+  ledger?: LedgerStore,
 ): Promise<void> {
   try {
     await Notifications.dismissNotificationAsync(activityIdentifier(localId));
   } catch {
     // Nothing showing.
   }
-  const recorded = await ledger.read();
+  const store = ledger ?? prefsLedger((services ?? (await openAppServices())).store);
+  const recorded = await store.read();
   if (recorded[localId] === undefined) return;
   const { [localId]: _cleared, ...rest } = recorded;
-  await ledger.write(rest);
+  await store.write(rest);
 }

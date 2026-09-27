@@ -82,8 +82,9 @@ function balanceWords(row: BalanceRow): { verb: string; showAmount: boolean } {
 }
 
 /**
- * Balances: "Everyone" (you first, then by size: "Maya is owed $172.00"), "Settle up" 12 below, then "Spend by
- * category · $1,780.00" with a bar per category, largest first.
+ * Balances: "Everyone" (you first, then by size: "Maya is owed $172.00"; a settled member last, "Nathan is settled"
+ * with no amount and the verb in `textSecondary`, as the Group screen copy board draws it), "Settle up" 12 below,
+ * then "Spend by category · $1,780.00" with a bar per category, largest first.
  */
 export function BalancesTab({
   rows,
@@ -113,8 +114,8 @@ export function BalancesTab({
                 variant="balance"
                 leading={<MemberAvatar member={row.member} size={32} />}
                 title={
-                  <AppText variant="callout">
-                    <Strong>{row.isMe ? 'You' : row.member.name}</Strong>
+                  <AppText variant="callout" color={showAmount ? 'text' : 'textSecondary'}>
+                    <Strong color="text">{row.isMe ? 'You' : row.member.name}</Strong>
                     {verb}
                   </AppText>
                 }
@@ -130,12 +131,7 @@ export function BalancesTab({
       )}
       {onSettle !== null && (
         <View style={styles.settle}>
-          <Button
-            label="Settle up"
-            variant="secondary"
-            onPress={onSettle}
-            style={styles.settleButton}
-          />
+          <Button label="Settle up" variant="secondary" size="regular" onPress={onSettle} />
         </View>
       )}
       {categories.total > 0 && (
@@ -221,7 +217,6 @@ const styles = StyleSheet.create({
   empty: { paddingVertical: 40, paddingHorizontal: 24 },
   gutter: { marginHorizontal: layout.gutter },
   settle: { paddingTop: 12, paddingHorizontal: layout.gutter },
-  settleButton: { minHeight: 48, borderRadius: 24 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   device: { flexDirection: 'row', alignItems: 'center', gap: 3 },
 });

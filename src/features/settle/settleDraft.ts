@@ -13,7 +13,8 @@ export interface SettleStart {
 
 /**
  * Unknown or archived members are dropped; without a `from`, you pay; without a `to` (or with `to` equal to `from`),
- * the first other listed member is paid. `listed` is the pickable members, you first.
+ * nobody is chosen yet ("Choose", as Settle, extra states draws the sheet opened from Balances' "Settle up").
+ * `listed` is the pickable members, you first.
  */
 export function settleStart(
   params: { from?: string; to?: string; amount?: string },
@@ -24,7 +25,7 @@ export function settleStart(
     id !== undefined && listed.includes(id) ? id : null;
   const from = known(params.from) ?? (meId !== null && listed.includes(meId) ? meId : null);
   const asked = known(params.to);
-  const to = asked !== null && asked !== from ? asked : (listed.find((id) => id !== from) ?? null);
+  const to = asked !== null && asked !== from ? asked : null;
   const raw = params.amount === undefined ? NaN : Number(params.amount);
   const amount =
     Number.isSafeInteger(raw) && raw >= LIMITS.amountMin && raw <= LIMITS.amountMax ? raw : 0;

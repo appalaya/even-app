@@ -1,31 +1,20 @@
-import type { MemberState } from '@even/core';
 import { describe, expect, it } from 'vitest';
 
-import { isWaiting, netLabel, peopleLabel } from './cardLabels';
-
-const member = (over: Partial<MemberState> = {}): MemberState => ({
-  id: 'm',
-  name: 'Maya',
-  archived: false,
-  devices: [],
-  unknown: false,
-  color: 0,
-  initials: 'M',
-  ...over,
-});
+import { archivedLabel, isWaiting, netLabel, peopleLabel } from './cardLabels';
 
 describe('group card', () => {
   it('counts people as the board words it', () => {
-    expect(peopleLabel([member(), member(), member(), member()], false)).toBe('4 people');
-    expect(
-      peopleLabel(
-        Array.from({ length: 6 }, () => member()),
-        true,
-      ),
-    ).toBe('6 people · waiting to sync');
-    expect(
-      peopleLabel([member(), member({ archived: true }), member({ unknown: true })], false),
-    ).toBe('1 person');
+    expect(peopleLabel(4, false)).toBe('4 people');
+    expect(peopleLabel(6, true)).toBe('6 people · waiting to sync');
+    expect(peopleLabel(1, false)).toBe('1 person');
+    expect(peopleLabel(null, true)).toBe('waiting to sync');
+    expect(peopleLabel(null, false)).toBeNull();
+  });
+
+  it('words an archived card as drawn', () => {
+    expect(archivedLabel(4, 0, 'CAD', 'en-CA')).toBe('4 people · settled');
+    expect(archivedLabel(3, -1200, 'CAD', 'en-CA')).toBe('3 people · you owe $12.00');
+    expect(archivedLabel(3, null, 'CAD', 'en-CA')).toBe('3 people');
   });
 
   it('words the net', () => {

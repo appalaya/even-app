@@ -20,7 +20,8 @@ export type TextColor =
   | 'iconMuted'
   | 'accent'
   | 'onAccent'
-  | 'onAvatar';
+  | 'onAvatar'
+  | 'danger';
 
 export interface AppTextProps extends TextProps {
   /** A step of the canvas type scale (`src/theme/typography.ts`). Default `body` (17/22). */

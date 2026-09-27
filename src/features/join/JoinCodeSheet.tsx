@@ -7,10 +7,12 @@
  * - read: an outlined card 16 below (padding 16 18, gap 4): "Code complete" with a 13 pt check, "Join Banff 2026?"
  *   24/30 bold, "Canadian dollar · CAD" 15/20 `textSecondary`, the server host with a 13 pt lock 4 further down;
  *   then "Nothing is sent until you tap Join." 13/18 `textMuted` 10 below, inset 20; Join enabled;
- * - incomplete: the field ringed and "That code isn't complete. Copy it again." under it; Join disabled.
+ * - incomplete: the field ringed and "That code isn't complete. Copy it again." under it; Join disabled;
+ * - a newer version: "This invite needs a newer Even." and an Update button to the store (error-copy panel).
  * Join sits at the foot, inset 16.
  */
-import { Clipboard, StyleSheet, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Linking, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, Icon, Sheet, TextField } from '@/components';
@@ -19,7 +21,13 @@ import type { InvitePreview } from '@/state';
 import { useTheme } from '@/theme';
 
 export type CodeState =
-  { kind: 'empty' } | { kind: 'read'; invite: InvitePreview } | { kind: 'error'; message: string };
+  | { kind: 'empty' }
+  | { kind: 'read'; invite: InvitePreview }
+  /** `update`: the invite needs a newer Even; offer the store. */
+  | { kind: 'error'; message: string; update?: boolean };
+
+/** Where "Update" leads until the store listing exists: the landing page carries the store badges. */
+const UPDATE_URL = 'https://even.appalaya.com';
 
 export interface JoinCodeSheetProps {
   visible: boolean;
@@ -44,7 +52,7 @@ export function JoinCodeSheet({
 
   const paste = async () => {
     try {
-      const pasted = await Clipboard.getString();
+      const pasted = await Clipboard.getStringAsync();
       if (pasted.trim() !== '') onChangeText(pasted.trim());
     } catch {
       // Nothing to paste, or the user declined the paste prompt.
@@ -78,6 +86,16 @@ export function JoinCodeSheet({
         containerStyle={styles.field}
       />
       {state.kind === 'read' && <InviteCard invite={state.invite} />}
+      {state.kind === 'error' && state.update === true && (
+        <Button
+          label="Update"
+          variant="secondary"
+          size="compact"
+          fullWidth={false}
+          onPress={() => void Linking.openURL(UPDATE_URL)}
+          style={styles.update}
+        />
+      )}
       <View style={styles.flex} />
       <Button
         label="Join"
@@ -131,4 +149,5 @@ const styles = StyleSheet.create({
   host: { marginTop: 4 },
   note: { marginTop: 10, marginHorizontal: 20 },
   join: { marginHorizontal: 16 },
+  update: { alignSelf: 'flex-start', marginTop: 10, marginLeft: 46 },
 });

@@ -29,7 +29,7 @@ describe('split draft → spec', () => {
     const d = equalDraft(ALL);
     expect(draftToSpec(d, 3600)).toEqual({ ok: true, spec: { mode: 'equal', members: ALL } });
     expect(isEveryoneEqually(d, ALL)).toBe(true);
-    expect(summarize(d, 3600, 'CAD', ALL, 'en-US')).toEqual({
+    expect(summarize(d, 3600, 'CAD', ALL, { locale: 'en-US' })).toEqual({
       label: 'Everyone, equally',
       detail: '$9.00 each',
     });
@@ -53,7 +53,26 @@ describe('split draft → spec', () => {
     expect(sharesLine(d, 9600, 'CAD', 'en-US')).toBe(
       '$12.00 in extras first, then $84.00 split 2 : 1 : 1 : 1.',
     );
-    expect(summarize(d, 9600, 'CAD', ALL, 'en-US')).toEqual({ label: 'By shares', detail: null });
+    const names: Record<string, string> = {
+      you: 'You',
+      maya: 'Maya',
+      jordan: 'Jordan',
+      nathan: 'Nathan',
+    };
+    const nameOf = (id: string) => names[id] ?? id;
+    // Split, extra states: "Maya ×2, Nathan +$12.00", no per-person figure.
+    expect(summarize(d, 9600, 'CAD', ALL, { nameOf, locale: 'en-US' })).toEqual({
+      label: 'Maya ×2, Nathan +$12.00',
+      detail: null,
+    });
+    // Two named at most, then "+ N more"; "3 of 4 · " in front when someone is also left out.
+    const more = setWeight(setExtra(d, JORDAN, 300), YOU, 3);
+    expect(summarize(more, 9600, 'CAD', ALL, { nameOf, locale: 'en-US' }).label).toBe(
+      'You ×3, Maya ×2 + 2 more',
+    );
+    expect(
+      summarize(toggleMember(d, JORDAN), 9600, 'CAD', ALL, { nameOf, locale: 'en-US' }).label,
+    ).toBe('3 of 4 · Maya ×2, Nathan +$12.00');
   });
 
   it('writes the ratio largest share first, as the board does', () => {
@@ -189,15 +208,18 @@ describe('stored split → draft', () => {
 describe('labels', () => {
   it('summarises a subset, exact and percent splits', () => {
     const subset = toggleMember(equalDraft(ALL), NATHAN);
-    expect(summarize(subset, 3600, 'CAD', ALL, 'en-US')).toEqual({
-      label: '3 people, equally',
+    // Split, extra states: "3 of 4, equally · $12.00 each".
+    expect(summarize(subset, 3600, 'CAD', ALL, { locale: 'en-US' })).toEqual({
+      label: '3 of 4, equally',
       detail: '$12.00 each',
     });
     expect(
-      summarize(switchMode(subset, 'exact', 3600, SEED), 3600, 'CAD', ALL, 'en-US').label,
+      summarize(switchMode(subset, 'exact', 3600, SEED), 3600, 'CAD', ALL, { locale: 'en-US' })
+        .label,
     ).toBe('Exact amounts');
     expect(
-      summarize(switchMode(subset, 'percent', 3600, SEED), 3600, 'CAD', ALL, 'en-US').label,
+      summarize(switchMode(subset, 'percent', 3600, SEED), 3600, 'CAD', ALL, { locale: 'en-US' })
+        .label,
     ).toBe('By percent');
   });
 

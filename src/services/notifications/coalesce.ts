@@ -90,10 +90,28 @@ export interface LedgerEntry {
 
 export type Ledger = Record<string, LedgerEntry>;
 
-/** Where the ledger lives: a small JSON file on the device (see local.ts), a Map in tests. */
+/** Where the ledger lives: the store's `prefs` table (`prefsLedger`), a Map in tests. */
 export interface LedgerStore {
   read(): Promise<Ledger>;
   write(ledger: Ledger): Promise<void>;
+}
+
+/**
+ * The ledger as one `prefs` row (`notifications.ledger`), JSON. Local, never synced; it holds local group ids and
+ * counts only. An empty ledger clears the row.
+ */
+export function prefsLedger(prefs: {
+  getPref(key: 'notifications.ledger'): Promise<string | null>;
+  setPref(key: 'notifications.ledger', value: string | null): Promise<void>;
+}): LedgerStore {
+  return {
+    read: async () => parseLedger(await prefs.getPref('notifications.ledger')),
+    write: async (ledger) =>
+      prefs.setPref(
+        'notifications.ledger',
+        Object.keys(ledger).length === 0 ? null : JSON.stringify(ledger),
+      ),
+  };
 }
 
 /** Parses the stored ledger; anything malformed reads as empty (the worst case is one notification too few). */

@@ -1,19 +1,35 @@
 /**
- * What a group card on Groups says (Main board), as pure functions: "4 people", "6 people · waiting to sync", and
- * the net ("you owe" / "you're owed" over the amount, or "settled").
+ * What a group card on Groups says (Main board; Groups, extra states: Archived, expanded), as pure functions:
+ * "4 people", "6 people · waiting to sync", the net ("you owe" / "you're owed" over the amount, or "settled"), and
+ * an archived card's one line ("4 people · settled").
  */
-import type { MemberState } from '@even/core';
+import { formatMinor } from '@even/core';
 
-/** "4 people" (the board); one member reads "1 person". Archived and placeholder members are not counted. */
-export function peopleLabel(
-  members: Iterable<MemberState> | null,
-  waiting: boolean,
-): string | null {
-  if (members === null) return waiting ? 'waiting to sync' : null;
-  let count = 0;
-  for (const member of members) if (!member.archived && !member.unknown) count += 1;
+/**
+ * "4 people" (the board); one member reads "1 person". `count` is the row's member count (archived and placeholder
+ * members are not counted); null while the group's log is not readable yet.
+ */
+export function peopleLabel(count: number | null, waiting: boolean): string | null {
+  if (count === null) return waiting ? 'waiting to sync' : null;
   const people = `${count} ${count === 1 ? 'person' : 'people'}`;
   return waiting ? `${people} · waiting to sync` : people;
+}
+
+/** An archived card's line: "4 people · settled" (as drawn), or the net when one is left. */
+export function archivedLabel(
+  count: number | null,
+  myNet: number | null,
+  currency: string | null,
+  locale?: string,
+): string | null {
+  const people = peopleLabel(count, false);
+  const net = netLabel(myNet, currency);
+  if (net === null || currency === null) return people;
+  const words =
+    net.kind === 'settled'
+      ? 'settled'
+      : `${net.caption} ${formatMinor(net.amount, currency, locale)}`;
+  return people === null ? words : `${people} · ${words}`;
 }
 
 export type NetLabel =

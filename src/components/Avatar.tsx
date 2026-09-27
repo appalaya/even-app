@@ -7,7 +7,7 @@ import { AppText } from './AppText';
 import { Icon } from './Icon';
 
 export interface AvatarProps {
-  /** Diameter as drawn: 24, 26, 28, 30, 32, 36 or 72. */
+  /** Diameter as drawn: 24, 26, 28, 30, 32, 36, 56 or 72. */
   size: AvatarSize;
   /** The member's name: initials come from core `initialsOf` when `initials` is absent. */
   name?: string;
@@ -23,8 +23,9 @@ export interface AvatarProps {
    */
   outlined?: boolean;
   /** What the avatar sits on, which picks an emoji avatar's backdrop: `separator` on surface, `separatorInset`
-   * on a fill or inset list, `surface` on a fill card (the 72 pt avatar under Create). Default `surface`. */
-  on?: 'surface' | 'inset' | 'fill';
+   * on a fill or inset list, `surface` on a fill card (the 72 pt avatar under Create), `avatarOnChip` inside a
+   * toggle chip (RegenerateInvite). Default `surface`. */
+  on?: 'surface' | 'inset' | 'fill' | 'chip';
   /** Opaque colour behind an outlined avatar, so it covers the one it overlaps in a stack. */
   backdrop?: string;
   /** A 2 pt ring in the container colour, separating stacked avatars. */
@@ -64,7 +65,13 @@ export function Avatar({
   const glyphs = avatarType[size];
 
   const emojiBackdrop =
-    on === 'surface' ? tokens.separator : on === 'inset' ? tokens.separatorInset : tokens.surface;
+    on === 'surface'
+      ? tokens.separator
+      : on === 'inset'
+        ? tokens.separatorInset
+        : on === 'chip'
+          ? tokens.avatarOnChip
+          : tokens.surface;
   const background = outlined
     ? (backdrop ?? 'transparent')
     : emoji !== undefined

@@ -13,6 +13,7 @@ describe('join invite helpers', () => {
 
   it('words the checksum problem as the board does', () => {
     expect(problemMessage('checksum')).toBe("That code isn't complete. Copy it again.");
+    expect(problemMessage('version')).toBe('This invite needs a newer Even.');
   });
 
   it('words the move and recovery confirmations', () => {

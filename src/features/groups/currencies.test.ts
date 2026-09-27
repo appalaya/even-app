@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest';
 import {
   COMMON_CURRENCIES,
   currencyName,
+  currencySections,
   REGION_CURRENCY,
   defaultCurrency,
   matchesCurrency,
-  orderedCurrencies,
   regionOf,
 } from './currencies';
 import { CURRENCY_NAMES_EN } from './currencyNames';
@@ -31,14 +31,23 @@ describe('currencies', () => {
     expect(currencyName('EUR', 'en')).toBe('Euro');
   });
 
-  it('lists every accepted code once, the device currency and the common ones first', () => {
-    const list = orderedCurrencies('CAD');
-    expect(list[0]).toBe('CAD');
-    expect(list.slice(1, COMMON_CURRENCIES.length)).toEqual(
-      COMMON_CURRENCIES.filter((c) => c !== 'CAD'),
-    );
+  it('lists Common as drawn (the region currency leads), then every other code A–Z, each once', () => {
+    const { common, all } = currencySections('CAD');
+    expect(common).toEqual(['CAD', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'MXN', 'INR']);
+    // The board draws AED, AFN, ALL, AMD, ARS; core's ISO table also carries ANG and AOA between them.
+    expect(all.slice(0, 7)).toEqual(['AED', 'AFN', 'ALL', 'AMD', 'ANG', 'AOA', 'ARS']);
+    const list = [...common, ...all];
     expect(new Set(list).size).toBe(list.length);
     expect([...list].sort()).toEqual(Object.keys(CURRENCY_EXPONENTS).sort());
+    expect(currencySections('USD').common).toEqual([
+      'USD',
+      'EUR',
+      'GBP',
+      'JPY',
+      'AUD',
+      'MXN',
+      'INR',
+    ]);
   });
 
   it('has an English name for every accepted code', () => {

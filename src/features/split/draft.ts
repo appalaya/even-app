@@ -272,16 +272,27 @@ export interface SplitSummary {
   detail: string | null;
 }
 
+/** How many named differences the Split row spells out before "+ N more" (Split, extra states). */
+const NAMED_DIFFERENCES = 2;
+
 /**
- * The Split row on Add expense. The canvas draws "Everyone, equally · $9.00 each" only; the other labels are this
- * module's (see the stack C report): "3 people, equally", "By shares", "Exact amounts", "By percent".
+ * The Split row on Add expense, worded as the Split, extra states board lists it:
+ * - Equal, everyone in: "Everyone, equally" · "$9.00 each";
+ * - Equal, someone left out: "3 of 4, equally" · "$12.00 each";
+ * - Equal with shares or extras: who differs, two at most, then "+ 2 more" ("Maya ×2, Nathan +$12.00"), with
+ *   "3 of 4 · " in front when someone is also left out; no per-person figure;
+ * - Exact: "Exact amounts"; Percent: "By percent".
+ * `nameOf` words a member as the sheet does ("You", "Maya").
  */
 export function summarize(
   d: SplitDraft,
   amount: number,
   currency: string,
   activeMembers: readonly string[],
-  locale?: string,
+  {
+    nameOf = (id: string) => id,
+    locale,
+  }: { nameOf?: (memberId: string) => string; locale?: string } = {},
 ): SplitSummary {
   const ids = includedIds(d);
   const each = (): string | null =>
@@ -290,13 +301,27 @@ export function summarize(
       : `${formatMinor(Math.floor(Math.max(0, amount) / ids.length), currency, locale)} each`;
   if (d.mode === 'exact') return { label: 'Exact amounts', detail: null };
   if (d.mode === 'percent') return { label: 'By percent', detail: null };
-  const plain = ids.every((id) => weightOf(d, id) === 1 && extraOf(d, id) === 0);
-  if (!plain) return { label: 'By shares', detail: null };
-  if (isEveryoneEqually(d, activeMembers)) return { label: 'Everyone, equally', detail: each() };
-  return {
-    label: `${ids.length} ${ids.length === 1 ? 'person' : 'people'}, equally`,
-    detail: each(),
-  };
+  const everyone = isEveryoneIncluded(d, activeMembers);
+  const of = `${ids.length} of ${Math.max(activeMembers.length, ids.length)}`;
+  const differs = ids.filter((id) => weightOf(d, id) !== 1 || extraOf(d, id) > 0);
+  if (differs.length === 0) {
+    return { label: everyone ? 'Everyone, equally' : `${of}, equally`, detail: each() };
+  }
+  const named = differs.slice(0, NAMED_DIFFERENCES).map((id) => {
+    const parts = [nameOf(id)];
+    if (weightOf(d, id) !== 1) parts.push(`×${weightOf(d, id)}`);
+    if (extraOf(d, id) > 0) parts.push(`+${formatMinor(extraOf(d, id), currency, locale)}`);
+    return parts.join(' ');
+  });
+  const more = differs.length - named.length;
+  const list = `${named.join(', ')}${more > 0 ? ` + ${more} more` : ''}`;
+  return { label: everyone ? list : `${of} · ${list}`, detail: null };
+}
+
+/** Every listed active member is included (whatever their shares). */
+function isEveryoneIncluded(d: SplitDraft, activeMembers: readonly string[]): boolean {
+  const ids = includedIds(d);
+  return ids.length === activeMembers.length && activeMembers.every((id) => isIncluded(d, id));
 }
 
 /**

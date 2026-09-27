@@ -143,11 +143,22 @@ export function flagOf(state: GroupState, expenseId: string): FlaggedItem | null
   return state.flagged.find((f) => f.kind === 'expense' && f.id === expenseId) ?? null;
 }
 
-/** The flagged board's banner copy; the currency case is not drawn and follows the same sentence. */
-export function flagMessage(flag: FlaggedItem): string {
-  return flag.reason === 'currency_mismatch'
-    ? "This entry's currency isn't the group's and is left out of balances"
-    : "This entry's split doesn't add up and is left out of balances";
+/**
+ * The banner's copy: the flagged board's "This entry's split doesn't add up and is left out of balances", and for a
+ * currency that is not the group's the Group screen copy board's "This entry is in USD, not CAD, and is left out of
+ * balances."
+ */
+export function flagMessage(
+  flag: FlaggedItem,
+  expenseCurrency?: string,
+  groupCurrency?: string | null,
+): string {
+  if (flag.reason === 'currency_mismatch') {
+    return expenseCurrency !== undefined && groupCurrency != null
+      ? `This entry is in ${expenseCurrency}, not ${groupCurrency}, and is left out of balances.`
+      : "This entry's currency isn't the group's and is left out of balances.";
+  }
+  return "This entry's split doesn't add up and is left out of balances";
 }
 
 /** "Shares add up to $94.00, not $96.00" (flagged board), for a split that does not sum to the amount. */

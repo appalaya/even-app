@@ -40,27 +40,10 @@ export const REGION_CURRENCY: Readonly<Record<string, string>> = Object.freeze(
 const FALLBACK = 'USD';
 
 /**
- * Shown first in the picker, after the device's own currency: the currencies most groups travel in. The rest follow
- * alphabetically by code.
+ * The picker's "Common" section after the device's own currency, in the order the currency picker board draws it
+ * (Groups, create and join, extra states: CAD, then USD, EUR, GBP, JPY, AUD, MXN, INR).
  */
-export const COMMON_CURRENCIES = [
-  'USD',
-  'EUR',
-  'GBP',
-  'CAD',
-  'AUD',
-  'NZD',
-  'JPY',
-  'CHF',
-  'MXN',
-  'INR',
-  'CNY',
-  'SGD',
-  'HKD',
-  'SEK',
-  'NOK',
-  'DKK',
-] as const;
+export const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'MXN', 'INR'] as const;
 
 /** The region in a BCP 47 tag ("en-CA" → "CA", "zh-Hant-TW" → "TW"), or null. */
 export function regionOf(locale: string): string | null {
@@ -108,15 +91,20 @@ export function currencyName(code: string, locale?: string): string {
   return CURRENCY_NAMES_EN[code] ?? code;
 }
 
-/** Every accepted code: `first` (the device's), then the common ones, then the rest by code. */
-export function orderedCurrencies(first?: string): string[] {
-  const all = Object.keys(CURRENCY_EXPONENTS).sort();
-  const head = [
+/**
+ * The picker's two sections: "Common" (the device's currency, then the common ones) and "All currencies" (every other
+ * accepted code, A–Z). Every code appears once.
+ */
+export function currencySections(first?: string): { common: string[]; all: string[] } {
+  const common = [
     ...(first !== undefined && isCurrency(first) ? [first] : []),
     ...COMMON_CURRENCIES.filter((code) => code !== first),
   ];
-  const seen = new Set(head);
-  return [...head, ...all.filter((code) => !seen.has(code))];
+  const seen = new Set<string>(common);
+  const all = Object.keys(CURRENCY_EXPONENTS)
+    .sort()
+    .filter((code) => !seen.has(code));
+  return { common, all };
 }
 
 /** Picker search: a code prefix ("ca" → CAD) or any word of the name ("dollar", "yen"), case-insensitive. */

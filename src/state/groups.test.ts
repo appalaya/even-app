@@ -134,6 +134,35 @@ async function twoDevices(w: World) {
 
 describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
   describe('create', () => {
+    it('keeps the member ids the sheet chose, so a previewed avatar colour is the real one', async () => {
+      const w = await setup(kind);
+      const a = await w.device('A');
+      const [me, nathan] = [newId(), newId()];
+      const { localId, memberId } = await g(a).createGroup({
+        name: 'Banff 2026',
+        currency: 'CAD',
+        myName: 'Sam',
+        myId: me,
+        people: [{ name: 'Nathan', id: nathan }, 'Maya'],
+        serverUrl: SERVER,
+      });
+      expect(memberId).toBe(me);
+      const members = (await derived(a, localId)).state.members;
+      expect(members.get(nathan)?.name).toBe('Nathan');
+      expect([...members.values()].map((m) => m.name).sort()).toEqual(['Maya', 'Nathan', 'Sam']);
+      await rejectsWith(
+        g(a).createGroup({
+          name: 'Twice',
+          currency: 'CAD',
+          myName: 'Sam',
+          myId: nathan,
+          people: [{ name: 'Nathan', id: nathan }],
+          serverUrl: SERVER,
+        }),
+        'invalid',
+      );
+    });
+
     it("writes the creator's member.added, member.claimed, group.created, then the pre-added members", async () => {
       const w = await setup(kind);
       const a = await w.device('A');
@@ -472,6 +501,11 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         name: 'Sam',
         emoji: '🐻',
       });
+
+      // Add member previews the new member's avatar colour: the id is chosen first and kept.
+      const preset = newId();
+      expect(await g(a).addMember(localId, 'Alex', undefined, { id: preset })).toBe(preset);
+      await rejectsWith(g(a).addMember(localId, 'Alexa', undefined, { id: preset }), 'invalid');
 
       // An archived name is free again; unarchiving the old one would collide and is refused.
       await g(a).archiveMember(localId, priya);
@@ -1214,6 +1248,27 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
         { localId: first, serverUrl: SERVER },
         { localId: second, serverUrl: OTHER_SERVER },
       ]);
+    });
+  });
+
+  describe('checking a server', () => {
+    it('reads /v1/info for Move server and Create, and words what is wrong', async () => {
+      const w = await setup(kind);
+      const { a, localId } = await twoDevices(w);
+      const good = await g(a).checkServer('HTTPS://Other.test/', localId);
+      expect(good).toMatchObject({ ok: true, serverUrl: OTHER_SERVER });
+      if (!good.ok) throw new Error('unreachable');
+      expect(good.info.limits.max_group_events).toBe(10_000);
+      expect(good.usage?.events).toBe((await a.store.dump(localId)).length);
+      expect(await g(a).checkServer('http://other.test')).toEqual({
+        ok: false,
+        problem: 'invalid_url',
+      });
+      w.server('https://never.test').offline = true;
+      expect(await g(a).checkServer('https://never.test')).toEqual({
+        ok: false,
+        problem: 'unreachable',
+      });
     });
   });
 

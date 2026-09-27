@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import { notSyncedLabel, type StatusLineProps } from '@/components';
+import { askForNotificationsOnce, clearActivityNotification } from '@/services/notifications/local';
 import { useApp, useSyncStatus, type GroupSnapshot, type InviteInfo } from '@/state';
 
 import { staleSince, syncedLabel } from './format';
@@ -92,18 +93,19 @@ export function useStatusLine(localId: string): StatusLineProps | null {
 
 /**
  * Sync triggers the Group screen owns: pull to refresh, and the app returning to the foreground while it is open
- * (the engine shares a running cycle, so the provider's app-wide foreground sync costs nothing extra).
+ * (`GroupService.sync(…, 'foreground')`; the engine shares a running cycle, so the provider's app-wide foreground sync
+ * costs nothing extra).
  */
 export function useGroupSync(localId: string): { refreshing: boolean; onRefresh: () => void } {
-  const { groups, engine } = useApp();
+  const { groups } = useApp();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void engine.syncGroup(localId, { trigger: 'foreground' });
+      if (state === 'active') void groups.sync(localId, 'foreground');
     });
     return () => subscription.remove();
-  }, [engine, localId]);
+  }, [groups, localId]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -133,4 +135,24 @@ export function useInvite(localId: string, ready: boolean, enabled: boolean): In
     };
   }, [groups, localId, ready, enabled]);
   return enabled ? invite : null;
+}
+
+/**
+ * Notifications, from the group screen (design.md "Background refresh"): while the group is on screen its activity
+ * notification is cleared (it has been seen); and the first time a group with more than one member is opened, the
+ * permission is asked for, once per install (`askForNotificationsOnce` remembers it in `prefs`).
+ */
+export function useGroupNotifications(localId: string, memberCount: number | null): void {
+  const services = useApp();
+  const asked = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      void clearActivityNotification(localId, services).catch(() => undefined);
+    }, [localId, services]),
+  );
+  useEffect(() => {
+    if (asked.current || memberCount === null || memberCount < 2) return;
+    asked.current = true;
+    void askForNotificationsOnce(services).catch(() => undefined);
+  }, [memberCount, services]);
 }

@@ -1,24 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { Sheet, SheetHeader, TextField } from '@/components';
+import { AppText, Sheet, SheetHeader, TextField } from '@/components';
 
 export interface PromptSheetProps {
   visible: boolean;
-  /** The centred title ("Rename", "Add member", "Move to another server"). */
+  /** The centred title ("Rename group", "Rename"). */
   title: string;
-  /** The header's trailing action ("Save", "Add", "Move"). */
+  /** The header's trailing action ("Save"). */
   submitLabel: string;
   /** The field's text each time the sheet opens. */
   initialValue: string;
-  placeholder: string;
+  placeholder?: string;
+  /** `large` (52, 20/25 semibold: a group name) or `row` (48, 17/22: a member's name). */
+  variant?: 'large' | 'row';
+  /** The caption under the field ("Everyone in the group sees the new name. Up to 80 characters."). */
+  hint?: string;
+  /** Longest input, in characters. */
+  maxLength?: number;
   /** The line under the field, as the States board draws a name already taken. */
   error?: string;
   /** The action is running: the field and the action wait. */
   busy?: boolean;
-  keyboard?: 'name' | 'url';
-  /** Development screenshots: submit the initial value as soon as the sheet opens. */
-  submitOnOpen?: boolean;
+  /** Development screenshots: text already typed over `initialValue` (Save compares against `initialValue`). */
+  draft?: string;
   /** The text changed (clears a stale error). */
   onEdit?: () => void;
   onSubmit: (value: string) => void;
@@ -26,9 +31,10 @@ export interface PromptSheetProps {
 }
 
 /**
- * One text field in a sheet: Cancel · title · action in the header (as Add expense, Split and the emoji picker draw
- * theirs), then the 48 pt field of the States board with its error line. Content-sized, above the keyboard. Used
- * for Rename, Add member and Move to another server, which no board draws.
+ * One text field in a sheet (Group settings, extra states: "Rename group"): Cancel · title · Save in the header,
+ * then the field 12 below (a 2 pt accent ring while typing) and its caption 8 below; content-sized, 12 above the
+ * keyboard. Save turns on once the text changes and is not empty. A member's rename uses the same sheet with the
+ * 48 pt field.
  */
 export function PromptSheet({ visible, onDismiss, title, ...body }: PromptSheetProps) {
   return (
@@ -44,37 +50,33 @@ function PromptBody({
   submitLabel,
   initialValue,
   placeholder,
+  variant = 'large',
+  hint,
+  maxLength,
   error,
   busy = false,
-  keyboard = 'name',
-  submitOnOpen = false,
+  draft,
   onEdit,
   onSubmit,
   onDismiss,
 }: Omit<PromptSheetProps, 'visible'>) {
-  const [value, setValue] = useState(initialValue);
-  const empty = value.trim() === '';
+  const [value, setValue] = useState(draft ?? initialValue);
+  const clean = value.trim();
+  const off = clean === '' || clean === initialValue.trim() || busy;
   const submit = () => {
-    if (!empty && !busy) onSubmit(value);
+    if (!off) onSubmit(value);
   };
-
-  useEffect(() => {
-    if (submitOnOpen && initialValue.trim() !== '') onSubmit(initialValue);
-    // Once, when the sheet opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   return (
     <>
       <SheetHeader
         leftAction={{ label: 'Cancel', onPress: onDismiss }}
-        rightAction={{ label: submitLabel, onPress: submit, disabled: empty || busy }}
+        rightAction={{ label: submitLabel, onPress: submit, disabled: off }}
         navTitle={title}
-        navTitleInset={100}
       />
       <View style={styles.body}>
         <TextField
-          variant="row"
+          variant={variant}
           value={value}
           onChangeText={(text) => {
             setValue(text);
@@ -85,18 +87,23 @@ function PromptBody({
           error={error}
           editable={!busy}
           autoFocus
-          selectTextOnFocus={keyboard === 'name'}
+          maxLength={maxLength}
           autoCorrect={false}
-          autoCapitalize={keyboard === 'url' ? 'none' : 'words'}
-          keyboardType={keyboard === 'url' ? 'url' : 'default'}
+          autoCapitalize="words"
           returnKeyType="done"
           onSubmitEditing={submit}
         />
+        {hint !== undefined && (
+          <AppText variant="caption" color="textMuted" style={styles.hint}>
+            {hint}
+          </AppText>
+        )}
       </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  body: { paddingTop: 8, paddingHorizontal: 16 },
+  body: { paddingTop: 12, paddingHorizontal: 16 },
+  hint: { marginTop: 8, marginHorizontal: 4 },
 });

@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   clockTime,
-  clockTimeLower,
-  dateTimeLower,
+  dateTime,
   dayLabel,
   deviceShort,
   isoDateLabel,
@@ -16,10 +15,11 @@ const at = (d: number, hh: number, mm: number) => new Date(2026, 8, d, hh, mm).g
 const plain = (text: string) => text.replace(/ /g, ' ');
 
 describe('group formats', () => {
-  it('words times as each board does', () => {
+  it('words times in the device locale, as every board now does ("9:14 PM")', () => {
     expect(plain(clockTime(at(26, 9, 50), 'en-US'))).toBe('9:50 AM');
-    expect(plain(clockTimeLower(at(20, 21, 14), 'en-US'))).toBe('9:14 pm');
-    expect(plain(dateTimeLower(at(20, 21, 14), NOW, 'en-US'))).toBe('Sep 20, 9:14 pm');
+    expect(plain(clockTime(at(20, 21, 14), 'en-US'))).toBe('9:14 PM');
+    expect(plain(dateTime(at(20, 21, 14), NOW, 'en-US'))).toBe('Sep 20, 9:14 PM');
+    expect(plain(clockTime(at(20, 21, 14), 'en-GB'))).toBe('21:14');
     expect(isoDateLabel('2026-09-20', NOW, 'en-US')).toBe('Sep 20');
     expect(isoDateLabel('2025-09-20', NOW, 'en-US')).toBe('Sep 20, 2025');
   });
@@ -33,9 +33,9 @@ describe('group formats', () => {
   it('words the status line', () => {
     expect(syncedLabel(NOW - 20_000, NOW)).toBe('Synced just now');
     expect(syncedLabel(NOW - 2 * 60_000, NOW)).toBe('Synced 2 min ago');
-    expect(plain(syncedLabel(at(26, 10, 5), NOW, 'en-US'))).toBe('Synced at 10:05 am');
+    expect(plain(syncedLabel(at(26, 10, 5), NOW, 'en-US'))).toBe('Synced at 10:05 AM');
     expect(syncedLabel(at(24, 10, 5), NOW, 'en-US')).toBe('Synced Sep 24');
-    expect(plain(staleSince(at(26, 14, 10), NOW, 'en-US'))).toBe('2:10 pm');
+    expect(plain(staleSince(at(26, 14, 10), NOW, 'en-US'))).toBe('2:10 PM');
   });
 
   it('shortens a device id', () => {

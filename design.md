@@ -70,13 +70,14 @@ There are no accounts. Four ids exist:
 | **Local group id** | Global | 43-char, derived from the secret | SQLite key | Server-independent identity of the group on this phone. |
 | **Server group id** | One server | 43-char, derived from secret + server origin | computed on demand | The id in URLs. Different on every server. |
 
-A device *claims* a member id when it joins ("Which one are you?"). The claim
+A device *claims* a member id when it joins ("Which name is yours?"). The claim
 is stored locally in `groups.my_member_id`, stamped as `by` on events, and
 also written to the log as `member.claimed`, so every phone knows which
 members have joined and from how many devices. Two devices may claim the same
 member (phone plus tablet). The join screen shows "joined" next to claimed
-names, and tapping one asks "Is that you on another phone, or are you a
-different Maya?"; the second answer adds a new member with a different name.
+names, and tapping one asks "Is that you on another phone, or a different Maya?"
+("It's me" / "Different Maya"); the second answer adds a new member with a
+different name.
 The activity feed shows the device id's short form next to the member name,
 so the group can see that "Maya" is posting from two places.
 
@@ -253,7 +254,8 @@ rewrites history, and the reducer never needs to know how a split was chosen.
 | parking | 🅿️ | | |
 | rental | 🚗 | | |
 
-The same file holds a keyword table (`parking`, `parkade`, `meter` → parking;
+The picker labels each category with its capitalised key ("Rental", as the
+category picker board draws it). The same file holds a keyword table (`parking`, `parkade`, `meter` → parking;
 `uber`, `lyft`, `taxi`, `cab`, `bus`, `train`, `gondola` → transit; `gas`,
 `fuel`, `petrol`, `shell`, `esso` → fuel; `hotel`, `airbnb`, `motel`, `hostel`,
 `lodge` → lodging; `dinner`, `lunch`, `breakfast`, `pizza`, `sushi`, …).
@@ -295,8 +297,10 @@ overwriting a choice the user has made:
 - Tapping Save freezes the chip; the event carries whatever it shows.
 - A keyword-inferred chip carries no tag (as drawn on the AddExpense board).
   When the model changes the chip, the swap animates and the chip shows a
-  "suggested" tag briefly, so a change the user did not make is never
-  invisible. A user-chosen chip never shows the tag.
+  "suggested" tag briefly (about 1.5 s; a keystroke or a tap takes it away
+  sooner), so a change the user did not make is never invisible. A
+  user-chosen chip never shows the tag. With no title yet (and nothing
+  chosen) the chip is the dashed "Category" placeholder.
 
 Replies and taps are both handled on the JavaScript thread in arrival order,
 so there is no window in which a user tap can be lost.
@@ -844,7 +848,8 @@ takedown is a server-side blocklist, not a client action.
   or debt starts after).
   Closed, hidden, and blocked groups are never touched.
 - After the cycle, for each new `ok` event authored by **another device** since
-  the last notification, schedule a local notification through
+  the last notification (the `prefs` row `notifications.ledger`: local ids
+  and counts only), schedule a local notification through
   `expo-notifications`: title is the group name, body is the activity summary
   ("Maya added Dinner · 90.00"). Coalesce multiple events per group into one
   notification ("3 new in Banff 2026").
@@ -852,7 +857,7 @@ takedown is a server-side blocklist, not a client action.
   idle or charging, and never after the user force-quits the app. Android has
   a 15-minute floor. The Notifications row in App settings carries the sentence "Your phone decides when Even can check for updates in the background." This is verified on a real
   device before the claim goes into store copy.
-- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member, with one sentence explaining what it is for.
+- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member (once per install; the `prefs` row `notifications.asked` remembers it), with one sentence explaining what it is for.
 
 ## Invites
 
@@ -877,7 +882,7 @@ checksum, and canonicalises the server URL.
   code isn't complete. Copy it again."
 - **Join screen**: shows the group name and currency from the invite (or "a
   group" if absent), the server host, and Join. On join: store the secret,
-  create the `groups` row, pull, then show "Which one are you?" from the
+  create the `groups` row, pull, then show "Which name is yours?" from the
   member list, each with its avatar and a "joined" mark if already claimed,
   with "I'm not listed" to add a member (prefilled from `prefs`). Picking a
   name writes `member.claimed`. If the server is
@@ -886,9 +891,10 @@ checksum, and canonicalises the server URL.
 - **Already have it**: an invite whose `localId` matches a local group and
   whose server differs is treated as a move (above), with confirmation, not as
   a duplicate.
-- **Create**: name, currency, your name and avatar, an optional "People"
-  section to pre-add names (chips; they pick their name when they join), and
-  an "Advanced: sync server" field that defaults to
+- **Create**: name, currency, an optional "People" section to pre-add names
+  (chips; they pick their name when they join), then your name and avatar
+  ("You in this group", after People, as drawn), and an "Advanced: sync
+  server" field that defaults to
   `https://sync.even.appalaya.com`, which is where a self-hoster points a new
   group at their own server. The create flow writes the creator's
   `member.added` and `member.claimed`, then `group.created`, then one
@@ -972,11 +978,13 @@ Deviating from the canvas in implementation is a no-go.
   tokens they follow themes with no change.
 - **Groups**: cards with name, your net ("you're owed 44.00" / "you owe 12.00"
   / "settled"), sync dot. Create, Join with code, and Import group file live
-  here. Empty state: two buttons, Create and Join, and one sentence: "A group
-  is a link. Share it and you're in." Archived groups sit in a collapsed
-  Archived section at the bottom.
-- **Group**: big number at top (your net), the simplified settle list under
-  it, the done-adding row (at most five avatars, not-done first then done,
+  here. Empty state: the mark and its circles, Create and Join, and the
+  tagline; no explanatory sentence (as drawn). Archived groups sit in a
+  collapsed Archived section at the bottom; opened, they are greyed outline
+  cards with Unarchive.
+- **Group**: big number at top (your net), under it the simplified settle
+  list's transfers that involve you, in both directions ("You pay Maya",
+  "Nathan pays you"), the done-adding row (at most five avatars, not-done first then done,
   then a "+N" chip, with "7 of 12 done adding"; tapping opens a sheet listing
   everyone's status), then a segmented list: Expenses, Balances (per-member nets, then spend
   by category with the trip total in the header and each row showing amount
@@ -986,34 +994,55 @@ Deviating from the canvas in implementation is a no-go.
   that toggles your own mark; when `allDone` it reads "Everyone's done".
   Even state: at a zero net the big number reads "You're even"; with an empty
   settle list it reads "Everyone's settled" and offers to archive the group.
+  On Balances a settled member reads "Nathan is settled" (no amount, last).
   Banners, when relevant: unreadable entries, update required, group closed,
-  group moved, group archived. An archived group is read-only, and its banner
-  carries Unarchive.
+  group moved, two members with one name, group archived. An archived group is
+  read-only, and its banner carries Unarchive; a closed one greys its number and
+  settle list ("Read-only. Record payments in the new group once you have its
+  invite.") and has no Add expense. The header scrolls away on Balances and
+  Activity (the segmented control sticks under the nav bar). Share is hidden
+  while the new group's invite card shows and in a read-only group. Times read
+  in the device locale's format ("9:14 PM").
 - **Add expense**: amount keypad-first, title with the inferred category
   emoji appearing beside it as you type, paid-by chip (defaults to you), split
-  row (defaults to "Everyone, equally"). Two required fields. Save is
+  row (defaults to "Everyone, equally"). Two required fields. Opened fresh it
+  reads "$0" and the chip is a dashed "Category"; editing, the title reads
+  "Edit expense" and Save "Save changes"; typing the title hides the keypad
+  and shrinks the amount to one line; a failed save says so just above Save;
+  Paid by and the date open small sheets (the date sheet has Today and
+  Yesterday). Save is
   one tap with haptic feedback. Advanced split is a push, not a modal in a
   modal. Archived members already on the expense stay visible in the editor.
 - **Split** (pushed from Add expense): segmented Equal · Exact · Percent. In
   Equal each member row has an optional "×n" multiplier and an optional
   "+ extra" amount, under one line: "Extras come off the top; the rest splits
-  by share."
+  by share." Over-assigned Exact and Percent read "Over by $6.00" / "Over by
+  5%" (never red) and Done stays off; at zero the caption goes.
 - **Expense detail**: the facts, the split, who added it and when, edit and
   delete, and a History section listing every version with who changed what;
   any version can be restored in one tap.
-- **Settle**: from → to → amount, prefilled from the tapped settle-list row.
+- **Settle**: from → to → amount, prefilled from the tapped settle-list row;
+  from Balances' "Settle up" it starts empty (you pay, "Choose" whom). From
+  and To open the member sheet; recorded, the button reads "✓ Recorded" for
+  0.8 s, then the sheet closes.
 - **App settings** (gear on the Groups screen): a "You" card with the avatar
   centred at the top, 72 px, a small pencil badge on its corner and no
   caption (tapping opens the same emoji picker sheet used everywhere, with
   "Use initials" to clear), and the Name field on its own row beneath; Appearance (System · Light · Dark); Notifications (the only
   switch, tied to the OS permission, with "Your phone decides when Even can
-  check for updates in the background."); Import group file; About, Privacy,
-  Terms. No background-sync switch exists anywhere.
-- **Group settings**: invite (always visible, with the one-sentence warning),
-  members (shows which have joined; rename and avatar on your own seat and on
-  unclaimed names, archive/unarchive on others, never yourself), server (host, operator, limits,
-  retention, usage meter, move, delete old copy after a move), export CSV, group file export, new invite, archive group,
-  leave (with the optional server-copy delete).
+  check for updates in the background."); Import group file; About (Privacy,
+  Terms, Source code, Version). No background-sync switch exists anywhere.
+- **Group settings**: the group's name first (a row opening Rename group),
+  invite (always visible, with the one-sentence warning; "Preparing your
+  invite…" until the server has the group), members (shows which have joined;
+  rename and avatar on your own seat and on unclaimed names, archive/unarchive
+  on others, never yourself; archived members greyed and last; the caption's
+  third sentence: "Archived members stay in past expenses and balances."), Add
+  member (a sheet whose avatar previews the new member's colour), server (host,
+  operator, limits, retention, usage meter with its 80 % warning, Move server:
+  Check reads `/v1/info`, then Move; "Delete the copy on <old host>" after a
+  move), export CSV, group file export, new invite, archive group, leave (the
+  unsent count, and the optional server-copy delete).
 
 ## Theme tokens
 

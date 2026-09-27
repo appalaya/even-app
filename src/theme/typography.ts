@@ -37,6 +37,16 @@ export const typography = {
   amount: { fontSize: 60, lineHeight: 68, fontWeight: '600', letterSpacing: -1.5, ...tabularNums },
   /** 44/52 semibold, −1: "You're even". */
   displayText: { fontSize: 44, lineHeight: 52, fontWeight: '600', letterSpacing: -1 },
+  /** 28/34 bold, −0.3: an expense's title on Expense detail. */
+  heading: { fontSize: 28, lineHeight: 34, fontWeight: '700', letterSpacing: -0.3 },
+  /** 28/34 semibold, −0.5, tabular: the amount while the title is being typed (Add expense, keyboard up). */
+  amountCompact: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '600',
+    letterSpacing: -0.5,
+    ...tabularNums,
+  },
   /** 30/36 bold, −0.5: the group name on Join. */
   title1: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.5 },
   /** 24/30 bold, −0.3: "Join Banff 2026?" (code read). */
@@ -89,7 +99,7 @@ export const emojiType = {
 
 /**
  * Avatar glyph sizes per diameter, as drawn: initials and emoji. The canvas draws avatars at 24, 26, 28, 30,
- * 32, 36 and 72 pt. Emoji at 24 and 26 are not drawn anywhere; they take the 28 pt size scaled down (noted in
+ * 32, 36, 56 and 72 pt. Emoji at 24 and 26 are not drawn anywhere; they take the 28 pt size scaled down (noted in
  * the kit report).
  */
 export const avatarType = {
@@ -99,6 +109,8 @@ export const avatarType = {
   30: { initials: { fontSize: 13, lineHeight: 16 }, emoji: { fontSize: 17, lineHeight: 20 } },
   32: { initials: { fontSize: 13, lineHeight: 16 }, emoji: { fontSize: 18, lineHeight: 20 } },
   36: { initials: { fontSize: 15, lineHeight: 18 }, emoji: { fontSize: 20, lineHeight: 22 } },
+  /** Join, "I'm not listed": initials 22/26 as drawn; the emoji is not drawn and scales between 36 and 72. */
+  56: { initials: { fontSize: 22, lineHeight: 26 }, emoji: { fontSize: 30, lineHeight: 36 } },
   72: { initials: { fontSize: 28, lineHeight: 34 }, emoji: { fontSize: 38, lineHeight: 44 } },
 } as const satisfies Record<number, { initials: TextStyle; emoji: TextStyle }>;
 

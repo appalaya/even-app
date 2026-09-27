@@ -24,10 +24,17 @@ import { useApp, useGroup } from '@/state';
 import { layout, useTheme } from '@/theme';
 
 import { DoneRow, DoneSheet } from './DoneAdding';
-import { GroupBanners, showsBanner } from './GroupBanners';
-import { ArchiveOffer, BalanceSection, SettledLine, SettleList } from './GroupHeader';
+import { GroupBanners, lastBannerFlush } from './GroupBanners';
+import { ArchiveOffer, BalanceSection, ClosedNote, SettledLine, SettleList } from './GroupHeader';
 import { ActivityTab, BalancesTab, ExpensesTab } from './GroupTabs';
-import { useGroupSync, useInvite, useLeaveWhenGone, useNow, useStatusLine } from './hooks';
+import {
+  useGroupNotifications,
+  useGroupSync,
+  useInvite,
+  useLeaveWhenGone,
+  useNow,
+  useStatusLine,
+} from './hooks';
 import { InviteCard, PeopleRow, shareInvite } from './InviteCard';
 import {
   activitySections,
@@ -97,6 +104,7 @@ export function GroupScreen({
   );
 
   useLeaveWhenGone(snapshot.status);
+  useGroupNotifications(localId, state === null ? null : peopleOf(state).length);
 
   // ----- scrolling: the sticky segment -----
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -196,19 +204,21 @@ export function GroupScreen({
   const net = derived.myNet ?? 0;
   const settledAll = derived.transfers.length === 0 && !derived.balancesUnavailable;
   const canWrite = !readOnly && !derived.needsClaim;
-  const bannerShown = showsBanner(derived);
+  const bannerShown = lastBannerFlush(derived);
 
   const toggleDone = () => {
     void (view.done.meDone ? groups.setUndone(localId) : groups.setDone(localId));
   };
   const settle = canWrite ? (t: Transfer) => router.push(groupHrefs.settle(localId, t)) : null;
 
+  // Share is hidden while the invite card shows and in a read-only group; until the server has the group it waits.
   const headerRight = (
     <>
       {!inviteState && !readOnly && (
         <HeaderButton
           icon="share"
           accessibilityLabel="Share invite"
+          disabled={invite?.ready !== true}
           onPress={() => {
             if (invite?.ready === true) shareInvite(invite, name);
           }}
@@ -264,7 +274,9 @@ export function GroupScreen({
           currency={currency}
           allDone={view.done.allDone}
           onSettle={settle}
+          readOnly={readOnly}
         />
+        {derived.readOnly === 'closed' && view.mine.length > 0 && <ClosedNote />}
         {!readOnly && view.done.total > 0 && (
           <View style={view.mine.length === 0 && !showSettledLine ? styles.doneAfterHeader : null}>
             <DoneRow summary={view.done} onOpen={() => setDoneOpen(true)} onToggle={toggleDone} />
@@ -272,11 +284,13 @@ export function GroupScreen({
         )}
       </>
     );
-    segmentGap = readOnly ? 20 : 16;
+    // Group, archived: 20 under the header; Group screen copy, closed: 16 under the read-only note.
+    segmentGap = readOnly && view.mine.length === 0 ? 20 : 16;
   }
 
-  const firstTransfer = view.mine[0] ?? derived.transfers[0];
-  const onSettleUp = canWrite && firstTransfer !== undefined ? () => settle?.(firstTransfer) : null;
+  // Balances' "Settle up" opens Record a payment empty: you pay, "Choose" whom (Settle, extra states).
+  const onSettleUp =
+    canWrite && derived.transfers.length > 0 ? () => router.push(groupHrefs.settle(localId)) : null;
 
   const footer = canWrite ? (
     <Button

@@ -19,8 +19,9 @@ export function useApp(): AppServices {
 }
 
 /**
- * The Groups screen: one row per group that is not hidden (name, currency, your net, lifecycle, sync status),
- * active groups by latest activity first, then archived ones.
+ * The Groups screen: one row per group that is not hidden (name, currency, your net, member count, unsent count,
+ * lifecycle, sync status), active groups by latest activity first, then archived ones. Everything a group card
+ * shows is on its row, so the list renders from this one subscription.
  */
 export function useGroups(): GroupListSnapshot {
   const { groupState } = useApp();

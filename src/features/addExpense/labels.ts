@@ -57,17 +57,9 @@ export function dateLabel(iso: string, today: string, locale?: string): string {
   }).format(date);
 }
 
-/** The last `days` days, today first, as YYYY-MM-DD. */
-export function recentDays(today: string, days = 7): string[] {
-  const t = parseIso(today);
-  return Array.from({ length: days }, (_, i) =>
-    isoOf(new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)),
-  );
-}
-
 /**
- * A save error in words. No board draws a failed save; the field error style is the States board's, the words are
- * this module's (listed in the stack C report).
+ * A save error in words, shown just above Save (Add expense, extra states: "Save failed" draws "Couldn't save. Try
+ * again."; the specific causes below keep that sentence's form).
  */
 export function saveErrorMessage(error: unknown): string {
   if (isStateError(error)) {

@@ -2,9 +2,7 @@
  * Dates, times and the status line's words for the Group and Expense detail screens. Pure (no React Native), so
  * Vitest runs it; every function takes `now` and an optional locale so a test can pin both.
  *
- * The boards word times two ways, and each screen keeps its own board's form:
- * - Activity (Group, Activity tab): "9:50 AM" (`clockTime`).
- * - Expense detail and the stale status line (States): "9:14 pm", "Not synced since 2:10 pm" (`clockTimeLower`).
+ * Times are in the device locale's own format (every board: "9:14 PM", "Not synced since 2:10 PM" in en-US).
  */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -13,14 +11,9 @@ function startOfDay(ms: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-/** "9:50 AM" (Activity board). */
+/** "9:50 AM": the device locale's clock time. */
 export function clockTime(ms: number, locale?: string): string {
   return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(ms);
-}
-
-/** "9:14 pm" (Expense detail, States): the day period lowercased, as those boards draw it. */
-export function clockTimeLower(ms: number, locale?: string): string {
-  return clockTime(ms, locale).replace(/\b(AM|PM)\b/g, (m) => m.toLowerCase());
 }
 
 /** "Sep 20"; "Sep 20, 2025" outside the current year. */
@@ -40,9 +33,9 @@ export function isoDateLabel(iso: string, now: number, locale?: string): string 
   return shortDate(new Date(y, m - 1, d).getTime(), now, locale);
 }
 
-/** "Sep 20, 9:14 pm" (Expense detail: the added-by line and History). */
-export function dateTimeLower(ms: number, now: number, locale?: string): string {
-  return `${shortDate(ms, now, locale)}, ${clockTimeLower(ms, locale)}`;
+/** "Sep 20, 9:14 PM" (Expense detail: the added-by line and History). */
+export function dateTime(ms: number, now: number, locale?: string): string {
+  return `${shortDate(ms, now, locale)}, ${clockTime(ms, locale)}`;
 }
 
 /** The Activity tab's section headers: "Today", "Yesterday", else "Sep 20". */
@@ -64,18 +57,18 @@ export function syncedLabel(lastSyncedAt: number, now: number, locale?: string):
   if (ago < 60_000) return 'Synced just now';
   if (ago < 60 * 60_000) return `Synced ${Math.floor(ago / 60_000)} min ago`;
   if (startOfDay(lastSyncedAt) === startOfDay(now)) {
-    return `Synced at ${clockTimeLower(lastSyncedAt, locale)}`;
+    return `Synced at ${clockTime(lastSyncedAt, locale)}`;
   }
   return `Synced ${shortDate(lastSyncedAt, now, locale)}`;
 }
 
 /**
- * The time in "Not synced since 2:10 pm" (States; the kit's `notSyncedLabel` words the rest): the clock time when
+ * The time in "Not synced since 2:10 PM" (States; the kit's `notSyncedLabel` words the rest): the clock time when
  * it was today, else the day.
  */
 export function staleSince(lastSyncedAt: number, now: number, locale?: string): string {
   return startOfDay(lastSyncedAt) === startOfDay(now)
-    ? clockTimeLower(lastSyncedAt, locale)
+    ? clockTime(lastSyncedAt, locale)
     : shortDate(lastSyncedAt, now, locale);
 }
 

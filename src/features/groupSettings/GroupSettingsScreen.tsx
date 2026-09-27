@@ -1,32 +1,35 @@
 /**
- * Group settings (GroupSettings, RegenerateInvite and States boards; design.md "Screens" → Group settings,
- * "Identity model", "Rotation, moving, closing", "Sync engine" → usage meter, "Group file", "Key patterns" → CSV).
+ * Group settings (GroupSettings, GroupSettingsStates, RegenerateInvite and States boards; design.md "Screens" → Group
+ * settings, "Identity model", "Rotation, moving, closing", "Sync engine" → usage meter, "Group file", "Key patterns"
+ * → CSV).
  *
- * Invite, Members (with the edit rules), Server (host, operator, limits, retention, usage, move, and the old copy's
- * delete after a move), Export (CSV, group file), Access (regenerate the invite), Archive group, Leave group.
- * Everything reads from the state hooks and acts through GroupService.
- *
- * Flows no board draws are composed from drawn pieces, with design.md's words where it has them: Rename, Add member
- * and Move open a one-field sheet (the States board's field and error line); Leave opens a confirmation laid out as
- * RegenerateInvite's (the unsent count, "Also delete this group's copy on <host>"); the old copy's delete is a
- * system alert.
+ * Name (→ Rename group), Invite, Members (with the edit rules; Add member), Server (host, operator, limits,
+ * retention, usage with its 80 % warning, Move server with Check, and the old copy's delete after a move), Export
+ * (CSV, group file), Access (regenerate the invite), Archive group, Leave group (unsent entries, the server-copy
+ * checkbox). Everything reads from the state hooks and acts through GroupService. A member's rename uses the Rename
+ * sheet's layout; the old copy's delete is confirmed by a system alert (no board draws it).
  */
 import type { MemberState } from '@even/core';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Clipboard, Share, StyleSheet } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { Alert, Share, StyleSheet, View } from 'react-native';
 
-import { Card, Footnote, Icon, ListRow, Screen, SectionHeader } from '@/components';
-import { layout, useTheme } from '@/theme';
+import { LIMITS } from '@even/core';
+
+import { AppText, Card, Footnote, Icon, ListRow, Screen, SectionHeader } from '@/components';
+import { layout, radii, useTheme } from '@/theme';
 import { useApp, useGroup } from '../../state';
 import { EmojiPickerSheet } from '../emoji/EmojiPickerSheet';
 
+import { AddMemberSheet } from './AddMemberSheet';
 import { InviteCard } from './InviteCard';
 import { LeaveSheet } from './LeaveSheet';
 import { MembersCard } from './MembersCard';
 import { errorMessage, moveFailure } from './messages';
 import { memberRows, removableMembers, hostOf, type MemberAction } from './model';
 import { forgetMove, movedFromOf, rememberMove } from './movedFrom';
+import { MoveServerSheet } from './MoveServerSheet';
 import { PromptSheet } from './PromptSheet';
 import { RegenerateInviteSheet } from './RegenerateInviteSheet';
 import { ServerCard } from './ServerCard';
@@ -36,7 +39,9 @@ import { useInvite, useServerReport } from './useSettingsData';
 export interface GroupSettingsDev {
   /** Content offset in points, as if scrolled. */
   scrollY?: number;
-  open?: 'regenerate' | 'rename' | 'add' | 'move' | 'leave' | 'avatar';
+  open?: 'regenerate' | 'rename' | 'rename-group' | 'add' | 'move' | 'leave' | 'avatar';
+  /** Show the old copy's delete, as after a move from this server (`https://…`). */
+  movedFrom?: string;
   /** The member a sheet is about (by name): Rename, Avatar, or the one to remove when regenerating. */
   member?: string;
   /** Typed into Rename / Add member / Move, then submitted. */
@@ -48,7 +53,7 @@ export interface GroupSettingsScreenProps {
   dev?: GroupSettingsDev;
 }
 
-type Prompt = { kind: 'rename'; member: MemberState } | { kind: 'add' } | { kind: 'move' };
+type Prompt = { kind: 'rename'; member: MemberState } | { kind: 'renameGroup' };
 
 export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) {
   const { groups } = useApp();
@@ -56,7 +61,12 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
   const derived = snapshot.derived;
   const invite = useInvite(localId, derived);
   const report = useServerReport(localId, derived);
-  const [oldServer, setOldServer] = useState<string | null>(() => movedFromOf(localId));
+  const [oldServer, setOldServer] = useState<string | null>(
+    () => movedFromOf(localId) ?? (__DEV__ ? (dev?.movedFrom ?? null) : null),
+  );
+  const [oldRetention, setOldRetention] = useState<number | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
   // The member stays set while the picker slides away; `avatarOpen` shows and hides it.
@@ -92,13 +102,25 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
 
   const copyCode = () => {
     if (invite === null) return;
-    Clipboard.setString(invite.code);
+    void Clipboard.setStringAsync(invite.code);
   };
 
   const shareLink = () => {
     if (invite === null) return;
     void Share.share({ url: invite.link });
   };
+
+  // The old server's retention, for "The old copy expires on its own after 365 days".
+  useEffect(() => {
+    if (oldServer === null) return;
+    let live = true;
+    void groups.serverInfo(oldServer).then((info) => {
+      if (live) setOldRetention(info?.retention_days ?? null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [groups, oldServer]);
 
   // ----- members -----
 
@@ -120,23 +142,43 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
     try {
       if (prompt.kind === 'rename') {
         await groups.updateMember(localId, prompt.member.id, { name: value });
-      } else if (prompt.kind === 'add') {
-        await groups.addMember(localId, value);
       } else {
-        const result = await groups.moveServer(localId, value.trim());
-        const problem = moveFailure(result, hostOf(result.fromServer));
-        if (problem !== null) {
-          setPromptError(problem);
-          return;
-        }
-        rememberMove(localId, result.fromServer);
-        setOldServer(result.fromServer);
+        await groups.renameGroup(localId, value);
       }
       setPromptOpen(false);
     } catch (error) {
-      setPromptError(errorMessage(error, prompt.kind === 'move' ? undefined : value));
+      setPromptError(errorMessage(error, prompt.kind === 'rename' ? value : undefined));
     } finally {
       setPromptBusy(false);
+    }
+  };
+
+  const [addError, setAddError] = useState<string | undefined>(undefined);
+  const [addBusy, setAddBusy] = useState(false);
+  const addMember = async (name: string, emoji: string | null, id: string) => {
+    setAddBusy(true);
+    try {
+      await groups.addMember(localId, name, emoji ?? undefined, { id });
+      setAddOpen(false);
+    } catch (error) {
+      setAddError(errorMessage(error, name));
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  /** Move server's "Move": the problem to show under the field, or null once moved. */
+  const moveTo = async (serverUrl: string): Promise<string | null> => {
+    try {
+      const result = await groups.moveServer(localId, serverUrl);
+      const problem = moveFailure(result, hostOf(result.fromServer));
+      if (problem !== null) return problem;
+      rememberMove(localId, result.fromServer);
+      setOldServer(result.fromServer);
+      setMoveOpen(false);
+      return null;
+    } catch (error) {
+      return errorMessage(error);
     }
   };
 
@@ -263,9 +305,13 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
       } else if (open === 'rename' && member !== undefined) {
         setPrompt({ kind: 'rename', member });
         setPromptOpen(true);
-      } else if (open === 'add' || open === 'move') {
-        setPrompt({ kind: open });
+      } else if (open === 'rename-group') {
+        setPrompt({ kind: 'renameGroup' });
         setPromptOpen(true);
+      } else if (open === 'add') {
+        setAddOpen(true);
+      } else if (open === 'move') {
+        setMoveOpen(true);
       }
     }, 0);
   }, [dev, state, groups, localId]);
@@ -288,9 +334,15 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
     >
       {derived !== null && (
         <>
-          <SectionHeader variant="settings" spacingTop={16}>
-            Invite
-          </SectionHeader>
+          <NameRow
+            name={name}
+            onPress={
+              frozen || readOnly === 'archived'
+                ? undefined
+                : () => openPrompt({ kind: 'renameGroup' })
+            }
+          />
+          <SectionHeader variant="settings">Invite</SectionHeader>
           <InviteCard
             link={invite?.link ?? null}
             ready={invite?.ready === true}
@@ -305,7 +357,10 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
                 rows={rows}
                 readOnly={readOnly !== null}
                 onAction={onMemberAction}
-                onAdd={() => openPrompt({ kind: 'add' })}
+                onAdd={() => {
+                  setAddError(undefined);
+                  setAddOpen(true);
+                }}
               />
               <Footnote>
                 You can edit your own name and avatar. Anyone can archive a member who&apos;s left.
@@ -319,9 +374,11 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
             serverUrl={derived.row.serverUrl}
             report={report}
             oldServer={oldServer}
+            oldRetentionDays={oldRetention}
             readOnly={frozen}
-            onMove={() => openPrompt({ kind: 'move' })}
+            onMove={() => setMoveOpen(true)}
             onDeleteOldCopy={deleteOldCopy}
+            onExportGroupFile={exportGroupFile}
           />
 
           {state !== null && (
@@ -388,32 +445,50 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
       />
       <PromptSheet
         visible={promptOpen}
-        title={
-          prompt?.kind === 'add'
-            ? 'Add member'
-            : prompt?.kind === 'move'
-              ? 'Move to another server'
-              : 'Rename'
+        title={prompt?.kind === 'renameGroup' ? 'Rename group' : 'Rename'}
+        submitLabel="Save"
+        variant={prompt?.kind === 'renameGroup' ? 'large' : 'row'}
+        hint={
+          prompt?.kind === 'renameGroup'
+            ? `Everyone in the group sees the new name. Up to ${LIMITS.groupNameMax} characters.`
+            : undefined
         }
-        submitLabel={prompt?.kind === 'add' ? 'Add' : prompt?.kind === 'move' ? 'Move' : 'Save'}
-        initialValue={
-          __DEV__ && dev?.value !== undefined
+        maxLength={prompt?.kind === 'renameGroup' ? LIMITS.groupNameMax : LIMITS.nameMax}
+        initialValue={prompt?.kind === 'rename' ? prompt.member.name : name}
+        draft={
+          __DEV__ && dev?.value !== undefined && dev.open !== 'move' && dev.open !== 'add'
             ? dev.value
-            : prompt?.kind === 'rename'
-              ? prompt.member.name
-              : prompt?.kind === 'move'
-                ? 'https://'
-                : ''
+            : undefined
         }
-        placeholder={prompt?.kind === 'move' ? 'https://sync.example.net' : 'Add a name'}
-        keyboard={prompt?.kind === 'move' ? 'url' : 'name'}
         error={promptError}
         busy={promptBusy}
-        submitOnOpen={__DEV__ && dev?.value !== undefined}
         onEdit={() => setPromptError(undefined)}
         onSubmit={(value) => void submitPrompt(value)}
         onDismiss={closePrompt}
       />
+      <AddMemberSheet
+        visible={addOpen}
+        error={addError}
+        busy={addBusy}
+        initialName={__DEV__ && dev?.open === 'add' ? dev.value : undefined}
+        onEdit={() => setAddError(undefined)}
+        onAdd={(value, emoji, id) => void addMember(value, emoji, id)}
+        onDismiss={() => {
+          if (!addBusy) setAddOpen(false);
+        }}
+      />
+      {derived !== null && (
+        <MoveServerSheet
+          visible={moveOpen}
+          localId={localId}
+          groupName={name}
+          serverUrl={derived.row.serverUrl}
+          onMove={moveTo}
+          onDismiss={() => setMoveOpen(false)}
+          initialValue={__DEV__ && dev?.open === 'move' ? dev.value : undefined}
+          checkOnOpen={__DEV__ && dev?.open === 'move' && dev.value !== undefined}
+        />
+      )}
       {derived !== null && (
         <LeaveSheet
           visible={leaveFor !== null}
@@ -435,6 +510,37 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
         onDismiss={() => setAvatarOpen(false)}
       />
     </Screen>
+  );
+}
+
+/**
+ * The group's name at the top (GroupSettings: "Name · Banff 2026 ›"): its own card 16 below the nav bar, the label
+ * 80 wide in `textSecondary`, the name right-aligned on one line, a chevron; opens Rename group.
+ */
+function NameRow({ name, onPress }: { name: string; onPress: (() => void) | undefined }) {
+  const { tokens } = useTheme();
+  return (
+    <Card radius="group" style={styles.nameCard}>
+      <ListRow
+        title={
+          <View style={styles.nameRow}>
+            <AppText variant="callout" color="textSecondary" style={styles.nameLabel}>
+              Name
+            </AppText>
+            <AppText variant="callout" numberOfLines={1} align="right" style={styles.nameValue}>
+              {name}
+            </AppText>
+          </View>
+        }
+        trailing={
+          onPress === undefined ? undefined : (
+            <Icon name="chevronRight" size={16} color={tokens.iconMuted} />
+          )
+        }
+        onPress={onPress}
+        accessibilityLabel={`Group name: ${name}.${onPress === undefined ? '' : ' Rename.'}`}
+      />
+    </Card>
   );
 }
 
@@ -467,4 +573,8 @@ function ActionRow({
 const styles = StyleSheet.create({
   card: { marginHorizontal: layout.gutter },
   spaced: { marginTop: 24 },
+  nameCard: { marginTop: 16, marginHorizontal: layout.gutter, borderRadius: radii.group },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  nameLabel: { width: 80, flexShrink: 0 },
+  nameValue: { flex: 1, minWidth: 0 },
 });

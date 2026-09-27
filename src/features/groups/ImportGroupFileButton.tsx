@@ -1,7 +1,7 @@
 /**
  * "Import group file" on Groups (Main board): a quiet 44 pt button centred 12 below the list, the import glyph 18
  * and 15/20 regular text 8 apart, padding 0 12, both `textSecondary`. The kit's quiet `Button` draws a 20 pt glyph,
- * 10 pt padding and a semibold label, so this is composed from kit pieces (noted in the report).
+ * 10 pt padding and a semibold label, so this is composed from kit pieces.
  */
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -11,13 +11,16 @@ import { layout, useTheme } from '@/theme';
 export function ImportGroupFileButton({
   onPress,
   disabled = false,
+  spacingTop = 12,
 }: {
   onPress: () => void;
   disabled?: boolean;
+  /** 12 under the collapsed Archived row (Main), 8 under the open list (Groups, extra states). */
+  spacingTop?: number;
 }) {
   const { tokens } = useTheme();
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { paddingTop: spacingTop }]}>
       <Pressable
         onPress={onPress}
         disabled={disabled}
@@ -35,7 +38,7 @@ export function ImportGroupFileButton({
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', paddingTop: 12, paddingHorizontal: 16 },
+  wrap: { alignItems: 'center', paddingHorizontal: 16 },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

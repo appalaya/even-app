@@ -7,6 +7,7 @@ import {
   initialChipState,
   MODEL_PAUSE_MS,
   shouldAskModel,
+  SUGGESTED_TAG_MS,
   type ChipState,
 } from './chipMachine';
 
@@ -65,7 +66,13 @@ function controller(title = '', initial?: ChipState) {
 describe('chipReducer', () => {
   it('infers from keywords on every keystroke while the source is keyword or model', () => {
     let s = initialChipState('');
-    expect(s).toEqual({ category: 'other', source: 'keyword', frozen: false, swaps: 0 });
+    expect(s).toEqual({
+      category: 'other',
+      source: 'keyword',
+      frozen: false,
+      swaps: 0,
+      tagged: false,
+    });
     s = chipReducer(s, { type: 'title', title: 'Lake Louise shuttle' });
     expect(s.category).toBe('transit');
     s = chipReducer(s, {
@@ -78,6 +85,47 @@ describe('chipReducer', () => {
     // A keystroke after a model suggestion re-infers from the table (design.md: source ≠ user).
     s = chipReducer(s, { type: 'title', title: 'Lake Louise shuttle bus' });
     expect(s).toMatchObject({ category: 'transit', source: 'keyword' });
+  });
+
+  it('never tags a keyword-inferred chip; tags a model change until untagged', () => {
+    let s = chipReducer(initialChipState(''), { type: 'title', title: 'Lake Louise shuttle' });
+    expect(s).toMatchObject({ category: 'transit', source: 'keyword', tagged: false });
+    s = chipReducer(s, {
+      type: 'reply',
+      askedTitle: 'Lake Louise shuttle',
+      currentTitle: 'Lake Louise shuttle',
+      category: 'activities',
+    });
+    expect(s).toMatchObject({ category: 'activities', source: 'model', swaps: 1, tagged: true });
+    // An untag for an older change leaves a newer tag alone; the current one clears it.
+    expect(chipReducer(s, { type: 'untag', swap: 0 })).toBe(s);
+    expect(chipReducer(s, { type: 'untag', swap: 1 })).toMatchObject({ tagged: false });
+  });
+
+  it('a model reply that agrees with the chip does not tag it', () => {
+    const s = chipReducer(initialChipState(''), { type: 'title', title: 'Taxi' });
+    const next = chipReducer(s, {
+      type: 'reply',
+      askedTitle: 'Taxi',
+      currentTitle: 'Taxi',
+      category: 'transit',
+    });
+    expect(next).toMatchObject({ category: 'transit', source: 'model', swaps: 0, tagged: false });
+  });
+
+  it('a keystroke or a tap takes the tag away; a chip you chose is never tagged', () => {
+    const tagged = chipReducer(initialChipState('Grizzly House'), {
+      type: 'reply',
+      askedTitle: 'Grizzly House',
+      currentTitle: 'Grizzly House',
+      category: 'lodging',
+    });
+    expect(tagged.tagged).toBe(true);
+    expect(chipReducer(tagged, { type: 'title', title: 'Grizzly House B' }).tagged).toBe(false);
+    expect(chipReducer(tagged, { type: 'tap', category: 'lodging' })).toMatchObject({
+      source: 'user',
+      tagged: false,
+    });
   });
 
   it('never re-infers once the user has tapped', () => {
@@ -171,6 +219,33 @@ describe('ChipController', () => {
     expect(model.asked.map((a) => a.title)).toEqual(['Grizzly House']);
     await model.reply(0, 'lodging');
     expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', swaps: 1 });
+  });
+
+  it('shows the suggested tag for about 1.5 s after the model changes the chip', async () => {
+    const { chip, clock, model } = controller();
+    chip.setTitle('Grizzly House');
+    clock.advance(MODEL_PAUSE_MS);
+    await model.reply(0, 'lodging');
+    expect(chip.getState()).toMatchObject({ category: 'lodging', tagged: true });
+    clock.advance(SUGGESTED_TAG_MS - 1);
+    expect(chip.getState().tagged).toBe(true);
+    clock.advance(1);
+    expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', tagged: false });
+  });
+
+  it('a second model change restarts the tag time', async () => {
+    const { chip, clock, model } = controller();
+    chip.setTitle('Sunshine');
+    clock.advance(MODEL_PAUSE_MS);
+    await model.reply(0, 'groceries');
+    clock.advance(1000);
+    chip.setTitle('Sunshine Village lift');
+    clock.advance(MODEL_PAUSE_MS);
+    await model.reply(1, 'activities');
+    clock.advance(SUGGESTED_TAG_MS - 1);
+    expect(chip.getState()).toMatchObject({ category: 'activities', tagged: true });
+    clock.advance(1);
+    expect(chip.getState().tagged).toBe(false);
   });
 
   it('race: a model reply arriving after a user tap is dropped', async () => {
