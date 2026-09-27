@@ -136,6 +136,14 @@ const ICONS = {
   },
   /** "on this phone" in Activity · 12. */
   device: { stroke: 2.2, join: 'round', shapes: [rect(7, 2.5, 10, 19, 2.5), path('M11 18.5h2')] },
+  /** The "this phone" mark on a name this phone claimed (SeatPick, SeatSameDevice) · 13. */
+  phone: { stroke: 2.4, join: 'round', shapes: [rect(6, 2.5, 12, 19, 2.5), path('M11 18.5h2')] },
+  /** No name picked (GroupNoSeat): the note's glyph and "Pick your name" · 20. */
+  person: {
+    stroke: 2.2,
+    join: 'round',
+    shapes: [circle(12, 8, 4), path('M4.5 21a7.5 7.5 0 0 1 15 0')],
+  },
   /** The avatar's edit badge (App settings, Create group) · 12. */
   pencil: { stroke: 3, join: 'round', shapes: [path('M4 20l4-1 11-11-3-3L5 16z')] },
   /** The keypad's delete key · 26. */

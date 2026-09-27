@@ -95,6 +95,8 @@ export const even: Theme = {
     viewfinder: '#131514',
     onViewfinder: '#FFFFFF',
     viewfinderControl: 'rgba(255,255,255,0.16)',
+    menuScrim: 'rgba(22,23,21,0.12)',
+    menuShadow: 'rgba(22,23,21,0.18)',
     avatar: avatarPalette,
   },
   dark: {
@@ -143,6 +145,8 @@ export const even: Theme = {
     viewfinder: '#131514',
     onViewfinder: '#FFFFFF',
     viewfinderControl: 'rgba(255,255,255,0.16)',
+    menuScrim: 'rgba(0,0,0,0.35)',
+    menuShadow: 'rgba(0,0,0,0.55)',
     avatar: avatarPalette,
   },
 };

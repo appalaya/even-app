@@ -134,6 +134,11 @@ export interface ThemeTokens {
   /** The light (torch) button's round backdrop over the camera picture (JoinScan). */
   viewfinderControl: string;
 
+  /** Dims the screen behind an anchored menu (GroupShareMenu): lighter than a sheet's `scrim`. */
+  menuScrim: string;
+  /** The shadow under an anchored menu (GroupShareMenu: `0 10px 30px`). */
+  menuShadow: string;
+
   /** Every entry carries white initials at 4.5:1 or better. Frozen order: see `AvatarPalette`. */
   avatar: AvatarPalette;
 }

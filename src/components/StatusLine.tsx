@@ -30,6 +30,8 @@ export interface StatusLineProps {
   label: string;
   /** Manual sync (debounced by the caller). */
   onSyncNow?: () => void;
+  /** The sync button at the trailing edge (default). GroupNoSeat draws the line without it. */
+  button?: boolean;
 }
 
 /**
@@ -44,7 +46,7 @@ export function notSyncedLabel(time: string): string {
  * The sync line under Group's big number: 6 pt dot, 6 pt gap, 13/18 `textMuted`, and a 44 pt sync button at the
  * trailing edge whose 16 pt glyph sits inside the 18 pt line (negative margins keep the line 18 tall).
  */
-export function StatusLine({ state, label, onSyncNow }: StatusLineProps) {
+export function StatusLine({ state, label, onSyncNow, button = true }: StatusLineProps) {
   const { tokens } = useTheme();
   const syncing = state === 'syncing';
   return (
@@ -63,16 +65,18 @@ export function StatusLine({ state, label, onSyncNow }: StatusLineProps) {
       <AppText variant="caption" color="textMuted" style={styles.label}>
         {label}
       </AppText>
-      <Pressable
-        onPress={onSyncNow}
-        disabled={syncing}
-        accessibilityRole="button"
-        accessibilityLabel={syncing ? 'Syncing' : 'Sync now'}
-        accessibilityState={{ disabled: syncing, busy: syncing }}
-        style={styles.button}
-      >
-        <SyncGlyph spinning={syncing} color={syncing ? tokens.accent : tokens.iconMuted} />
-      </Pressable>
+      {button && (
+        <Pressable
+          onPress={onSyncNow}
+          disabled={syncing}
+          accessibilityRole="button"
+          accessibilityLabel={syncing ? 'Syncing' : 'Sync now'}
+          accessibilityState={{ disabled: syncing, busy: syncing }}
+          style={styles.button}
+        >
+          <SyncGlyph spinning={syncing} color={syncing ? tokens.accent : tokens.iconMuted} />
+        </Pressable>
+      )}
     </View>
   );
 }
