@@ -176,7 +176,7 @@ const ICONS = {
       path('M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3'),
     ],
   },
-  /** "Anyone with this link…" (Group settings) · 18. */
+  /** "Anyone with this link…" (Group settings), "Anyone who scans this…" (InviteQR) · 18. */
   key: {
     stroke: 2,
     join: 'round',
@@ -224,7 +224,10 @@ const ICONS = {
       path('M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2'),
     ],
   },
-  /** "Show QR code": the invite's round button (Group settings) and the share menu (GroupShareMenu) · 20. */
+  /**
+   * "Show QR code": the invite's round button (Group settings; GroupNew and GroupNewWithExpenses, disabled in
+   * InviteSyncing) and the share menu (GroupShareMenu) · 20.
+   */
   qr: {
     stroke: 2,
     join: 'round',
@@ -236,6 +239,35 @@ const ICONS = {
       path('M20.5 14v.01'),
       path('M14 20.5h.01'),
       path('M17.5 20.5h3v-3'),
+    ],
+  },
+  /** The Scan pill beside Paste on Join with code (JoinCode) · 16. */
+  scan: {
+    stroke: 2,
+    join: 'round',
+    shapes: [
+      path('M4 8V6a2 2 0 0 1 2-2h2'),
+      path('M16 4h2a2 2 0 0 1 2 2v2'),
+      path('M20 16v2a2 2 0 0 1-2 2h-2'),
+      path('M8 20H6a2 2 0 0 1-2-2v-2'),
+      path('M7 12h10'),
+    ],
+  },
+  /** The light (torch) button in the scanner's viewfinder (JoinScan) · 20. */
+  flashlight: {
+    stroke: 2,
+    join: 'round',
+    shapes: [path('M8 3h8v4l-2 3v10a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V10L8 7z'), path('M12 13v2')],
+  },
+  /** "Camera access is off" (JoinScanDenied) · 32. */
+  cameraOff: {
+    stroke: 1.8,
+    join: 'round',
+    shapes: [
+      path('M3 3l18 18'),
+      path('M9.5 5H15l1.5 2H19a2 2 0 0 1 2 2v8.5'),
+      path('M17.5 19H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2'),
+      path('M10 10.2a3 3 0 0 0 4 4'),
     ],
   },
   /** "Report this group" (Group settings) · 20. */

@@ -120,6 +120,20 @@ export interface ThemeTokens {
   /** Shadow under the switch thumb (`0 1px 3px`). */
   switchShadow: string;
 
+  /**
+   * The invite QR's tile and its light modules (InviteQR). White in both modes: a scanner needs dark modules on a
+   * light ground, so the QR never follows the theme.
+   */
+  qrTile: string;
+  /** The invite QR's dark modules (InviteQR), the same in both modes. */
+  qrModule: string;
+  /** The scanner's viewfinder before the camera's picture arrives (JoinScan), the same in both modes. */
+  viewfinder: string;
+  /** Drawn over the camera picture: the corner brackets, the light button's glyph, the ring round the found mark. */
+  onViewfinder: string;
+  /** The light (torch) button's round backdrop over the camera picture (JoinScan). */
+  viewfinderControl: string;
+
   /** Every entry carries white initials at 4.5:1 or better. Frozen order: see `AvatarPalette`. */
   avatar: AvatarPalette;
 }

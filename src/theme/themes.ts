@@ -90,6 +90,11 @@ export const even: Theme = {
     switchOff: '#DEDDD7',
     segmentShadow: 'rgba(22,23,21,0.10)',
     switchShadow: 'rgba(0,0,0,0.20)',
+    qrTile: '#FFFFFF',
+    qrModule: '#161715',
+    viewfinder: '#131514',
+    onViewfinder: '#FFFFFF',
+    viewfinderControl: 'rgba(255,255,255,0.16)',
     avatar: avatarPalette,
   },
   dark: {
@@ -133,6 +138,11 @@ export const even: Theme = {
     switchOff: '#3A3D3B',
     segmentShadow: 'rgba(0,0,0,0)',
     switchShadow: 'rgba(0,0,0,0.30)',
+    qrTile: '#FFFFFF',
+    qrModule: '#161715',
+    viewfinder: '#131514',
+    onViewfinder: '#FFFFFF',
+    viewfinderControl: 'rgba(255,255,255,0.16)',
     avatar: avatarPalette,
   },
 };
