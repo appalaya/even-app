@@ -1,13 +1,14 @@
-# Landing site: deploy web/ to Cloudflare as a Worker with static assets (free plan), served at
-# https://even.appalaya.com. This workflow is the only place the site is deployed from.
-# Secrets, the one-time Custom Domain step and what to check after the first deploy: web/README.md, "Deploying".
+# Landing site: deploy web/ to Cloudflare as a Worker with static assets and the contact form's Worker script
+# (free plan), served at https://even.appalaya.com. This workflow is the only place the site is deployed from.
+# Secrets, the one-time dashboard steps and what to check after the first deploy: web/README.md, "Deploying" and
+# "Contact form".
 #
-#   push to main that touches web/** or this file -> check the site, then deploy
+#   push to main that touches web/** or this file -> check the site and the script, then deploy
 #   workflow_dispatch on main                       -> the same
-#   workflow_dispatch on any other ref              -> check the site and a dry run; nothing is deployed
+#   workflow_dispatch on any other ref              -> the checks and a dry run; nothing is deployed
 #
-# There is no pull_request trigger: fork pull requests get no secrets, and ci.yml already runs the site check on
-# every pull request.
+# There is no pull_request trigger: fork pull requests get no secrets, and ci.yml already runs the site check and
+# the script's typecheck, lint and tests on every pull request.
 name: Web
 
 on:
@@ -36,14 +37,13 @@ env:
   WRANGLER_SEND_METRICS: 'false'
   SITE_URL: https://even.appalaya.com
 
-# Both wrangler commands pass --no-bundle: web/wrangler.jsonc has no Worker script ("main"), so there is nothing to
-# build, and bundling Wrangler's built-in placeholder would make esbuild read the app's tsconfig.json and warn that
-# its Expo base is not installed in this job.
+# Wrangler bundles web/worker/index.ts with esbuild, which reads web/worker/tsconfig.json (the nearest one), not the
+# app's Expo tsconfig. The typecheck, lint and tests use the repository's own dev dependencies, hence npm ci.
 jobs:
   deploy:
     name: Check and deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -52,14 +52,22 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
 
-      - name: Check the site
-        run: node web/scripts/check.mjs
+      - name: Install
+        run: npm ci
+
+      - name: Check the site and the contact form's script
+        run: |
+          node web/scripts/check.mjs
+          npx tsc -p web/worker
+          npx eslint --max-warnings=0 web/worker
+          npx vitest run web/worker
 
       - name: Dry run (only main deploys)
         if: github.ref != 'refs/heads/main'
         run: |
-          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc --no-bundle --dry-run
+          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc --dry-run
           echo "Dry run of ${GITHUB_SHA::7} from $GITHUB_REF_NAME; only main deploys to $SITE_URL" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy
@@ -67,10 +75,45 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The contact form (web/README.md, "Contact form"). The five Worker secrets come from repository secrets
+          # of the same names; the site key is public, so it may be a repository variable instead of a secret.
+          CONTACT_TO_REPORT: ${{ secrets.CONTACT_TO_REPORT }}
+          CONTACT_TO_HELP: ${{ secrets.CONTACT_TO_HELP }}
+          CONTACT_TO_FEEDBACK: ${{ secrets.CONTACT_TO_FEEDBACK }}
+          CONTACT_FROM: ${{ secrets.CONTACT_FROM }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY || vars.TURNSTILE_SITE_KEY }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "::error::The CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets are not set (web/README.md, Deploying)."
             exit 1
           fi
-          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc --no-bundle --message "Commit $GITHUB_SHA"
+
+          secrets=(CONTACT_TO_REPORT CONTACT_TO_HELP CONTACT_TO_FEEDBACK CONTACT_FROM TURNSTILE_SECRET_KEY)
+          missing=()
+          for name in "${secrets[@]}" TURNSTILE_SITE_KEY; do
+            [ -n "${!name//[[:space:]]/}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing for the contact form: ${missing[*]}. Add each as a repository secret (TURNSTILE_SITE_KEY may be a repository variable instead); web/README.md, Contact form."
+            exit 1
+          fi
+          # Cloudflare's published Turnstile test keys (1x…, 2x…, 3x… then zeros) pass every challenge.
+          if [[ "$TURNSTILE_SITE_KEY" =~ ^[123]x0{10,} ]] || [[ "$TURNSTILE_SECRET_KEY" =~ ^[123]x0{10,} ]]; then
+            echo "::error::TURNSTILE_SITE_KEY or TURNSTILE_SECRET_KEY is one of Cloudflare's test keys; use the even.appalaya.com widget's keys (web/README.md, Contact form)."
+            exit 1
+          fi
+
+          # The secrets go to Cloudflare with this version, from a file only this job can read, removed on exit.
+          umask 077
+          secrets_file="$RUNNER_TEMP/even-web-secrets.json"
+          trap 'rm -f "$secrets_file"' EXIT
+          node -e 'const names = process.argv.slice(1);
+            process.stdout.write(JSON.stringify(Object.fromEntries(names.map((n) => [n, process.env[n].trim()]))));' \
+            "${secrets[@]}" > "$secrets_file"
+
+          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc \
+            --secrets-file "$secrets_file" \
+            --var "TURNSTILE_SITE_KEY:$(printf '%s' "$TURNSTILE_SITE_KEY" | tr -d '[:space:]')" \
+            --message "Commit $GITHUB_SHA"
           echo "Deployed ${GITHUB_SHA::7} to $SITE_URL" >> "$GITHUB_STEP_SUMMARY"

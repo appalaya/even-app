@@ -10,8 +10,8 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "lint": "expo lint",
-    "typecheck": "tsc --noEmit",
+    "lint": "expo lint src web/worker",
+    "typecheck": "tsc --noEmit && tsc -p web/worker",
     "test": "npm test -w @even/core && npm run test:app",
     "test:app": "vitest run",
     "check": "npm run typecheck && npm run lint && npm test"

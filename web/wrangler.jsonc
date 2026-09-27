@@ -1,20 +1,68 @@
-// The landing site as a Cloudflare Worker with static assets and no Worker script: Cloudflare's asset server
-// answers every request, applying _headers, so every request is a free static-asset request.
-// Deployed only by .github/workflows/web.yml. See README.md, "Deploying".
+// The landing site as a Cloudflare Worker with static assets, plus a small Worker script for the contact form's API
+// (worker/, README.md "Contact form"). Deployed only by .github/workflows/web.yml. See README.md, "Deploying".
 {
   "name": "even-web",
   "compatibility_date": "2026-09-27",
+  // Runs only for /api/* (assets.run_worker_first) and for the few requests described there.
+  "main": "worker/index.ts",
   "assets": {
-    // This folder. .assetsignore keeps the tooling (this file, README.md, scripts/) out of the upload.
+    // This folder. .assetsignore keeps the tooling (this file, README.md, scripts/, worker/) out of the upload.
     "directory": ".",
     // i.html answers /i with 200; /i/ and /i.html redirect to /i.
     "html_handling": "auto-trailing-slash",
     // Any path without a file gets 404.html with status 404.
-    "not_found_handling": "404-page"
+    "not_found_handling": "404-page",
+    // /api/* goes to the script; every other path is served by the asset server with _headers applied, which is
+    // free. One exception the platform imposes on any Worker with a script: a request that matches no file and is
+    // not a browser navigation (a bot, curl, fetch) is handed to the script, which passes it straight back to the
+    // asset server for the same 404.html. Those count as Worker requests. Browsers never see a difference.
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
   },
   // The one public hostname is the Custom Domain even.appalaya.com, attached once in the dashboard. There are no
   // routes here, so a deploy never adds or removes a domain, a route or a DNS record, and no workers.dev or
-  // Preview URL serves a second copy of the site.
+  // Preview URL serves a second copy of the site or the API.
   "workers_dev": false,
-  "preview_urls": false
+  "preview_urls": false,
+
+  // THREAT-MODEL.md "What we log" (even-server) applies here too. The script's own lines carry only the route,
+  // the form's purpose and the outcome. Invocation logs, traces and Logpush would record URLs, headers or IPs,
+  // so they are off.
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": false },
+    "traces": { "enabled": false }
+  },
+  "logpush": false,
+
+  // The form's mail goes out through Email Service (README.md, "Contact form", for the one-time dashboard steps).
+  // Unrestricted on purpose: allowed_destination_addresses or allowed_sender_addresses would put the addresses
+  // in this file, and the recipients are only ever the three CONTACT_TO_* secrets.
+  "send_email": [{ "name": "EMAIL" }],
+
+  // Per IP (CF-Connecting-IP, IPv6 by /64), counted only once a submission has passed Turnstile. The binding's
+  // period is 10 or 60 seconds, nothing longer: one message a minute is at most ten in ten minutes. Approximate
+  // and per Cloudflare location. namespace_id is any integer string unique within the account (even-sync uses
+  // 41xx and 49xx).
+  "ratelimits": [
+    { "name": "CONTACT_RATE_LIMIT", "namespace_id": "4201", "simple": { "limit": 1, "period": 60 } }
+  ],
+
+  "vars": {
+    // The only origin the API accepts requests from (Origin must equal it) and the hostname Turnstile must report.
+    "SITE_ORIGIN": "https://even.appalaya.com"
+    // TURNSTILE_SITE_KEY is a var too, but it is passed by the deploy workflow (--var), never written here.
+  },
+
+  // Uploaded by the deploy workflow with each version (--secrets-file); a deploy fails if any is missing. None of
+  // their values is in this repository.
+  "secrets": {
+    "required": [
+      "CONTACT_TO_REPORT",
+      "CONTACT_TO_HELP",
+      "CONTACT_TO_FEEDBACK",
+      "CONTACT_FROM",
+      "TURNSTILE_SECRET_KEY"
+    ]
+  }
 }

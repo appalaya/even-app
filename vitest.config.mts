@@ -1,4 +1,5 @@
 // App tests (src/**): storage, secrets, sync. Node environment; SQLite through node:sqlite (nodeDriver.ts).
+// Also the landing site's Worker script (web/worker/**): its handler with stubbed bindings, in the same Node run.
 // packages/core keeps its own config; `npm test` runs both. `.mts` because the root package is CommonJS
 // (no "type": "module") and Vite warns that it will stop loading ESM config from a CommonJS `.ts`.
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ export default defineConfig({
     alias: { '@/': fileURLToPath(new URL('./src/', import.meta.url)) },
   },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'web/worker/**/*.test.ts'],
     environment: 'node',
   },
 });

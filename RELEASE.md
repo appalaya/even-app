@@ -166,7 +166,7 @@ Do these before the first run; the upload fails without the app record.
    - External group **Family & Friends**, spelled exactly so (the workflow
      looks it up by name), with its testers or a public link.
 6. **Test Information** (TestFlight → Test Information), needed for Beta App
-   Review: beta app description, feedback email (`support@appalaya.com`),
+   Review: beta app description, feedback email (the support mailbox),
    privacy policy URL `https://even.appalaya.com/privacy`, and Beta App Review
    contact details. Sign-in required: no (Even has no accounts).
 7. **Encryption**: nothing to file while the source stays public; see below.
@@ -180,7 +180,7 @@ through Apple's system encryption. Its source code is public
 source code is publicly available as not subject to the EAR once a one-time
 notification has been sent (15 CFR 742.15(b) and 734.7). Appalaya Inc. sent
 that notification to crypt@bis.doc.gov and enc@nsa.gov on 2026-09-27 from
-info@appalaya.com, naming this repository. Apple lists this case among its
+the info mailbox, naming this repository. Apple lists this case among its
 exemptions, so `app.json` sets `ios.infoPlist.ITSAppUsesNonExemptEncryption`
 to `false`: builds upload without a compliance code and never wait at
 Missing Compliance. None of this is legal advice; the owner confirmed the
