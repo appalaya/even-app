@@ -2,7 +2,7 @@
  * The dev seed's Group scenarios against the boards' numbers, through the same reducer, balances and view models the
  * screens use.
  */
-import { formatMinor, nets, reduce, simplify, type GroupState } from '@even/core';
+import { formatMinor, nets, reduce, simplify, type Event, type GroupState } from '@even/core';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,6 +17,7 @@ import {
   balanceRows,
   categoryRows,
   doneSummary,
+  inviteLayout,
   myTransfers,
   sortedExpenses,
 } from '../features/group/model';
@@ -191,6 +192,56 @@ describe('seed scenarios', () => {
       'Hana',
       'Omar',
     ]);
+  });
+
+  it("Group, new with expenses: the invite card pinned over you're owed $903.00, $301.00 each; 0 of 4 done", () => {
+    const { spec, group, balances, transfers, me } = load('newWithExpenses');
+    expect(inviteLayout(group, me)).toBe('pinned');
+    expect(balances.get(me)).toBe(90300);
+    expect(myTransfers(transfers, me).map((t) => [nameOf(group, t.from), t.amount])).toEqual([
+      ['Maya', 30100],
+      ['Jordan', 30100],
+      ['Nathan', 30100],
+    ]);
+    const done = doneSummary(group, me, { everyone: true });
+    expect([done.doneCount, done.total, done.allDone]).toEqual([0, 4, false]);
+    expect(done.people.map((p) => [p.member.name, p.done])).toEqual([
+      ['Sam', false],
+      ['Maya', false],
+      ['Jordan', false],
+      ['Nathan', false],
+    ]);
+    expect(
+      sortedExpenses(group).map((e) => [e.title, e.amount, e.date, e.paidBy === me, e.category]),
+    ).toEqual([
+      ['Banff Town Parking', 2400, '2026-09-19', true, 'parking'],
+      ['Fairmont Banff Springs', 118000, '2026-09-18', true, 'lodging'],
+    ]);
+
+    // The card goes once another member has joined on a device; with no expenses it replaces the header.
+    const maya = [...group.members.values()].find((m) => m.name === 'Maya');
+    expect(maya).toBeDefined();
+    if (maya === undefined) return;
+    const at = Math.max(...spec.entries.map((e) => e.event.ts)) + 1;
+    const claimed = {
+      id: 'claimedByMaya',
+      event: {
+        sv: 1,
+        ts: at,
+        at,
+        by: maya.id,
+        dev: 'mayasPhoneAAAAAAAAAAAA',
+        type: 'member.claimed',
+        id: maya.id,
+      } as Event,
+    };
+    const joined = reduce([...spec.entries, claimed], { format: money });
+    expect(inviteLayout(joined, me)).toBe('none');
+    expect(doneSummary(joined, me).total).toBe(2);
+    const fresh = load('group-new');
+    expect(inviteLayout(fresh.group, fresh.me)).toBe('alone');
+    const main = load('group');
+    expect(inviteLayout(main.group, main.me)).toBe('none');
   });
 
   it('Expense detail: the dinner history as drawn', () => {

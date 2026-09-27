@@ -35,10 +35,19 @@ export interface DoneSummary {
   meDone: boolean;
 }
 
-export function doneSummary(state: GroupState, myId: string | null): DoneSummary {
+/**
+ * `everyone`: while the invite card is pinned over the normal header nobody else has joined yet, so M counts every
+ * non-archived person, joined or not (Group, new with expenses: S, M, J, N and "0 of 4 done adding"); "Everyone's
+ * done" then waits for all of them.
+ */
+export function doneSummary(
+  state: GroupState,
+  myId: string | null,
+  { everyone = false }: { everyone?: boolean } = {},
+): DoneSummary {
   const done = new Set(state.doneMembers);
   const eligible = [...state.members.values()].filter(
-    (m) => !m.archived && !m.unknown && m.devices.length > 0,
+    (m) => !m.archived && !m.unknown && (everyone || m.devices.length > 0),
   );
   const me = eligible.find((m) => m.id === myId);
   const others = eligible.filter((m) => m.id !== myId);
@@ -59,7 +68,7 @@ export function doneSummary(state: GroupState, myId: string | null): DoneSummary
     people: [...stillAdding, ...finished].map(person),
     doneCount: finished.length,
     total: eligible.length,
-    allDone: state.allDone,
+    allDone: state.allDone && (!everyone || finished.length === eligible.length),
     meDone: me !== undefined && done.has(me.id),
   };
 }
@@ -75,6 +84,18 @@ export function showsInviteCard(state: GroupState, myId: string | null): boolean
     if (m.id !== myId && !m.unknown && m.devices.length > 0) return false;
   }
   return true;
+}
+
+/**
+ * Where the invite card goes while nobody else has joined (`showsInviteCard`): with no expenses yet it replaces the
+ * balance area (Group, just created: 'alone'); once you have added one it is pinned above the normal header, settle
+ * list and done-adding row ('pinned': Group, new with expenses). 'none' after another member has joined.
+ */
+export type InviteLayout = 'none' | 'alone' | 'pinned';
+
+export function inviteLayout(state: GroupState, myId: string | null): InviteLayout {
+  if (!showsInviteCard(state, myId)) return 'none';
+  return state.expenses.size > 0 ? 'pinned' : 'alone';
 }
 
 /** Non-archived people for "4 people · nobody else has joined yet", in member order. */

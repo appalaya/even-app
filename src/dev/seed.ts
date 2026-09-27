@@ -93,6 +93,7 @@ export const SEED_STATES = [
   'many',
   'done-sheet',
   'group-new',
+  'newWithExpenses',
   'invite',
   'share',
   'owed',
@@ -298,6 +299,7 @@ export const GROUP_SCENARIOS = [
   'many',
   'done-sheet',
   'group-new',
+  'newWithExpenses',
   'invite',
   'share',
   'expense-detail',
@@ -646,20 +648,59 @@ function whistler(myDevice: string, now: number): { log: Log; sam: SeedMember } 
   return { log, sam };
 }
 
-/** Group, just created: you and three pre-added names; nobody else has joined yet. */
-function banffNew(myDevice: string, now: number): { log: Log; sam: SeedMember } {
+/** Maya (clay), Jordan (ochre) and Nathan (steel) ids, drawn until they sort in that order. */
+function namesInIdOrder(): [string, string, string] {
+  for (;;) {
+    const ids: [string, string, string] = [
+      memberIdFor(CLAY),
+      memberIdFor(OCHRE),
+      memberIdFor(STEEL),
+    ];
+    if (ids[0] < ids[1] && ids[1] < ids[2]) return ids;
+  }
+}
+
+/**
+ * Group, just created: you and three pre-added names; nobody else has joined yet. `expenses` adds two of yours split
+ * four ways (Group, new with expenses): the Fairmont $1,180.00 and the parking $24.00, so you're owed $903.00 and Maya,
+ * Jordan and Nathan each pay you $301.00. Their ids are drawn in that order, which is `simplify`'s order for a tie.
+ */
+function banffNew(myDevice: string, now: number, expenses = false): { log: Log; sam: SeedMember } {
   const log = new Log();
   const sam: SeedMember = { id: memberIdFor(VIOLET), name: 'Sam', dev: myDevice };
+  const [maya, jordan, nathan] = namesInIdOrder();
   const at = now - 5 * MINUTE;
   log.add(at, sam, { type: 'member.added', member: { id: sam.id, name: 'Sam' } });
   log.add(at, sam, { type: 'member.claimed', id: sam.id });
   log.add(at, sam, { type: 'group.created', name: 'Banff 2026', currency: 'CAD' });
-  for (const [name, slot] of [
-    ['Maya', CLAY],
-    ['Jordan', OCHRE],
-    ['Nathan', STEEL],
+  for (const [id, name] of [
+    [maya, 'Maya'],
+    [jordan, 'Jordan'],
+    [nathan, 'Nathan'],
   ] as const) {
-    log.add(at, sam, { type: 'member.added', member: { id: memberIdFor(slot), name } });
+    log.add(at, sam, { type: 'member.added', member: { id, name } });
+  }
+  if (expenses) {
+    const all = [sam.id, maya, jordan, nathan];
+    const each = (amount: number) => Object.fromEntries(all.map((id) => [id, amount / 4]));
+    log.add(
+      at + MINUTE,
+      sam,
+      expense(
+        newId(),
+        'Fairmont Banff Springs',
+        118000,
+        sam,
+        '2026-09-18',
+        'lodging',
+        each(118000),
+      ),
+    );
+    log.add(
+      at + 2 * MINUTE,
+      sam,
+      expense(newId(), 'Banff Town Parking', 2400, sam, '2026-09-19', 'parking', each(2400)),
+    );
   }
   return { log, sam };
 }
@@ -742,6 +783,8 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
           shareOnOpen: state === 'share',
         },
       );
+    case 'newWithExpenses':
+      return scenario('banff-new-expenses', banffNew(myDevice, now, true), now);
     case 'expense-detail': {
       const b = banffBase(myDevice, 'detail');
       banffRecent(b, now);
@@ -1826,6 +1869,7 @@ export async function seed(
     case 'many':
     case 'done-sheet':
     case 'group-new':
+    case 'newWithExpenses':
     case 'invite':
     case 'share':
     case 'expense-detail':

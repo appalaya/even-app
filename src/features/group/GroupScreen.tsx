@@ -41,9 +41,9 @@ import {
   balanceRows,
   categoryRows,
   doneSummary,
+  inviteLayout,
   myTransfers,
   peopleOf,
-  showsInviteCard,
   sortedExpenses,
 } from './model';
 import { groupHrefs } from './routes';
@@ -71,7 +71,8 @@ export interface GroupScreenProps {
 
 /**
  * Group: the big number, the settle list, the done-adding row, then Expenses · Balances · Activity; Add expense in a
- * sticky footer. The segmented control sticks under the nav bar; choosing Balances or Activity scrolls it there (the
+ * sticky footer. Until another member joins, the invite card replaces the big number (Group, just created) or, once
+ * there are expenses, is pinned above it (Group, new with expenses). The segmented control sticks under the nav bar; choosing Balances or Activity scrolls it there (the
  * Balances and Activity boards) as far as the content allows, and Expenses scrolls back to the top (Group).
  */
 export function GroupScreen({
@@ -96,7 +97,7 @@ export function GroupScreen({
   // The sheet is a modal over the window: close it when another screen covers this one.
   useFocusEffect(useCallback(() => () => setDoneOpen(false), []));
 
-  const inviteState = state !== null && derived?.readOnly === null && showsInviteCard(state, myId);
+  const card = state !== null && derived?.readOnly === null ? inviteLayout(state, myId) : 'none';
   const invite = useInvite(
     localId,
     derived?.inviteReady ?? false,
@@ -172,13 +173,13 @@ export function GroupScreen({
   const view = useMemo(() => {
     if (derived === null || state === null) return null;
     return {
-      done: doneSummary(state, myId),
+      done: doneSummary(state, myId, { everyone: card === 'pinned' }),
       mine: myTransfers(derived.transfers, myId),
       balances: derived.nets === null ? [] : balanceRows(state, derived.nets, myId),
       categories: categoryRows(state),
       expenses: sortedExpenses(state),
     };
-  }, [derived, state, myId]);
+  }, [derived, state, myId, card]);
   const sections = useMemo(
     () => (state === null ? [] : activitySections(state, myId)),
     [state, myId],
@@ -214,7 +215,7 @@ export function GroupScreen({
   // Share is hidden while the invite card shows and in a read-only group; until the server has the group it waits.
   const headerRight = (
     <>
-      {!inviteState && !readOnly && (
+      {card === 'none' && !readOnly && (
         <HeaderButton
           icon="share"
           accessibilityLabel="Share invite"
@@ -235,7 +236,7 @@ export function GroupScreen({
   // ----- the block above the segment -----
   let header: ReactNode;
   let segmentGap: number;
-  if (inviteState) {
+  if (card === 'alone') {
     const people: StackMember[] = peopleOf(state).map((m) => ({
       id: m.id,
       name: m.name,
@@ -255,6 +256,7 @@ export function GroupScreen({
     const showSettledLine = net === 0 && settledAll && !readOnly;
     header = (
       <>
+        {card === 'pinned' && <InviteCard invite={invite} groupName={name} />}
         <BalanceSection
           net={net}
           currency={currency}
