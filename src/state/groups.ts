@@ -212,6 +212,17 @@ export interface UsageReport {
   usage: GroupUsage;
 }
 
+/**
+ * "Report this group": everything the contact page is given, and nothing more. Never the secret, the invite or the
+ * group's name (even-server THREAT-MODEL.md, "Abuse posture": a takedown is a group id on a blocklist).
+ */
+export interface ReportInfo {
+  /** The group's id on its current server (PROTOCOL.md §2): base64url(SHA-256(authToken)), 43 characters. */
+  groupId: string;
+  /** That server's canonical URL (PROTOCOL.md §8.1). */
+  server: string;
+}
+
 /** `checkServer`: the server's info (and a group's usage against it), or why it cannot be used. */
 export type ServerCheck =
   | { ok: true; serverUrl: string; info: ServerInfo; usage: GroupUsage | null }
@@ -1410,6 +1421,18 @@ export class GroupService {
     } catch {
       return this.infoCache.peek(origin) ?? null;
     }
+  }
+
+  /**
+   * "Report this group": the group's id on the server it syncs through now, derived from the secret and that server's
+   * origin exactly as sync derives it (so it is the id the server stores and an operator's blocklist takes), and
+   * that server. A group moved elsewhere reports its id there; the old server's id is a different hash.
+   */
+  async reportInfo(localId: string): Promise<ReportInfo> {
+    const row = await this.store.getGroup(localId);
+    if (row === null) throw new StateError('not_found', 'no such group');
+    const secret = await this.secretOf(localId);
+    return { groupId: deriveServer(secret, row.serverUrl).groupId, server: row.serverUrl };
   }
 
   /** The usage meter: this group's envelopes against the server's caps; null when the server's info is unknown. */

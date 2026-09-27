@@ -3,6 +3,7 @@
  * in-memory fake and sqliteStore over node:sqlite).
  */
 import {
+  b64urlEncode,
   decodeInvite,
   deriveLocal,
   deriveServer,
@@ -1347,6 +1348,46 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       });
       w.server('https://never.test').offline = true;
       expect(await g(c).usage(other)).toBeNull();
+    });
+  });
+
+  describe('reporting', () => {
+    it("gives the group's id on its current server and that server, and nothing else", async () => {
+      const w = await setup(kind);
+      const { a, b, localId } = await twoDevices(w);
+      const secret = await secretOn(a, localId);
+      const info = await g(a).reportInfo(localId);
+      expect(Object.keys(info).sort()).toEqual(['groupId', 'server']);
+      expect(info).toEqual({ groupId: deriveServer(secret, SERVER).groupId, server: SERVER });
+      expect(info.groupId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      // The id the server stores the group under (the one its blocklist takes), the same on every member's phone.
+      expect(w.server(SERVER).groups.has(info.groupId)).toBe(true);
+      expect(await g(b).reportInfo(localId)).toEqual(info);
+      // Never the secret, the invite or the group's name.
+      const text = JSON.stringify(info);
+      expect(text).not.toContain(b64urlEncode(secret));
+      expect(text).not.toContain((await g(a).inviteFor(localId)).code);
+      expect(text).not.toContain('Banff');
+      expect(text).not.toContain(localId);
+    });
+
+    it('follows a move to the new server, and needs the key', async () => {
+      const w = await setup(kind);
+      const { a, localId } = await twoDevices(w);
+      const secret = await secretOn(a, localId);
+      const before = await g(a).reportInfo(localId);
+      expect(await g(a).moveServer(localId, OTHER_SERVER)).toMatchObject({ outcome: 'moved' });
+      const after = await g(a).reportInfo(localId);
+      expect(after).toEqual({
+        groupId: deriveServer(secret, OTHER_SERVER).groupId,
+        server: OTHER_SERVER,
+      });
+      expect(after.groupId).not.toBe(before.groupId);
+      expect(w.server(OTHER_SERVER).groups.has(after.groupId)).toBe(true);
+
+      await rejectsWith(g(a).reportInfo('A'.repeat(43)), 'not_found');
+      await a.secrets.deleteSecret(localId);
+      await rejectsWith(g(a).reportInfo(localId), 'no_secret');
     });
   });
 });

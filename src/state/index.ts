@@ -26,6 +26,7 @@ export type {
   MoveResult,
   PaymentDraft,
   PreviewResult,
+  ReportInfo,
   RotateResult,
   ServerCheck,
   UsageReport,
