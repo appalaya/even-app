@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["9S29T387N4.com.appalaya.even"],
+        "components": [
+          { "/": "/i", "comment": "Invite link: https://even.appalaya.com/i#<code>" },
+          { "/": "/i/*", "comment": "The same with a trailing slash (Pages redirects /i/ to /i)" }
+        ]
+      }
+    ]
+  }
+}

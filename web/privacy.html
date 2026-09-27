@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Privacy · Even</title>
+<meta name="description" content="What the Even sync server can see, what it cannot, and what we do not protect against.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main class="doc">
+  <h1>Privacy</h1>
+  <p class="updated">Last updated 26 September 2026</p>
+
+  <p class="summary">Even encrypts every group on your phone before anything leaves it. Our server stores the result and cannot read it: not an amount, not a name, not the group&rsquo;s name. There are no accounts, so there is nothing about you for us to keep.</p>
+
+  <p>This page is the plain-words version of Even&rsquo;s threat model, the technical document behind the claim &ldquo;we cannot read your data.&rdquo; If that claim ever stops being literally true, the threat model changes first, and this page with it. Even is made by Appalaya Inc. (&ldquo;we&rdquo;).</p>
+
+  <h2>What our server can see</h2>
+  <p>A sync server passes locked entries between the phones in a group. For each group, it sees:</p>
+  <ul>
+    <li>An id that looks like random noise. It is different on every server, and nothing about the group can be worked out from it.</li>
+    <li>How many entries there are and when each one arrived.</li>
+    <li>The rough size of each entry. Entries are padded to steps of 256 bytes, so the server can tell a tiny change from a bigger one, but not what either says.</li>
+    <li>A counter that changes when the server&rsquo;s copy of the group is lost or replaced.</li>
+    <li>For each request: whether it reads or writes, and the access key the phone presents. That key works only on that one server and identifies nothing but the group&rsquo;s id there.</li>
+    <li>The internet address (IP) each request comes from.</li>
+  </ul>
+  <p>From that, someone running the server could guess roughly how busy a group is and when; that requests from one address probably come from one phone, and so which entries were probably written by the same phone; roughly how many phones a group has; and that a new group is probably the replacement for an old one after its invite was regenerated. That is the complete list.</p>
+
+  <h2>What it cannot see</h2>
+  <p>Anything inside the group. Not the amounts, not the currency, not what anything was for, not the notes, not the group&rsquo;s name, not a single person&rsquo;s name, and not who added what or who paid whom. It cannot tell whether two entries are about the same expense. It cannot read an entry, change one, or slip in a fake one: a tampered entry fails to unlock on every phone and is ignored.</p>
+  <p>This holds even for someone with full access to the server, its database and its logs, and full knowledge of how Even works. The key that unlocks a group never reaches the server; the app has no way to send it.</p>
+
+  <h2>The invite is the key</h2>
+  <p>An invite, whether you share it as a link or as a code, carries the group&rsquo;s key. Anyone who has it can see and edit the whole group, including its history. There is no account behind it and so no account to recover: if you lose the invite and your phone, and nobody else in the group has it, the group is gone.</p>
+  <ul>
+    <li>Sharing the invite in your group chat is the intended way, and it is exactly as private as that chat.</li>
+    <li>If an invite gets out, regenerate it in the group&rsquo;s settings. The group moves to a new key; the old invite then opens only a closed copy that nothing new is ever written to. Regenerating protects what comes next, not what was already there.</li>
+    <li>A group file exported from the app contains the key too. Keep it as carefully as the invite.</li>
+  </ul>
+
+  <h3>Opening an invite link in a browser</h3>
+  <p>An invite link looks like <code>even.appalaya.com/i#&hellip;</code>. Everything after the <code>#</code> is the invite, and browsers never send that part to any server, ours included. When the app is not installed, the page at that address reads the invite on your phone to show the group&rsquo;s name and the code. It loads nothing from anyone else, contacts nothing, and a strict security policy set by the server forbids it from doing so.</p>
+  <p>Your browser does keep the full link in its history, and may sync that history to its maker. That is why the app offers to copy the code first: the link is there for convenience.</p>
+
+  <h2>What stays on your phone</h2>
+  <p>Every phone in a group holds the group&rsquo;s whole history, stored locked. The app unlocks it in memory while you use it. The only things it writes to storage unlocked are each group&rsquo;s name and currency (both of which are already in the invite), the time of each entry, so they can be put in order, and, while a deletion you asked for is still pending, the access key for that server&rsquo;s copy. Group keys live in the phone&rsquo;s secure keychain or keystore.</p>
+  <p>Notifications are the one exception you control. When the app checks for news in the background, it can show something like &ldquo;Maya added Dinner &middot; 90.00&rdquo;. Your phone keeps that notification and may show it on the lock screen. You can change that in your phone&rsquo;s notification settings, or turn Even&rsquo;s notifications off in the app.</p>
+
+  <h2>What a backup contains</h2>
+  <ul>
+    <li><strong>iPhone.</strong> An iCloud or computer backup includes the app&rsquo;s locked data and the keychain that holds your group keys. So a backup contains everything needed to read your groups. If that matters to you, turn on Advanced Data Protection for end-to-end encrypted iCloud backups, or turn off iCloud Backup.</li>
+    <li><strong>Android.</strong> Group keys are held by the phone&rsquo;s keystore and are not restored from a backup, so an Android backup cannot unlock your groups: it holds their locked data, and each group&rsquo;s name and currency. After restoring, you need the invite again.</li>
+  </ul>
+
+  <h2>Receipts and statements</h2>
+  <p>Even does not read receipts or bank statements yet. When it does, the reading will happen on your phone, using the phone&rsquo;s own on-device model or text recognition. The photo, screenshot or PDF will never leave your phone and will not be stored, synced or logged. No cloud service will be used, including Apple&rsquo;s Private Cloud Compute.</p>
+
+  <h2>Our free server</h2>
+  <p>Unless you choose another one, groups sync through our free server at <code>sync.even.appalaya.com</code>.</p>
+  <ul>
+    <li><strong>What we log.</strong> Counters needed for rate limits, keyed by internet address, which expire within an hour. One line per request with the kind of request, whether it worked, and how long it took. Never the contents, never the keys that let a phone into a group, never full addresses of requests (they contain group ids), and never IP addresses.</li>
+    <li><strong>Cloudflare.</strong> The server and this website run on Cloudflare, which handles the encrypted connection for us. It sees what our server sees, plus the phone&rsquo;s access key for a group while a request is in flight, and it keeps its own logs under its own policy.</li>
+    <li><strong>How long groups stay.</strong> A group nobody has used for 12 months is deleted from the server. The phones keep their copies, and if anyone syncs again later, their phone uploads the group afresh.</li>
+    <li><strong>Limits.</strong> Each entry can be up to 8 KB, and each group up to 2 MB and 10,000 entries. Each internet address has limits on requests, writes and new groups per minute. There is also a daily limit on writes for the whole server: past it, reading keeps working and writing waits until the next day.</li>
+  </ul>
+
+  <h2>Abuse</h2>
+  <p>Because we cannot see what is in a group, we cannot inspect it, and we will not try: that would break the promise above. Instead the server is built to be a poor place to store or pass on anything but expenses. Entries are small, groups expire, there are no real-time messages and no delivery guarantees.</p>
+  <p>If someone reports a group to us with its id, we block that id on our server for good. We cannot read the group to check the report. See <a href="/abuse">how to report abuse</a>.</p>
+
+  <h2>What we do not protect against</h2>
+  <ul>
+    <li><strong>People in the group.</strong> Anyone with the invite can read everything, add or change anything, and pick any name in the group. It is the same trust as a shared spreadsheet. The history shows every change and any version can be restored, but it cannot prove who really made a change.</li>
+    <li><strong>An unlocked phone.</strong> Even has no lock of its own. Anyone using your unlocked phone can open it.</li>
+    <li><strong>Patterns of use.</strong> As described above, the server and Cloudflare can see when and how often a group is used, and from which addresses.</li>
+    <li><strong>A key that got out.</strong> A group has one key for its lifetime, so someone who obtains it can read the whole history. Regenerating the invite shuts them out of what comes next.</li>
+    <li><strong>The app you installed.</strong> The app&rsquo;s code is open for anyone to check, but that does not prove the build in the app store matches it.</li>
+  </ul>
+
+  <h2>Running your own server</h2>
+  <p>You can point a group at a server you run instead of ours, from the group&rsquo;s settings or when you create it. Then nothing about that group touches our server. Your server sees exactly what ours would, and nothing more.</p>
+
+  <h2>This website</h2>
+  <p>This website loads nothing from anyone else: no analytics, no cookies, no trackers, no web fonts. Cloudflare serves it and keeps its own access logs, which include your internet address and the pages you ask for, but never the part of an invite link after the <code>#</code>.</p>
+
+  <h2>Contact</h2>
+  <!-- PLACEHOLDER: confirm the abuse@appalaya.com mailbox before launch (README, Placeholders). -->
+  <p>Our published contact, for reports and for questions about this page, is <!--email_off--><a href="mailto:abuse@appalaya.com">abuse@appalaya.com</a><!--/email_off-->.</p>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <span class="org">Appalaya Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

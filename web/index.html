@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Even: split expenses, privately</title>
+<meta name="description" content="Split expenses with friends. Free, with no ads, no accounts, and no server that can read your data.">
+<meta property="og:site_name" content="Even">
+<meta property="og:title" content="Even: split expenses, privately">
+<meta property="og:description" content="Pay whoever. End even. No ads, no accounts, private by construction.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="wrap">
+
+<main>
+  <section class="hero">
+    <h1 class="lockup">
+      <svg class="mark" width="52" height="52" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+      Even
+    </h1>
+    <p class="tagline"><span>Pay whoever.</span> <span>End even.</span></p>
+    <p class="lede">Split costs with friends on a trip, in a house, or over dinner. Add what you paid, see who owes whom, settle up. Free, and nobody but your group can read it.</p>
+    <div class="stores">
+      <!-- PLACEHOLDER: App Store id, and the official badge artwork for both stores (README, Placeholders). -->
+      <a class="store" href="https://apps.apple.com/app/idPLACEHOLDER" rel="noreferrer"><small>Download on the</small><span>App Store</span></a>
+      <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><small>GET IT ON</small><span>Google Play</span></a>
+    </div>
+  </section>
+
+  <ul class="claims">
+    <li>
+      <h2>No ads</h2>
+      <p>Free for everyone. No daily limits, no upsell, nothing to unlock.</p>
+    </li>
+    <li>
+      <h2>No accounts</h2>
+      <p>No sign-up, no email, no password. A group is a link, and anyone with it is in.</p>
+    </li>
+    <li>
+      <h2>Private by construction</h2>
+      <p>Everything is encrypted on your phone. The server holds data it has no way to read.</p>
+    </li>
+  </ul>
+
+  <section class="how" aria-labelledby="how">
+    <h2 id="how">How it works</h2>
+    <ol class="steps">
+      <li>
+        <h3>A group is a link</h3>
+        <p>Create a group and send its link to your friends. The link carries the group&rsquo;s key, so anyone who has it can see and edit the group. Share it where you would share the group chat.</p>
+      </li>
+      <li>
+        <h3>Everything is encrypted on your phone</h3>
+        <p>Amounts, titles, notes, names and the group&rsquo;s name are locked on your phone before anything is sent, with a key that exists only in the link and on the phones of the people in the group.</p>
+      </li>
+      <li>
+        <h3>The server stores ciphertext</h3>
+        <p>The sync server passes locked entries between phones. It can tell when a group is busy, never what is in it. Every phone keeps the whole history, so Even works offline and survives the server losing its copy.</p>
+      </li>
+      <li>
+        <h3>You can run your own</h3>
+        <p>The protocol is public and the server is small. Point a group at a server you run, and nothing about it goes through ours.</p>
+      </li>
+    </ol>
+    <a class="button-soft" href="https://github.com/appalaya/even-server" rel="noreferrer">Run your own server</a>
+  </section>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <span class="org">Appalaya Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

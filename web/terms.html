@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Terms · Even</title>
+<meta name="description" content="The terms for Even's free sync server.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main class="doc">
+  <h1>Terms</h1>
+  <p class="updated">Last updated 26 September 2026</p>
+
+  <p class="summary">Our free sync server is a convenience, offered as is. Your phones hold your groups; the server only passes locked entries between them. Use it for splitting expenses, and you can always run your own instead.</p>
+
+  <p>These terms cover the free sync server at <code>sync.even.appalaya.com</code> and this website, both run by Appalaya Inc. (&ldquo;we&rdquo;). The Even app is free and open source; its license governs the code. By syncing a group through our server, you agree to these terms.</p>
+
+  <h2>As is, with no warranty</h2>
+  <p>The server and the app are provided as is, without warranty of any kind, express or implied, including fitness for a particular purpose. We do not promise the server will be available, fast, or keep your data. To the extent the law allows, we are not liable for any loss that comes from using it, including lost or incorrect records.</p>
+  <p>Every phone in a group keeps the group&rsquo;s whole history, so the server is never the only copy. The group file export in the app is a backup that needs no server at all.</p>
+
+  <h2>Limits</h2>
+  <ul>
+    <li>We may rate limit any request. There are limits per internet address on requests, writes and new groups, and a daily limit on writes for the whole server; past it, reading keeps working and writing waits until the next day.</li>
+    <li>An entry can be up to 8 KB, and a group up to 2 MB and 10,000 entries.</li>
+    <li>We may change these limits. The server always publishes the ones it enforces, at <code>sync.even.appalaya.com/v1/info</code>.</li>
+  </ul>
+
+  <h2>Idle groups are deleted</h2>
+  <p>A group that nobody has used for 12 months is deleted from the server. Nothing is deleted from your phones, and if anyone in the group syncs again later, their phone uploads it afresh.</p>
+
+  <h2>Acceptable use</h2>
+  <p>Use the server to keep track of shared expenses. Do not use it to store or pass on anything else, and do not use it for anything unlawful, to attack the service, or to get around its limits.</p>
+  <p>We cannot read what is in a group, so we act on reports instead. When we receive a credible report of abuse naming a group&rsquo;s id, we add that id to a blocklist: our server will refuse the group from then on, and it cannot come back. See <a href="/abuse">how to report abuse</a>.</p>
+
+  <h2>You can run your own</h2>
+  <p>The sync protocol is public and the server is small enough to host on almost anything. You can point any group at a server you run, and these terms then no longer apply to that group&rsquo;s syncing.</p>
+
+  <h2>Changes</h2>
+  <p>We may change the free server, these terms, or stop running the server. If we stop, your groups keep working on your phones, and any member can move a group to another server from its settings. When these terms change, we update this page and the date at the top.</p>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <span class="org">Appalaya Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

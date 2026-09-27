@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Report abuse · Even</title>
+<meta name="description" content="How to report abuse of Even's free sync server, and what happens next.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main class="doc">
+  <h1>Report abuse</h1>
+  <p class="updated">Last updated 26 September 2026</p>
+
+  <!-- PLACEHOLDER: confirm the abuse@appalaya.com mailbox before launch (README, Placeholders). -->
+  <p class="summary">Email <!--email_off--><a href="mailto:abuse@appalaya.com">abuse@appalaya.com</a><!--/email_off-->. We block reported groups by their id. We cannot read what is in a group, ours or anyone&rsquo;s.</p>
+
+  <h2>What to include</h2>
+  <ul>
+    <li><strong>The group&rsquo;s id, if you know it.</strong> The app does not show it; it appears in the addresses of requests to the server, for example in network logs, as the part after <code>/v1/groups/</code>.</li>
+    <li><strong>The server,</strong> if it is not <code>sync.even.appalaya.com</code>. We can only act on our own server. A group on someone else&rsquo;s server is theirs to deal with.</li>
+    <li><strong>What you saw,</strong> where, and when.</li>
+  </ul>
+  <p class="muted">If all you have is an invite link, say so. Keep in mind that an invite is the group&rsquo;s key: whoever holds it can read the whole group.</p>
+
+  <h2>What happens</h2>
+  <ul>
+    <li>We add the group&rsquo;s id to our server&rsquo;s blocklist. From then on the server answers every request for that group with &ldquo;gone&rdquo;, the app stops syncing it for good, and it cannot be uploaded again under that id.</li>
+    <li>We cannot read the group&rsquo;s contents to check a report, because the server never has the key. We act on the report and the id.</li>
+    <li>Blocking tells us nothing about who is in the group. We do not know, and we keep no accounts, names or IP addresses to look up.</li>
+    <li>Copies already on members&rsquo; phones are not affected; we have no way to reach them.</li>
+  </ul>
+
+  <h2>Why it works this way</h2>
+  <p>Our server is, by design, a store of locked data it cannot open. We will not break that to inspect content. Instead we make it a poor place for anything but expenses: small entries, capped groups, groups that expire, no real-time messages, and a block that sticks. The <a href="/privacy">privacy page</a> has the details.</p>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <span class="org">Appalaya Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

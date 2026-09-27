@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="format-detection" content="telephone=no">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Join a group on Even</title>
+<meta property="og:site_name" content="Even">
+<meta property="og:title" content="Join a group on Even">
+<meta property="og:description" content="Split expenses with no ads, no accounts, and no server that can read your data.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<!--
+  The invite lives in the URL fragment (after #), which the browser never sends to any server. This page reads it
+  with the one inline script below and shows it; nothing is fetched and nothing is sent.
+  CSP: the script and style below are allowed by their SHA-256 hashes in _headers. After ANY edit to this file,
+  including whitespace, run `node web/scripts/csp-hashes.mjs` then `node web/scripts/check.mjs`.
+  Never add on*= or style="" attributes (hashes cover neither), a second <script> or <style>, or innerHTML.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #F6F5F1; --surface: #FFFFFF; --fill: #F3F2EE; --text: #161715; --text-2: #595B56; --muted: #6B6D67;
+  --separator: #ECEBE6; --accent: #1F6B5A; --accent-pressed: #17574A; --on-accent: #FFFFFF;
+  --accent-soft: rgba(31, 107, 90, 0.10); --badge: #161715; --badge-border: #161715;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0E100F; --surface: #1A1C1B; --fill: #252827; --text: #F1F1ED; --text-2: #A9ACA6; --muted: #8F928C;
+    --separator: #2A2D2B; --accent: #74C1AB; --accent-pressed: #5FA893; --on-accent: #0B1A16;
+    --accent-soft: rgba(116, 193, 171, 0.16); --badge: #000000; --badge-border: #5A5E5B;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+  font-size: 17px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.wrap { width: 100%; max-width: 480px; margin: 0 auto; padding: 0 16px; }
+.top { padding: 20px 4px 0; }
+.lockup {
+  display: inline-flex; align-items: center; gap: 8px; color: var(--text); text-decoration: none;
+  font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.5px;
+}
+.mark { color: var(--accent); }
+main { padding: 20px 0 0; }
+.card { padding: 20px; background: var(--surface); border-radius: 18px; }
+.eyebrow { margin: 0; font-size: 17px; line-height: 22px; color: var(--text-2); }
+h1 {
+  margin: 2px 0 0; font-size: 30px; line-height: 36px; font-weight: 700; letter-spacing: -0.5px;
+  overflow-wrap: anywhere;
+}
+.meta { margin: 6px 0 0; font-size: 15px; line-height: 20px; color: var(--text-2); }
+.button {
+  display: flex; align-items: center; justify-content: center; height: 52px; margin: 20px 0 0;
+  border-radius: 26px; background: var(--accent); color: var(--on-accent);
+  font-size: 17px; line-height: 22px; font-weight: 600; text-decoration: none;
+}
+.button:hover { background: var(--accent-pressed); color: var(--on-accent); }
+.aside { margin: 16px 0 0; font-size: 15px; line-height: 21px; color: var(--text-2); }
+h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
+.stores { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 0; }
+.store {
+  flex: 1 1 140px; display: flex; flex-direction: column; justify-content: center; height: 52px; padding: 0 16px;
+  border-radius: 12px; border: 1px solid var(--badge-border); background: var(--badge); color: #FFFFFF;
+  text-decoration: none;
+}
+.store small { font-size: 11px; line-height: 13px; letter-spacing: 0.2px; }
+.store span { font-size: 19px; line-height: 23px; font-weight: 600; letter-spacing: -0.3px; }
+.codebox { position: relative; margin: 12px 0 0; padding: 16px 16px 64px; border-radius: 18px; background: var(--fill); }
+.code {
+  margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; line-height: 22px;
+  word-break: break-all; -webkit-user-select: all; user-select: all;
+}
+.copy {
+  position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 6px; height: 40px;
+  padding: 0 16px 0 12px; border: 0; border-radius: 20px; background: var(--accent-soft); color: var(--accent);
+  font: inherit; font-size: 15px; line-height: 20px; font-weight: 600; cursor: pointer;
+}
+.hint { margin: 12px 4px 0; font-size: 15px; line-height: 21px; color: var(--text-2); }
+.note { margin: 28px 4px 0; font-size: 13px; line-height: 18px; color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.foot {
+  margin: 48px 0 0; padding: 20px 4px 40px; border-top: 1px solid var(--separator);
+  display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; line-height: 20px; color: var(--muted);
+}
+.foot a { color: var(--text-2); text-decoration: none; }
+.foot span { margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main>
+  <section id="invite" hidden>
+    <div class="card">
+      <p class="eyebrow" id="eyebrow">You've been invited to</p>
+      <h1 id="group">a group</h1>
+      <p class="meta" id="currency" hidden></p>
+      <a class="button" id="open" hidden>Open in Even</a>
+      <p class="aside" id="desktop" hidden>Open this link on your phone to join.</p>
+    </div>
+
+    <h2>Don't have Even yet?</h2>
+    <div class="stores">
+      <!-- PLACEHOLDER: App Store id, and the official badge artwork for both stores (README, Placeholders). -->
+      <a class="store" href="https://apps.apple.com/app/idPLACEHOLDER" rel="noreferrer"><small>Download on the</small><span>App Store</span></a>
+      <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><small>GET IT ON</small><span>Google Play</span></a>
+    </div>
+
+    <h2 id="code-label">Invite code</h2>
+    <div class="codebox">
+      <p class="code" id="code"></p>
+      <button class="copy" id="copy" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+        <span id="copy-label">Copy</span>
+      </button>
+    </div>
+    <p class="sr" id="copy-status" role="status" aria-live="polite"></p>
+    <p class="hint">Installed already? Open Even and tap Join with code.</p>
+
+    <p class="note">Anyone with this link can see and edit the group. The invite is the part after the # in the link: your browser never sends it to us or to anyone else, and this page only reads it to show you.</p>
+  </section>
+
+  <section id="broken" hidden>
+    <div class="card">
+      <h1>This invite link is incomplete.</h1>
+      <p class="meta">Ask for it again.</p>
+    </div>
+    <p class="hint"><a href="/">What is Even?</a></p>
+  </section>
+
+  <noscript>
+    <div class="card">
+      <h1>Open this link in Even</h1>
+      <p class="meta">This page needs JavaScript to show the invite. It runs only on your device and sends nothing.</p>
+    </div>
+  </noscript>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <span>Appalaya Inc.</span>
+</footer>
+
+</div>
+<script>
+(function () {
+  'use strict';
+
+  var byId = function (id) { return document.getElementById(id); };
+  var has = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+
+  // A different invite pasted into the address bar only changes the fragment, which does not reload the page.
+  window.addEventListener('hashchange', function () { location.reload(); });
+
+  // PROTOCOL.md section 8.2: base64url(JSON {v, s, k, h, g?, cur?}). Shape only; the app verifies the checksum.
+  function parse(code) {
+    if (!/^[A-Za-z0-9_-]{16,4096}$/.test(code)) return null;
+    var p;
+    try {
+      var b64 = code.replace(/-/g, '+').replace(/_/g, '/');
+      var bin = atob(b64 + '===='.slice(b64.length % 4 || 4));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      p = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    } catch (e) {
+      return null;
+    }
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) return null;
+    if (p.v !== 1) return null;
+    if (typeof p.s !== 'string' || p.s.indexOf('https://') !== 0) return null;
+    if (typeof p.k !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(p.k)) return null;
+    if (typeof p.h !== 'string' || !/^[A-Za-z0-9_-]{6}$/.test(p.h)) return null;
+    if (has(p, 'g') && (typeof p.g !== 'string' || Array.from(p.g).length > 80)) return null;
+    if (has(p, 'cur') && (typeof p.cur !== 'string' || !/^[A-Z]{3}$/.test(p.cur))) return null;
+    return { g: has(p, 'g') ? p.g.trim() : '', cur: has(p, 'cur') ? p.cur : '' };
+  }
+
+  // "Canadian dollar", as the app's currencyName: Intl's unit name for one, sentence case; the code if there is none.
+  function currencyName(code) {
+    try {
+      var parts = new Intl.NumberFormat('en', {
+        style: 'currency', currency: code, currencyDisplay: 'name', maximumFractionDigits: 0
+      }).formatToParts(1);
+      for (var i = 0; i < parts.length; i++) {
+        var name = parts[i].type === 'currency' ? parts[i].value.trim() : '';
+        if (name !== '' && name.toUpperCase() !== code) return name.charAt(0).toUpperCase() + name.slice(1);
+      }
+    } catch (e) { /* no currency names in this engine */ }
+    return '';
+  }
+
+  var code = location.hash.slice(1);
+  var invite = parse(code);
+  if (invite === null) {
+    byId('broken').hidden = false;
+    return;
+  }
+
+  if (invite.g !== '') {
+    byId('group').textContent = invite.g;
+  } else {
+    byId('eyebrow').hidden = true;
+    byId('group').textContent = "You've been invited to a group";
+  }
+  if (invite.cur !== '') {
+    var name = currencyName(invite.cur);
+    byId('currency').textContent = name !== '' ? name + ' \u00b7 ' + invite.cur : invite.cur;
+    byId('currency').hidden = false;
+  }
+
+  // The scheme never carries the invite (PROTOCOL.md 8.2): even://join only opens Join with code.
+  var ua = navigator.userAgent;
+  var target = '';
+  if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) {
+    target = 'even://join';
+  } else if (/Android/.test(ua)) {
+    target = 'intent://join#Intent;scheme=even;package=com.appalaya.even;end';
+  }
+  if (target !== '') {
+    byId('open').href = target;
+    byId('open').hidden = false;
+  } else {
+    byId('desktop').hidden = false;
+  }
+
+  var codeEl = byId('code');
+  var label = byId('copy-label');
+  var status = byId('copy-status');
+  var timer = 0;
+  codeEl.textContent = code;
+
+  function selectCode() {
+    var range = document.createRange();
+    range.selectNodeContents(codeEl);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try { return document.execCommand('copy'); } catch (e) { return false; }
+  }
+  function show(ok) {
+    label.textContent = ok ? 'Copied' : 'Copy';
+    status.textContent = ok ? 'Code copied.' : 'Code selected. Copy it from the menu.';
+    clearTimeout(timer);
+    timer = setTimeout(function () { label.textContent = 'Copy'; status.textContent = ''; }, 2000);
+  }
+  byId('copy').addEventListener('click', function () {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(
+        function () { show(true); },
+        function () { show(selectCode()); }
+      );
+    } else {
+      show(selectCode());
+    }
+  });
+
+  byId('invite').hidden = false;
+})();
+</script>
+</body>
+</html>

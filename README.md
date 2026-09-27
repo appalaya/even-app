@@ -78,7 +78,7 @@ assets/               — icon and splash (placeholders until the brand mark lan
 scope.md              — what's in and out for v1
 design.md             — architecture, data model, event schema, sync, screens
 working-principles.md — how we work
-web/                  — landing page: universal-link files, invite page, terms, privacy (not yet created)
+web/                  — landing page (even.appalaya.com, Cloudflare Pages): association files, invite page, privacy, terms, abuse; see web/README.md
 ```
 
 ## Store listing

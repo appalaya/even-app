@@ -1,0 +1,29 @@
+# Cloudflare Pages response headers for even.appalaya.com. See README.md.
+#
+# Rules apply in file order and a request collects the headers of every rule it matches; a "! Name" line removes a
+# header set by an earlier rule. So /* comes first, and the /i rules replace its CSP instead of adding a second one
+# (two CSP headers would both be enforced, and the site-wide one would block the invite page's inline script).
+#
+# The two "default-src 'none'" lines are GENERATED from i.html by scripts/csp-hashes.mjs. After any edit to i.html,
+# run `node web/scripts/csp-hashes.mjs` and then `node web/scripts/check.mjs`.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+
+/i
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-+3wBjErlMPDeji4DFCKSayA49Cs5hF1WeD4n+N1knM8='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  X-Robots-Tag: noindex
+
+/i/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-+3wBjErlMPDeji4DFCKSayA49Cs5hF1WeD4n+N1knM8='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  X-Robots-Tag: noindex
