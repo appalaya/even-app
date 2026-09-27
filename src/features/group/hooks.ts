@@ -88,10 +88,10 @@ export function useNow(ms = 30_000): number {
 
 /** Errors the status line words on their own (design.md "Error handling"); the rest read "Not synced since …". */
 const ERROR_WORDS: Readonly<Record<string, string>> = {
-  group_blocked: 'This server refuses this group.',
-  not_an_even_server: "That URL isn't an Even server. Check the address.",
-  unsupported_version: 'This server needs updating',
-  unauthorized: "Can't reach this group's server",
+  group_blocked: 'This group is blocked on its server.',
+  not_an_even_server: "This group's server isn't an Even server.",
+  unsupported_version: "This group's server needs an update.",
+  unauthorized: "Can't reach this group's server.",
 };
 
 /** One turn of the sync glyph (StatusLine: 1.1 s per turn). */

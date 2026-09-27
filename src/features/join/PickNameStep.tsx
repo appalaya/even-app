@@ -10,7 +10,7 @@
  * (SeatSameDevice): "Continue as Maya" claims it, "Choose again" goes back to the list. The Join boards draw neither,
  * so after Join every claimed name reads "joined" and asks, as before.
  */
-import { memberColor, newId, type MemberState } from '@even/core';
+import { memberColor, newId, type MemberState, LIMITS } from '@even/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { EmojiPickerSheet } from '@/features/emoji/EmojiPickerSheet';
@@ -144,7 +144,7 @@ export function PickNameStep({
         onClaimed();
       }
     } catch (error) {
-      setFormError("That name couldn't be claimed.");
+      setFormError(`Couldn't join as ${member.name}. Try again.`);
       console.warn('claim failed', error instanceof Error ? error.message : error);
     } finally {
       setBusy(false);
@@ -170,9 +170,10 @@ export function PickNameStep({
       onClaimed();
     } catch (error) {
       if (isStateError(error, 'name_taken')) setNameError(nameTakenMessage(clean));
-      else if (isStateError(error, 'members_full')) setFormError('This group is full.');
+      else if (isStateError(error, 'members_full'))
+        setFormError(`A group has at most ${LIMITS.membersMax} members.`);
       else {
-        setFormError("You couldn't be added.");
+        setFormError("Couldn't add you. Try again.");
         console.warn('join as new member failed', error instanceof Error ? error.message : error);
       }
     } finally {
