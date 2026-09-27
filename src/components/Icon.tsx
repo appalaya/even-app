@@ -184,7 +184,7 @@ const ICONS = {
       path('M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3'),
     ],
   },
-  /** "Anyone with this link…" (Group settings), "Anyone who scans this…" (InviteQR) · 18. */
+  /** "Anyone with the link…" (Group settings), "Anyone who scans this…" (InviteQR) · 18. */
   key: {
     stroke: 2,
     join: 'round',

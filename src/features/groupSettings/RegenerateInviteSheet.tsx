@@ -60,8 +60,7 @@ function RegenerateBody({
         Regenerate the invite link?
       </AppText>
       <AppText variant="calloutLoose" color="textSecondary" style={styles.paragraph}>
-        Everyone in the group will need the new link. The old link stops working, and anyone still
-        using it will be asked for the new one. You&apos;ll share the new link next.
+        The old link stops working. You&apos;ll share the new one next.
       </AppText>
       {members.length > 0 && (
         <>
@@ -83,7 +82,7 @@ function RegenerateBody({
           </View>
           {removed !== null && (
             <AppText variant="caption" color="textSecondary" style={styles.caption}>
-              {removed.name} will be archived in the new group: still in history, out of pickers.
+              {removed.name} won&apos;t be in the new group, but stays in past expenses.
             </AppText>
           )}
         </>

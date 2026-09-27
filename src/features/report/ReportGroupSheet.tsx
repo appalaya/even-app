@@ -123,7 +123,7 @@ function AppalayaBody({ report }: { report: ReportInfo }) {
   return (
     <>
       <AppText variant="calloutLoose" color="textSecondary" style={styles.paragraph}>
-        This opens our contact page with the group filled in. You add what&apos;s wrong.
+        Opens our contact page with this group filled in.
       </AppText>
       <Card tone="fill" radius="group" style={styles.box}>
         <BoxHeader>What we receive</BoxHeader>
@@ -139,8 +139,7 @@ function AppalayaBody({ report }: { report: ReportInfo }) {
         <Row label="Reason" value="What you write" />
       </Card>
       <AppText variant="footnote" color="textSecondary" style={styles.note}>
-        Never the invite, the key, or anything in the group. If we block it, it stops syncing on our
-        server for everyone; copies on phones stay.
+        Never the invite or anything in the group. If we block it, it stops syncing for everyone.
       </AppText>
     </>
   );
@@ -201,8 +200,8 @@ function OtherBody({
         )}
       </Card>
       <AppText variant="footnote" color="textSecondary" style={styles.note}>
-        You can still tell us. We&apos;ll read it, but we can&apos;t block this group or see inside
-        it. We&apos;d get its id and server, never its key or contents.
+        We can&apos;t block it, but you can still tell us. We&apos;d get its id and server, never
+        what&apos;s in it.
       </AppText>
     </>
   );

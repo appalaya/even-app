@@ -681,7 +681,7 @@ function StatusSection() {
         <Note>Without an action (Expense detail, flagged; a different currency)</Note>
         <Banner
           variant="flagged"
-          message="This entry is in USD, not CAD, and is left out of balances."
+          message="This expense is in USD, not CAD, so it's left out of balances."
         />
       </Gutter>
     </>
@@ -725,7 +725,7 @@ function StatesSection() {
           variant="row"
           accessibilityLabel="Name"
           defaultValue="Maya"
-          error="Someone here is already called Maya. Try Maya K."
+          error="Someone here is already called Maya."
         />
         <StateLabel>Pressed · primary button</StateLabel>
         <Row>
@@ -943,9 +943,7 @@ function MoreListSection() {
           />
         </Card>
       </Gutter>
-      <Footnote>
-        You can edit your own name and avatar. Anyone can archive a member who&apos;s left.
-      </Footnote>
+      <Footnote>Archived members stay in past expenses and balances.</Footnote>
       <SectionHeader variant="settings">About</SectionHeader>
       <Gutter>
         <Card radius="group" separatorInset={16}>
@@ -1134,7 +1132,7 @@ function FieldSection() {
           label="People (optional)"
           placeholder="Add a name"
           onAdd={() => {}}
-          helper="They'll pick their name when they join. You can add more later."
+          helper="They'll pick their name when they join."
         />
         <View style={styles.gap6}>
           <FieldLabel>Your name</FieldLabel>
@@ -1211,9 +1209,6 @@ function CategorySection() {
       <Gutter>
         <CategoryGrid value={picked} onChange={setPicked} />
       </Gutter>
-      <Footnote align="center" spacingTop={8}>
-        Your pick stays, even if you edit the title.
-      </Footnote>
       <SectionHeader tabular spacingTop={24}>
         Spend by category · $1,780.00
       </SectionHeader>
@@ -1297,7 +1292,7 @@ function SheetSection({ startOpen }: { startOpen: boolean }) {
         >
           <View style={styles.sheetBody}>
             <AppText variant="subheadLoose" color="textSecondary">
-              Paste the code someone sent you. A full invite link works too.
+              Paste the code or link someone sent you, or scan it from their phone.
             </AppText>
           </View>
         </SheetPanel>

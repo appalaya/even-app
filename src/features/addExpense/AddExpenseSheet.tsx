@@ -18,7 +18,6 @@ import {
   AppText,
   Button,
   CategoryGrid,
-  Footnote,
   Icon,
   Keypad,
   SelectPill,
@@ -400,14 +399,9 @@ function ExpenseForm({
         ]}
       />
       {typing ? null : pickerOpen ? (
-        <>
-          <View style={styles.keys}>
-            <CategoryGrid value={chip.category} onChange={onPickCategory} />
-          </View>
-          <Footnote align="center" spacingTop={8}>
-            Your pick stays, even if you edit the title.
-          </Footnote>
-        </>
+        <View style={styles.keys}>
+          <CategoryGrid value={chip.category} onChange={onPickCategory} />
+        </View>
       ) : (
         <View style={styles.keys}>
           <Keypad onKey={onKey} decimal={exponent > 0} />

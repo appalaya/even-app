@@ -16,7 +16,7 @@ const plan = (localId: string, count: number): PlannedNotification => ({
   localId,
   identifier: `activity:${localId}`,
   title: 'Banff 2026',
-  body: `${count} new in Banff 2026`,
+  body: `${count} new changes`,
   count,
 });
 

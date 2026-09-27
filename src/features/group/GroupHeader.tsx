@@ -139,9 +139,9 @@ export function SpentSection({
 }
 
 /**
- * "This phone doesn't know which name is yours, so it can't add or settle anything yet." (GroupNoSeat): 16 below the
- * header, inset 16; `surface` with a 1 pt `border`, radius 14, padded 12 · 14; the 20 pt person glyph in
- * `textSecondary`, 1 down, 10 before the 15/21 sentence.
+ * "Pick your name to add or settle expenses." (GroupNoSeat): 16 below the header, inset 16; `surface` with a 1 pt
+ * `border`, radius 14, padded 12 · 14; the 20 pt person glyph in `textSecondary`, 1 down, 10 before the 15/21
+ * sentence.
  */
 export function NoSeatNote() {
   const { tokens } = useTheme();
@@ -151,8 +151,7 @@ export function NoSeatNote() {
         <Icon name="person" size={20} color={tokens.textSecondary} />
       </View>
       <AppText variant="subheadLoose" style={styles.flex}>
-        This phone doesn&apos;t know which name is yours, so it can&apos;t add or settle anything
-        yet.
+        Pick your name to add or settle expenses.
       </AppText>
     </View>
   );

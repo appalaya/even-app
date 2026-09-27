@@ -11,16 +11,16 @@
  *
  * "I'm not listed" expands in place (extra states 4): its row gains an up chevron, and under it, inside the card, the
  * 56 pt avatar with its pencil badge (the avatar colour previews the one the new seat gets; a tap opens the emoji
- * picker) beside "Your name" and its field; "Filled in from your defaults in Settings." under the card; "Join as
- * Alex" at the foot. The question then sits 20 below the header and the sheet rises to 176.
+ * picker) beside "Your name" and its field (filled in from App settings' defaults); "Join as Alex" at the foot. The
+ * question then sits 20 below the header and the sheet rises to 176.
  *
  * A tap on a name marked joined asks, stacked over this sheet, "Is that you on another phone, or a different Maya?"
  * (extra states 5): "It's me" claims it; "Different Maya" opens "I'm not listed" with the name empty.
  *
  * Offered again on a group this phone already holds (`again`; SeatPick, SeatPickDark): "You're already in" over the
- * group name, the question 24 below the header and 2 above "This phone doesn't know which one is you yet." (15/21
- * `textSecondary`, 10 above the list). With five rows the sheet's top edge sits at 214. A name this phone claimed
- * reads "this phone" (a 13 pt phone glyph and the caption, both `textSecondary`) in place of "joined" (SeatSameDevice).
+ * group name, the question 24 below the header and 10 above the list (no line under it: the question already asks).
+ * With five rows the sheet's top edge sits at 214. A name this phone claimed reads "this phone" (a 13 pt phone glyph
+ * and the caption, both `textSecondary`) in place of "joined" (SeatSameDevice).
  */
 import type { MemberState } from '@even/core';
 import { Fragment, type ReactNode } from 'react';
@@ -77,8 +77,6 @@ export interface PickNameSheetProps {
   newEmoji: string | null;
   newColor: number;
   onChangeAvatar: () => void;
-  /** The name came from App settings' defaults ("Filled in from your defaults in Settings."). */
-  fromDefaults: boolean;
   onAddSelf: () => void;
   nameError?: string;
   formError?: string;
@@ -104,7 +102,6 @@ export function PickNameSheet({
   newEmoji,
   newColor,
   onChangeAvatar,
-  fromDefaults,
   onAddSelf,
   nameError,
   formError,
@@ -156,11 +153,6 @@ export function PickNameSheet({
       >
         Which name is yours?
       </AppText>
-      {again && (
-        <AppText variant="subheadLoose" color="textSecondary" style={styles.again}>
-          This phone doesn&apos;t know which one is you yet.
-        </AppText>
-      )}
       <ScrollView style={styles.flex} keyboardShouldPersistTaps="handled">
         <View style={[styles.list, { backgroundColor: tokens.surfaceInset }]}>
           {members.map((m) => {
@@ -247,11 +239,6 @@ export function PickNameSheet({
             </View>
           )}
         </View>
-        {notListed && fromDefaults && (
-          <AppText variant="caption" color="textMuted" style={styles.defaults}>
-            Filled in from your defaults in Settings.
-          </AppText>
-        )}
         {formError !== undefined && <FieldError message={formError} style={styles.field} />}
       </ScrollView>
       {notListed && (
@@ -286,8 +273,7 @@ const styles = StyleSheet.create({
   host: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   question: { marginTop: 28, marginBottom: 10, marginHorizontal: 20 },
   questionExpanded: { marginTop: 20 },
-  questionAgain: { marginTop: 24, marginBottom: 2 },
-  again: { marginBottom: 10, marginHorizontal: 20 },
+  questionAgain: { marginTop: 24 },
   mark: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   list: { marginHorizontal: 16, borderRadius: radii.card, overflow: 'hidden' },
   newSeat: {
@@ -299,7 +285,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   newName: { flex: 1, gap: 6 },
-  defaults: { marginTop: 8, marginHorizontal: 20 },
   field: { marginTop: 10, marginHorizontal: 16 },
   join: { marginTop: 12, marginHorizontal: 16 },
 });

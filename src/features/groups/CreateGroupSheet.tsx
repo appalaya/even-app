@@ -5,9 +5,9 @@
  * - Currency: a 52 pt row, the code 17/22 semibold and its name in `textSecondary`, a chevron; "From your phone's
  *   region. It can't be changed later.";
  * - People (optional): "Add a name" with the add button, removable chips 8 apart, "They'll pick their name when
- *   they join. You can add more later.";
+ *   they join.";
  * - You in this group: a `fill` card (padding 16, gap 14) with the 72 pt avatar and pencil badge (opens the emoji
- *   picker) and "Your name" on `surface`; "Filled in from your defaults in Settings.";
+ *   picker) and "Your name" on `surface`, filled in from App settings' defaults;
  * - "Advanced: sync server", an outlined row showing the default host, collapsed; open (Groups, extra states:
  *   "Create, Advanced open") the outline holds the row, the URL field (48, radius 12, 16/21) and "Only change this
  *   if you run your own Even server.";
@@ -90,7 +90,6 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
   const [personError, setPersonError] = useState<string | undefined>();
   const [myName, setMyName] = useState(prefill?.myName ?? '');
   const [myEmoji, setMyEmoji] = useState<string | null>(prefill?.myEmoji ?? null);
-  const [fromDefaults, setFromDefaults] = useState(prefill?.myName !== undefined);
   const [advanced, setAdvanced] = useState(prefill?.advancedOpen === true);
   const [server, setServer] = useState<string>(PROTOCOL.defaultServer);
   const [serverError, setServerError] = useState<string | undefined>();
@@ -120,10 +119,7 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
   const [seeded, setSeeded] = useState(prefill?.myName !== undefined);
   if (!seeded && prefs !== null) {
     setSeeded(true);
-    if (prefs.name !== null) {
-      setMyName(prefs.name);
-      setFromDefaults(true);
-    }
+    if (prefs.name !== null) setMyName(prefs.name);
     setMyEmoji(prefs.emoji);
   }
 
@@ -274,7 +270,7 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
                 ))}
               </View>
             )}
-            <Helper>They&apos;ll pick their name when they join. You can add more later.</Helper>
+            <Helper>They&apos;ll pick their name when they join.</Helper>
           </View>
 
           <View style={styles.group}>
@@ -315,7 +311,6 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
                 />
               </View>
             </View>
-            {fromDefaults && <Helper>Filled in from your defaults in Settings.</Helper>}
           </View>
 
           <View style={[styles.advanced, { borderColor: tokens.border }]}>

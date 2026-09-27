@@ -59,7 +59,6 @@ export function PickNameStep({
   const [busy, setBusy] = useState(false);
   const [notListed, setNotListed] = useState(false);
   const [newName, setNewName] = useState('');
-  const [fromDefaults, setFromDefaults] = useState(false);
   const [newEmoji, setNewEmoji] = useState<string | null>(null);
   // The new seat's id is chosen now, so its avatar previews the colour it will have.
   const [newMemberId] = useState(() => newId());
@@ -113,13 +112,10 @@ export function PickNameStep({
       setNotListed(true);
       setNameError(undefined);
       if (fill) {
-        const name = prefs?.name ?? '';
-        setNewName(name);
-        setFromDefaults(name !== '');
+        setNewName(prefs?.name ?? '');
         setNewEmoji(prefs?.emoji ?? null);
       } else {
         setNewName('');
-        setFromDefaults(false);
       }
     },
     [prefs],
@@ -219,13 +215,11 @@ export function PickNameStep({
       newName={newName}
       onChangeNewName={(value) => {
         setNewName(value);
-        setFromDefaults(false);
         setNameError(undefined);
       }}
       newEmoji={newEmoji}
       newColor={memberColor(newMemberId)}
       onChangeAvatar={() => setPicking(true)}
-      fromDefaults={fromDefaults}
       onAddSelf={() => void addSelf()}
       nameError={nameError}
       formError={formError}

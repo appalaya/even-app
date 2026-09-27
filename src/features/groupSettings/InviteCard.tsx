@@ -56,7 +56,7 @@ export function InviteCard({ link, ready, onCopyCode, onShareLink, onShowQr }: I
           <Icon name="key" size={18} color={tokens.textSecondary} />
         </View>
         <AppText variant="subheadLoose" style={styles.flex}>
-          Anyone with this link can see and edit the group.
+          Anyone with the link can see and edit this group.
         </AppText>
       </View>
       <View style={styles.buttons}>

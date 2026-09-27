@@ -1,8 +1,8 @@
 /**
  * Split, pushed from Add expense (boards Split = Exact, SplitEqual, SplitPercent, light and dark): segmented
- * Equal · Exact · Percent over one member list. Equal has a ×n stepper and a "+ extra" field per member ("Extras
- * come off the top; the rest splits by share."); Exact and Percent type into the member's cell with the keypad, and
- * Done turns on when Remaining reaches zero. Excluded members stay listed as "Not included"; archived members
+ * Equal · Exact · Percent over one member list. Equal has a ×n stepper and a "+ extra" field per member (extras come
+ * off the top, the rest splits by share); Exact and Percent type into the member's cell with the keypad, and Done
+ * turns on when Remaining reaches zero (no caption says so: the Remaining line and the dimmed Done do). Excluded members stay listed as "Not included"; archived members
  * already on the expense stay visible. Done hands the split back to the sheet's draft; back discards the edit.
  */
 import { exponentOf, formatMinor, LIMITS, type GroupState, type MemberState } from '@even/core';
@@ -16,7 +16,6 @@ import {
   Avatar,
   Card,
   Checkbox,
-  Footnote,
   Icon,
   Keypad,
   SegmentedControl,
@@ -321,11 +320,6 @@ function SplitEditor({
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-        {split.mode === 'equal' && (
-          <Footnote align="center" spacingTop={10}>
-            Extras come off the top; the rest splits by share.
-          </Footnote>
-        )}
         <Card tone="fill" separatorInset={split.mode === 'equal' ? 46 : 48} style={styles.list}>
           {rows}
         </Card>
@@ -356,16 +350,11 @@ function SplitEditor({
             </AppText>
           </View>
         )}
-        {split.mode === 'equal' ? (
+        {split.mode === 'equal' && (
           <AppText variant="caption" color="textMuted" tabular style={styles.note}>
             {sharesLine(split, amount, currency)}
           </AppText>
-        ) : left !== 0 ? (
-          <AppText variant="caption" color="textMuted" tabular style={styles.note}>
-            Done turns on when this reaches{' '}
-            {split.mode === 'exact' ? formatMinor(0, currency) : formatBps(0)}.
-          </AppText>
-        ) : null}
+        )}
       </ScrollView>
       {keyed && (
         <View style={styles.keys}>

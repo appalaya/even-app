@@ -91,7 +91,7 @@ function LeaveBody({
             {label}
           </AppText>
           <AppText variant="footnote" color="textSecondary">
-            Other members will put it back on their next sync unless they leave too.
+            Anyone still in the group will put it back.
           </AppText>
         </View>
       </View>

@@ -1,8 +1,11 @@
 /**
  * Invite plumbing for the Join flow (design.md "Invites"): the `/i` route's fragment, the copy for a code that cannot
- * be used, and the confirmation for an invite that names a group this phone holds on another server. Pure.
+ * be used, the line under Join when a usable invite still cannot be joined, and the confirmation for an invite that
+ * names a group this phone holds on another server. Pure.
  */
-import type { InviteProblem } from '@/state';
+import type { InviteProblem, JoinResult } from '@/state';
+
+import type { SyncErrorCode } from '../../services/sync/types';
 
 /**
  * The payload of an invite link: everything after the first `#` of `https://even.appalaya.com/i#<payload>` (also
@@ -47,7 +50,38 @@ export function moveQuestion(name: string, fromServer: string, toServer: string)
   return `Move ${name} from ${hostOf(fromServer)} to ${hostOf(toServer)}?`;
 }
 
-/** The first-launch recovery offer: "Recover 2 groups from your keychain?" */
+/** The first-launch recovery offer: "Recover 2 groups?" */
 export function recoverQuestion(count: number): string {
-  return `Recover ${count} ${count === 1 ? 'group' : 'groups'} from your keychain?`;
+  return `Recover ${count} ${count === 1 ? 'group' : 'groups'}?`;
+}
+
+/** Why Join did not go through for an invite that reads: the first sync's error, or `unknown` for anything else. */
+export type JoinFailure = SyncErrorCode | 'unknown';
+
+/**
+ * A fresh join whose first sync failed, as the error it failed with; null when the join went through (synced, or
+ * waiting on a cycle that was already running) or was not a fresh join at all.
+ */
+export function joinFailureOf(result: JoinResult): JoinFailure | null {
+  if (result.kind !== 'joined' || result.firstSync.outcome !== 'failed') return null;
+  return result.firstSync.error;
+}
+
+/**
+ * The line under Join when a usable invite cannot be joined (JoinCodeFailed, JoinCodeRefused): the server cannot be
+ * reached, refuses the group, is not an Even server, or needs updating; anything else is "Couldn't join".
+ */
+export function joinFailureMessage(failure: JoinFailure, host: string): string {
+  switch (failure) {
+    case 'network':
+      return `Couldn't reach ${host}. Check your connection and try again.`;
+    case 'group_blocked':
+      return "This group is blocked on its server, so you can't join it.";
+    case 'not_an_even_server':
+      return "That URL isn't an Even server. Check the address.";
+    case 'unsupported_version':
+      return 'This server needs updating.';
+    default:
+      return "Couldn't join. Try again.";
+  }
 }

@@ -34,7 +34,7 @@ import { FieldLabel } from './SectionHeader';
  * Placeholder text is `textMuted` (Palette, States). An `error` draws a 1.5 pt inset ring in `text` on any shape
  * and the message under it: on `code` a 20 pt warning glyph, 10 pt gap, 16/22 semibold, 14 below the field
  * (JoinCodeError); on every other shape a 16 pt glyph (stroke 2.2), 8 pt gap, 14/19 semibold, 8 below, inset 4
- * (States: "Someone here is already called Maya. Try Maya K.").
+ * (States: "Someone here is already called Maya.").
  */
 export type TextFieldVariant =
   'large' | 'title' | 'row' | 'inline' | 'url' | 'pill' | 'cell' | 'code';
@@ -121,7 +121,7 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   onScan?: () => void;
   /**
    * The error line under the field; also rings the field. `code`: "That code isn't complete. Copy it again.";
-   * a name: "Someone here is already called Maya. Try Maya K."
+   * a name: "Someone here is already called Maya."
    */
   error?: string;
   /** `inline` inside a `fill` card sits on `surface` (Create group's You card). */

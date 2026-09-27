@@ -5,9 +5,7 @@
  * - "Point a phone's camera at the code." 15/21 `textSecondary`, 4 below;
  * - a 304 pt `qrTile` tile (radius 24, padding 20), 24 below, holding the 264 pt QR of the invite link in `qrModule`:
  *   white and near-black in both modes, since a camera needs dark modules on light;
- * - "Their camera opens Even, or the invite page if they don't have Even yet." 15/21 `textSecondary`, centred, 20
- *   below, inset 32;
- * - the 18 pt key and "Anyone who scans this can see and edit the group." 15/21 `text`, 16 below, inset 28, gap 10.
+ * - the 18 pt key and "Anyone who scans this can see and edit this group." 15/21 `text`, 20 below, inset 28, gap 10.
  *
  * The screen goes to full brightness while the sheet is up (`useBrightScreen`).
  *
@@ -70,9 +68,6 @@ export function InviteQrSheet({ visible, onClose, invite, groupName }: InviteQrS
         </View>
       )}
       <QrTile link={ready ? invite.link : null} />
-      <AppText variant="subheadLoose" color="textSecondary" align="center" style={styles.opens}>
-        Their camera opens Even, or the invite page if they don&apos;t have Even yet.
-      </AppText>
       <Warning />
     </Sheet>
   );
@@ -113,7 +108,7 @@ function Warning() {
         <Icon name="key" size={18} color={tokens.textSecondary} />
       </View>
       <AppText variant="subheadLoose" style={styles.flex}>
-        Anyone who scans this can see and edit the group.
+        Anyone who scans this can see and edit this group.
       </AppText>
     </View>
   );
@@ -132,12 +127,11 @@ const styles = StyleSheet.create({
     padding: (TILE_SIZE - QR_SIZE) / 2,
     borderRadius: 24,
   },
-  opens: { marginTop: 20, marginHorizontal: 32 },
   warning: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    marginTop: 16,
+    marginTop: 20,
     marginHorizontal: 28,
   },
   key: { paddingTop: 2 },

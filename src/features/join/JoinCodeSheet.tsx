@@ -1,16 +1,18 @@
 /**
  * Join with code (JoinCode, JoinCodePreview, JoinCodeError and their dark twins): a sheet 150 pt from the top (the
  * safe area + 88) over Groups, Cancel and "Join with code" in its header (title inset 100), then:
- * - "Paste the code someone sent you, or scan it from their phone. A full invite link works too." 15/21
- *   `textSecondary`, 8 below, inset 20;
+ * - "Paste the code or link someone sent you, or scan it from their phone." 15/21 `textSecondary`, 8 below, inset
+ *   20;
  * - the 208 pt code field with its Scan and Paste pills, 16 below, inset 16 (Scan opens `ScanSheet`);
  * - empty: nothing more, and Join disabled;
  * - read: an outlined card 16 below (padding 16 18, gap 4): "Code complete" with a 13 pt check, "Join Banff 2026?"
  *   24/30 bold, "Canadian dollar · CAD" 15/20 `textSecondary`, the server host with a 13 pt lock 4 further down;
- *   then "Nothing is sent until you tap Join." 13/18 `textMuted` 10 below, inset 20; Join enabled;
+ *   Join enabled;
  * - incomplete: the field ringed and "That code isn't complete. Copy it again." under it; Join disabled;
  * - a newer version: "This invite needs a newer Even." and an Update button to the store (error-copy panel).
- * Join sits at the foot, inset 16.
+ * Join sits at the foot, inset 16. When Join could not go through (JoinCodeFailed, JoinCodeRefused), the reason sits
+ * under it in the field-error style (16 pt warning glyph, 8 pt gap, 14/19 semibold), 12 below, inset 20, and Join
+ * stays on to try again.
  */
 import * as Clipboard from 'expo-clipboard';
 import { Linking, StyleSheet, View, Platform } from 'react-native';
@@ -18,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, Icon, Sheet, TextField } from '@/components';
 import { currencyName } from '@/features/groups/currencies';
+import { FieldError } from '@/features/groups/FieldError';
 import type { InvitePreview } from '@/state';
 import { useTheme } from '@/theme';
 import { LINKS } from '@/features/settings/about';
@@ -41,6 +44,8 @@ export interface JoinCodeSheetProps {
   state: CodeState;
   onJoin: () => void;
   busy: boolean;
+  /** Why the last Join did not go through (JoinCodeFailed, JoinCodeRefused), for the code it was tapped with. */
+  failure?: string;
 }
 
 export function JoinCodeSheet({
@@ -52,6 +57,7 @@ export function JoinCodeSheet({
   state,
   onJoin,
   busy,
+  failure,
 }: JoinCodeSheetProps) {
   const insets = useSafeAreaInsets();
 
@@ -75,7 +81,7 @@ export function JoinCodeSheet({
       accessibilityLabel="Join with code"
     >
       <AppText variant="subheadLoose" color="textSecondary" style={styles.intro}>
-        Paste the code someone sent you, or scan it from their phone. A full invite link works too.
+        Paste the code or link someone sent you, or scan it from their phone.
       </AppText>
       <TextField
         variant="code"
@@ -109,6 +115,7 @@ export function JoinCodeSheet({
         disabled={state.kind !== 'read' || busy}
         style={styles.join}
       />
+      {failure !== undefined && <FieldError message={failure} style={styles.failure} />}
     </Sheet>
   );
 }
@@ -116,33 +123,28 @@ export function JoinCodeSheet({
 function InviteCard({ invite }: { invite: InvitePreview }) {
   const { tokens } = useTheme();
   return (
-    <>
-      <Card tone="outline" style={styles.card}>
-        <View style={styles.line}>
-          <Icon name="check" size={13} color={tokens.textMuted} strokeWidth={2.8} />
-          <AppText variant="caption" color="textMuted">
-            Code complete
-          </AppText>
-        </View>
-        <AppText variant="title2" accessibilityRole="header">
-          {`Join ${invite.name ?? 'a group'}?`}
+    <Card tone="outline" style={styles.card}>
+      <View style={styles.line}>
+        <Icon name="check" size={13} color={tokens.textMuted} strokeWidth={2.8} />
+        <AppText variant="caption" color="textMuted">
+          Code complete
         </AppText>
-        {invite.currency !== null && (
-          <AppText variant="subhead" color="textSecondary">
-            {`${currencyName(invite.currency)} · ${invite.currency}`}
-          </AppText>
-        )}
-        <View style={[styles.line, styles.host]}>
-          <Icon name="lock" size={13} color={tokens.textMuted} strokeWidth={2.2} />
-          <AppText variant="caption" color="textMuted">
-            {invite.host}
-          </AppText>
-        </View>
-      </Card>
-      <AppText variant="caption" color="textMuted" style={styles.note}>
-        Nothing is sent until you tap Join.
+      </View>
+      <AppText variant="title2" accessibilityRole="header">
+        {`Join ${invite.name ?? 'a group'}?`}
       </AppText>
-    </>
+      {invite.currency !== null && (
+        <AppText variant="subhead" color="textSecondary">
+          {`${currencyName(invite.currency)} · ${invite.currency}`}
+        </AppText>
+      )}
+      <View style={[styles.line, styles.host]}>
+        <Icon name="lock" size={13} color={tokens.textMuted} strokeWidth={2.2} />
+        <AppText variant="caption" color="textMuted">
+          {invite.host}
+        </AppText>
+      </View>
+    </Card>
   );
 }
 
@@ -153,7 +155,7 @@ const styles = StyleSheet.create({
   card: { marginTop: 16, marginHorizontal: 16, paddingVertical: 16, paddingHorizontal: 18, gap: 4 },
   line: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   host: { marginTop: 4 },
-  note: { marginTop: 10, marginHorizontal: 20 },
   join: { marginHorizontal: 16 },
+  failure: { marginTop: 12, marginHorizontal: 16 },
   update: { alignSelf: 'flex-start', marginTop: 10, marginLeft: 46 },
 });

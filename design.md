@@ -509,7 +509,7 @@ and nobody needs it for a trip.
   old client's edit never overwrites a field it does not know about.
 - If any **money** event (expense or payment) is skipped as unsupported or
   `invalid`, the group screen shows a hard "Update Even to see everything in
-  this group" banner, not just a counter, because balances are known to be
+  this group." banner, not just a counter, because balances are known to be
   incomplete.
 
 ## Local storage
@@ -762,7 +762,7 @@ Not a transport; two functions.
 
 ## Rotation, moving, closing
 
-**Rotate invite** (settings → "Regenerate invite link", with a confirmation sheet saying everyone will need the new link and that the old one stops working). Removes access for anyone holding
+**Rotate invite** (settings → "Regenerate invite link", with a confirmation sheet: "The old link stops working. You'll share the new one next."). Removes access for anyone holding
 the old invite.
 
 1. Sync the current group one last time, so nothing pushed by others in the
@@ -802,8 +802,8 @@ different groups mean two members rotated concurrently; the app shows both
 groups, lets the user pick, and sets the other to `hidden`.
 
 **Recognising a closure.** A `group.closed` event sets state `closed`: the
-group is read-only, never syncs again, and shows "This group was rotated. Ask
-a member for the new invite." The paste-invite flow on that screen, when given
+group is read-only, never syncs again, and shows "This group's invite was
+regenerated. Ask a member for the new one." The paste-invite flow on that screen, when given
 the new invite, performs the recognition above. A straggler who never gets the
 new invite keeps a read-only copy of the history up to the closure.
 
@@ -840,7 +840,8 @@ would recreate it:
 - After a move, settings offers "Delete the copy on <old host>", using the
   token derived for the old origin.
 - Leave offers "Also delete this group's copy on <host>", with the warning
-  that other members will recreate it on their next sync unless they leave too.
+  "Anyone still in the group will put it back." (other members recreate it on
+  their next sync unless they leave too).
 
 Both go through the engine's `deleteServerCopy`, which `pending_deletes`
 backs: it records the debt **together with the per-server auth token**,
@@ -864,12 +865,13 @@ takedown is a server-side blocklist, not a client action.
   and counts only), schedule a local notification through
   `expo-notifications`: title is the group name, body is the activity summary
   ("Maya added Dinner · 90.00"). Coalesce multiple events per group into one
-  notification ("3 new in Banff 2026").
+  notification ("3 new changes"; the title already names the group).
 - iOS runs background tasks at its discretion, often only when the phone is
   idle or charging, and never after the user force-quits the app. Android has
-  a 15-minute floor. The Notifications row in App settings carries the sentence "Your phone decides when Even can check for updates in the background." This is verified on a real
-  device before the claim goes into store copy.
-- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member (once per install; the `prefs` row `notifications.asked` remembers it), with one sentence explaining what it is for.
+  a 15-minute floor. App settings makes no promise about timing (the
+  Notifications row has no sentence under it). Any claim about when updates
+  arrive is verified on a real device before it goes into store copy.
+- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member (once per install; the `prefs` row `notifications.asked` remembers it); the switch carries no caption, since it says what it does.
 
 ## Invites
 
@@ -886,7 +888,7 @@ checksum, and canonicalises the server URL.
   in a read-only group, and while the phone has no seat.
 - **Scan to join** (board InviteQR): the invite link as a QR code (error
   correction M, version 10 for a typical link) on a white tile with dark
-  modules in both themes, the group name above, the two drawn lines below, and
+  modules in both themes, the group name above, the one-sentence warning below, and
   the screen at full brightness while it is open. Reached from the QR button
   after Share link and Copy code on the invite card and in Group settings'
   invite section, and from the share menu. Their camera opens Even through the
@@ -917,9 +919,16 @@ checksum, and canonicalises the server URL.
   create the `groups` row, pull, then show "Which name is yours?" from the
   member list, each with its avatar and a "joined" mark if already claimed,
   with "I'm not listed" to add a member (prefilled from `prefs`). Picking a
-  name writes `member.claimed`. If the server is
-  unreachable, the group is created in state "Joined, waiting for first sync";
-  the name pick is deferred until members arrive. Closing the name pick leaves
+  name writes `member.claimed`. If that first sync fails, the join is undone
+  (nothing of this phone's is in the group yet, so its row and secret go) and
+  the sheet says why under Join, which stays on to try again (boards
+  JoinCodeFailed, JoinCodeRefused): "Couldn't reach <host>. Check your
+  connection and try again.", "This group is blocked on its server, so you
+  can't join it.", "That URL isn't an Even server. Check the address.", "This
+  server needs updating.", or "Couldn't join. Try again." A group held before
+  its members are known (a keychain recovery, or a first sync that was already
+  running) is "Joined, waiting for first sync"; the name pick is deferred until
+  members arrive. Closing the name pick leaves
   the Join route for Groups and keeps the group, unclaimed; Group offers the
   pick again when it is opened (see "Group").
 - **Already have it**: an invite whose `localId` matches a local group and
@@ -1066,8 +1075,8 @@ Deviating from the canvas in implementation is a no-go.
   already in", with names this phone claimed marked "this phone" (claimed
   without the other-phone question; two or more of them ask "This phone was
   Maya before"). Closing it only closes it: Group then reads "Spent so far"
-  with the trip total instead of a net, the note that this phone doesn't know
-  which name is yours, no settle list or done row, the share arrow hidden, and
+  with the trip total instead of a net, the note "Pick your name to add or
+  settle expenses.", no settle list or done row, the share arrow hidden, and
   "Pick your name" in the footer instead of Add expense, which reopens the
   sheet; expense detail is read-only until a name is picked.
   On Balances a settled member reads "Nathan is settled" (no amount, last).
@@ -1092,9 +1101,10 @@ Deviating from the canvas in implementation is a no-go.
   modal. Archived members already on the expense stay visible in the editor.
 - **Split** (pushed from Add expense): segmented Equal · Exact · Percent. In
   Equal each member row has an optional "×n" multiplier and an optional
-  "+ extra" amount, under one line: "Extras come off the top; the rest splits
-  by share." Over-assigned Exact and Percent read "Over by $6.00" / "Over by
-  5%" (never red) and Done stays off; at zero the caption goes.
+  "+ extra" amount (extras come off the top, the rest splits by share; no
+  caption says so). Over-assigned Exact and Percent read "Over by $6.00" /
+  "Over by 5%" (never red) and Done stays off until Remaining reaches zero, with
+  no caption saying so.
 - **Expense detail**: the facts, the split, who added it and when, edit and
   delete, and a History section listing every version with who changed what;
   any version can be restored in one tap.
@@ -1106,8 +1116,8 @@ Deviating from the canvas in implementation is a no-go.
   centred at the top, 72 px, a small pencil badge on its corner and no
   caption (tapping opens the same emoji picker sheet used everywhere, with
   "Use initials" to clear), and the Name field on its own row beneath; Appearance (System · Light · Dark); Notifications (the only
-  switch, tied to the OS permission, with "Your phone decides when Even can
-  check for updates in the background."); Import group file; Help ("Help and
+  switch, tied to the OS permission, with no sentence under it); Import group
+  file ("Opens a group from a .even file."); Help ("Help and
   feedback" opens `/contact` in the in-app browser, captioned "Opens our
   contact page. Nothing about your groups is sent."); About (Privacy, Terms,
   Source code opening the public repository, Version). No background-sync
@@ -1117,8 +1127,8 @@ Deviating from the canvas in implementation is a no-go.
   and the round Show QR code button, disabled with "Preparing your invite…"
   until the server has the group), members (shows which have joined;
   rename and avatar on your own seat and on unclaimed names, archive/unarchive
-  on others, never yourself; archived members greyed and last; the caption's
-  third sentence: "Archived members stay in past expenses and balances."), Add
+  on others, never yourself; archived members greyed and last; the caption:
+  "Archived members stay in past expenses and balances."), Add
   member (a sheet whose avatar previews the new member's colour), server (host,
   operator, limits, retention, usage meter with its 80 % warning, Move server:
   Check reads `/v1/info`, then Move; "Delete the copy on <old host>" after a
@@ -1126,7 +1136,7 @@ Deviating from the canvas in implementation is a no-go.
   unsent count, and the optional server-copy delete), and last, below Leave,
   "Report this group" (boards ReportGroup, ReportGroupOther): a sheet saying
   what we receive (the group's id on its server and a reason, never the
-  invite, key or contents) and what a block does; on a server that is not
+  invite or anything in the group) and what a block does; on a server that is not
   canonically `PROTOCOL.defaultServer` it names that server, shows its
   operator and terms from `/v1/info` when sent, says only that operator can
   act, and demotes the button to "Tell Appalaya anyway". Continue opens

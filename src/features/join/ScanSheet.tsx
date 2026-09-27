@@ -4,8 +4,7 @@
  * 8 below the header) showing the back camera, reading QR codes only:
  * - the 248 pt corner brackets (36 pt arms, 4 pt, radius 16) in `onViewfinder`, 91 from the viewfinder's top;
  * - the 44 pt light (torch) button, `viewfinderControl`, 20 above its foot;
- * - under it "Point the camera at the QR code on their phone. It reads on its own." 15/21 `textSecondary`, centred,
- *   20 below, inset 32.
+ * - under it "Point the camera at the QR code on their phone." 15/21 `textSecondary`, centred, 20 below, inset 32.
  * A code that is not an Even invite (`readScan`) keeps the camera reading and puts the 16 pt warning with "That QR
  * code isn't an Even invite." 16/22 semibold and "Keep scanning, or cancel and paste the code." under it. An invite
  * turns the brackets to the accent with a 56 pt accent check in their middle (a 4 pt `onViewfinder` ring), and
@@ -13,7 +12,7 @@
  * previews it exactly as a pasted one (JoinCodePreview).
  *
  * Camera access off: the viewfinder becomes a `fill` panel with the 32 pt camera-off glyph, "Camera access is off",
- * "To scan an invite, allow Even to use the camera in Settings. You can still paste the code.", Open Settings (the
+ * "Allow Even to use the camera in Settings.", Open Settings (the
  * system settings for Even) and "Paste instead" (back to Join with code). Coming back from Settings re-reads the
  * permission.
  */
@@ -186,7 +185,7 @@ function Caption({ phase }: { phase: Phase['kind'] }) {
     case 'scanning':
       return (
         <AppText variant="subheadLoose" color="textSecondary" align="center" style={styles.caption}>
-          Point the camera at the QR code on their phone. It reads on its own.
+          Point the camera at the QR code on their phone.
         </AppText>
       );
     case 'notInvite':
@@ -234,7 +233,7 @@ function CameraOff({ onPasteInstead }: { onPasteInstead: () => void }) {
         Camera access is off
       </AppText>
       <AppText variant="subheadLoose" color="textSecondary" align="center" style={styles.offBody}>
-        To scan an invite, allow Even to use the camera in Settings. You can still paste the code.
+        Allow Even to use the camera in Settings.
       </AppText>
       <Button
         label="Open Settings"

@@ -50,9 +50,10 @@ describe('planGroupNotification', () => {
     });
   });
 
-  it('several: coalesced into "N new in <group>"', () => {
+  it('several: coalesced into "N new changes", under the group name as the title', () => {
     const plan = planGroupNotification(input([dinner, taxi], ['n1', 'n2']));
-    expect(plan?.body).toBe('2 new in Banff 2026');
+    expect(plan?.title).toBe('Banff 2026');
+    expect(plan?.body).toBe('2 new changes');
     expect(plan?.count).toBe(2);
   });
 
@@ -80,7 +81,7 @@ describe('planGroupNotification', () => {
   });
 
   it('replaces a notification still showing, carrying its count', () => {
-    expect(planGroupNotification(input([dinner], ['n1'], 2))?.body).toBe('3 new in Banff 2026');
+    expect(planGroupNotification(input([dinner], ['n1'], 2))?.body).toBe('3 new changes');
     expect(planGroupNotification(input([dinner], ['n1'], 2))?.count).toBe(3);
   });
 });

@@ -163,10 +163,10 @@ describe('server labels', () => {
   it('warns from 80% and words a full group (extra states)', () => {
     expect(usageWarning(usage(246 * 1024, 700))).toBeNull();
     expect(usageWarning(usage(1.7 * 1024 * 1024, 700))).toBe(
-      'This group is near its server limit. Export it and start a new one for the next trip.',
+      'This group is almost full. Export it and start a new one.',
     );
     expect(usageWarning(usage(2_097_152, 700))).toBe(
-      'This group is full. New entries stay on this phone. Export it and start a new one.',
+      'This group is full. Export it and start a new one.',
     );
     expect(usageLabel(usage(1.7 * 1024 * 1024, 700), 'en-US')).toBe('1.7 MB of 2 MB · 85%');
   });

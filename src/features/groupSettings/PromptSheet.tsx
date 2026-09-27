@@ -14,7 +14,7 @@ export interface PromptSheetProps {
   placeholder?: string;
   /** `large` (52, 20/25 semibold: a group name) or `row` (48, 17/22: a member's name). */
   variant?: 'large' | 'row';
-  /** The caption under the field ("Everyone in the group sees the new name. Up to 80 characters."). */
+  /** The caption under the field ("Everyone in the group sees the new name."). */
   hint?: string;
   /** Longest input, in characters. */
   maxLength?: number;

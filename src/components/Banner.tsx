@@ -9,8 +9,8 @@ import { Icon, type IconName } from './Icon';
  * Banners under a nav bar (design.md "Banners, when relevant"), each as a board draws it:
  * - `unreadable` (Group · dark): info glyph, "2 entries couldn't be read", "Details".
  * - `archived` (Group, archived): archive glyph, "Archived · read-only" (medium), "Unarchive".
- * - `updateRequired` (States): arrow-up-in-circle glyph, "Update Even to see everything in this group", "Update".
- * - `closed` (States; Group screen copy): lock glyph, "This group was rotated. Ask a member for the new invite.",
+ * - `updateRequired` (States): arrow-up-in-circle glyph, "Update Even to see everything in this group.", "Update".
+ * - `closed` (States; Group screen copy): lock glyph, "This group's invite was regenerated. Ask a member for the new one.",
  *   "Paste".
  * - `moved` (States): arrow glyph, "Maya moved this group to sync.example.net. Follow?", "Follow".
  * - `collision` (Group screen copy): members glyph, "Two members are named Maya. Rename one in settings.",
@@ -43,14 +43,14 @@ const SPEC: Record<BannerVariant, Spec> = {
     icon: 'update',
     weight: 'regular',
     action: 'Update',
-    message: 'Update Even to see everything in this group',
+    message: 'Update Even to see everything in this group.',
     padded: true,
   },
   closed: {
     icon: 'lock',
     weight: 'regular',
     action: 'Paste',
-    message: 'This group was rotated. Ask a member for the new invite.',
+    message: "This group's invite was regenerated. Ask a member for the new one.",
     padded: true,
   },
   moved: { icon: 'arrowRight', weight: 'regular', action: 'Follow', padded: true },

@@ -1,7 +1,7 @@
 /**
  * Background refresh notifications, the pure part (design.md "Background refresh"): after a background cycle, the
  * new `ok` events authored by another device become at most one local notification per group. Title: the group
- * name. Body: the event's activity summary ("Maya added Dinner · $90.00"), or "3 new in Banff 2026" when there are
+ * name. Body: the event's activity summary ("Maya added Dinner · $90.00"), or "3 new changes" when there are
  * several. No Expo imports, so this runs under Vitest in Node.
  */
 
@@ -48,9 +48,9 @@ export function activityIdentifier(localId: string): string {
   return `activity:${localId}`;
 }
 
-/** "3 new in Banff 2026". */
-export function coalescedBody(count: number, groupName: string): string {
-  return `${count} new in ${groupName}`;
+/** "3 new changes" (the title already names the group). Only ever said of two or more. */
+export function coalescedBody(count: number): string {
+  return `${count} new changes`;
 }
 
 /**
@@ -59,7 +59,7 @@ export function coalescedBody(count: number, groupName: string): string {
  * - events written by this device are skipped (a rotation or a restore can bring them back);
  * - a first download (every event of the log arrived in this cycle: a join whose first sync failed, a reinstall)
  *   is history, not activity, and announces nothing;
- * - a notification still showing for the group is replaced, its count carried into the new "N new in …".
+ * - a notification still showing for the group is replaced, its count carried into the new "N new changes".
  */
 export function planGroupNotification(input: GroupActivityInput): PlannedNotification | null {
   const fresh = new Set(input.newOkIds);
@@ -74,7 +74,7 @@ export function planGroupNotification(input: GroupActivityInput): PlannedNotific
     localId: input.localId,
     identifier: activityIdentifier(input.localId),
     title: input.groupName,
-    body: count === 1 ? first.summary : coalescedBody(count, input.groupName),
+    body: count === 1 ? first.summary : coalescedBody(count),
     count,
   };
 }

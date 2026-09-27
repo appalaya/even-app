@@ -24,7 +24,7 @@ import type { ActivitySection, BalanceRow, CategoryRow } from './model';
 
 /**
  * Expenses (Group): 64 pt rows in one card, the category tile, "Maya paid", the amount over the day. Empty (Group,
- * just created): "No expenses yet. Add the first one below." in a card padded 40 · 24.
+ * just created): "No expenses yet." in a card padded 40 · 24.
  */
 export function ExpensesTab({
   expenses,
@@ -45,7 +45,7 @@ export function ExpensesTab({
     return (
       <Card style={[styles.first, styles.empty]}>
         <AppText variant="calloutLoose" color="textSecondary" align="center">
-          No expenses yet. Add the first one below.
+          No expenses yet.
         </AppText>
       </Card>
     );

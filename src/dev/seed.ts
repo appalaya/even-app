@@ -1184,7 +1184,7 @@ async function pickGroup(s: AppServices): Promise<string> {
   return localId;
 }
 
-/** Two groups whose rows are gone but whose secrets remain: "Recover 2 groups from your keychain?" */
+/** Two groups whose rows are gone but whose secrets remain: "Recover 2 groups?" */
 async function reinstalled(s: AppServices): Promise<void> {
   const a = await createAs(s, { name: 'Banff 2026', people: ['Maya'], synced: false });
   const b = await createAs(s, { name: 'Oak Street house', people: ['Priya'], synced: false });
@@ -1818,7 +1818,7 @@ function banffCollision(myDevice: string, now: number): Banff {
   return b;
 }
 
-/** "This entry is in USD, not CAD": Jordan's gondola tickets, $72.00 in US dollars, split four ways. */
+/** "This expense is in USD, not CAD": Jordan's gondola tickets, $72.00 in US dollars, split four ways. */
 function banffCurrency(myDevice: string, now: number): { b: Banff; expenseId: string } {
   const b = banffBase(myDevice, 'activity');
   banffRecent(b, now);

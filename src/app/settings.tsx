@@ -1,6 +1,6 @@
 /**
  * App settings (AppSettings, AppSettingsDark), pushed from the gear on Groups: "‹ Groups", the large title
- * "Settings", then You (avatar and Name), Appearance (System · Light · Dark), Notifications with its sentence,
+ * "Settings", then You (avatar and Name), Appearance (System · Light · Dark), Notifications (no sentence under it),
  * Groups → Import group file, Help → Help and feedback (the contact page in the in-app browser, with nothing about
  * any group), and About (Privacy, Terms, Source code, Version). No background-sync switch exists.
  *
@@ -85,7 +85,6 @@ export default function SettingsScreen() {
       <Card radius="group" style={styles.card}>
         <NotificationsRow />
       </Card>
-      <Footnote>Your phone decides when Even can check for updates in the background.</Footnote>
 
       <SectionHeader variant="settings" spacingTop={16}>
         Groups
@@ -99,7 +98,7 @@ export default function SettingsScreen() {
           onPress={busy ? undefined : () => void importGroupFile()}
         />
       </Card>
-      <Footnote>Restores a group from a .even file, even one this phone has never had.</Footnote>
+      <Footnote>Opens a group from a .even file.</Footnote>
 
       <SectionHeader variant="settings" spacingTop={16}>
         Help

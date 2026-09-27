@@ -6,6 +6,10 @@
  * (`acceptInviteMove`). Closing any of its sheets (`onClose`) leaves the Join route for Groups; the group a join
  * created stays, unclaimed, and Group offers the name pick again when it is opened.
  *
+ * A join whose first sync fails (the server unreachable, the group blocked there, not an Even server, a server that
+ * needs updating, anything else) is undone, since nothing of this phone's is in the group yet, and the reason shows
+ * under Join (JoinCodeFailed, JoinCodeRefused) with Join still on to try again.
+ *
  * One sheet shows at a time; switching waits for the previous one to leave, since iOS presents one at a time.
  */
 import type { Href } from 'expo-router';
@@ -15,7 +19,13 @@ import { hrefs } from '@/features/groups/routes';
 import { isStateError, useApp } from '@/state';
 
 import { ConfirmSheet } from './ConfirmSheet';
-import { moveQuestion, problemMessage } from './invite';
+import {
+  joinFailureMessage,
+  joinFailureOf,
+  moveQuestion,
+  problemMessage,
+  type JoinFailure,
+} from './invite';
 import { JoinCodeSheet, type CodeState } from './JoinCodeSheet';
 import { PickNameStep } from './PickNameStep';
 import { ScanSheet } from './ScanSheet';
@@ -77,6 +87,8 @@ export function JoinFlow({
     message: string;
     update?: boolean;
   } | null>(null);
+  // Why the last Join did not go through, for the text it was tapped with: the line under Join.
+  const [failure, setFailure] = useState<{ text: string; message: string } | null>(null);
   const latest = useRef(0);
 
   useEffect(() => {
@@ -118,9 +130,24 @@ export function JoinFlow({
 
   const join = async () => {
     if (busy || code.kind !== 'read') return;
+    const { host } = code.invite;
+    const fail = (why: JoinFailure) => setFailure({ text, message: joinFailureMessage(why, host) });
     setBusy(true);
+    setFailure(null);
     try {
       const result = await groups.joinInvite(text);
+      const failed = joinFailureOf(result);
+      if (failed !== null) {
+        // The first sync did not complete: undo the join so that Join tries it afresh.
+        await groups.leaveGroup(result.localId).catch((error: unknown) => {
+          console.warn(
+            'undoing a failed join failed',
+            error instanceof Error ? error.message : error,
+          );
+        });
+        fail(failed);
+        return;
+      }
       switch (result.kind) {
         case 'joined':
           if (result.needsClaim && !result.waiting) go({ kind: 'pick', localId: result.localId });
@@ -139,7 +166,10 @@ export function JoinFlow({
           });
           break;
         case 'closedGroupInvite':
-          setRefusal({ text, message: 'This group was rotated. Ask a member for the new invite.' });
+          setRefusal({
+            text,
+            message: "This group's invite was regenerated. Ask a member for the new one.",
+          });
           break;
       }
     } catch (error) {
@@ -153,6 +183,7 @@ export function JoinFlow({
         setRefusal({ text, message: problemMessage(problem), update: problem === 'version' });
       } else {
         console.warn('join failed', error instanceof Error ? error.message : error);
+        fail('unknown');
       }
     } finally {
       setBusy(false);
@@ -195,6 +226,7 @@ export function JoinFlow({
         state={code}
         onJoin={() => void join()}
         busy={busy}
+        failure={failure?.text === text ? failure.message : undefined}
       />
       {step.kind === 'scan' && (
         <ScanSheet

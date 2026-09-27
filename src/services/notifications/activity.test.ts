@@ -99,7 +99,7 @@ describe.each(STORE_KINDS)('background refresh plans notifications (%s store)', 
     await addDinner(a, localId, sam, 'Gas', 4000);
 
     const planned = await planActivityNotifications(a.services, await background(a));
-    expect(planned.map((p) => p.body)).toEqual(['3 new in Banff 2026']);
+    expect(planned.map((p) => p.body)).toEqual(['3 new changes']);
 
     // The next cycle has nothing new: nothing to say.
     expect(await planActivityNotifications(a.services, await background(a))).toEqual([]);

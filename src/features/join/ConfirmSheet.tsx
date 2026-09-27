@@ -3,7 +3,7 @@
  * no header row, the question 22/28 bold 22 below the grabber, an optional 16/23 `textSecondary` paragraph 10 below
  * it, anything the question needs beside it (the recovery offer's server rows), then the primary action 20 below
  * and a neutral one 10 under it (52 pt), the whole inset 16 (text 20). Used for "Is that you on another phone, or a
- * different Maya?", "Move Banff 2026 from … to …?" and "Recover 2 groups from your keychain?".
+ * different Maya?", "Move Banff 2026 from … to …?" and "Recover 2 groups?".
  */
 import type { ReactNode } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';

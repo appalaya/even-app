@@ -2,7 +2,7 @@
  * Add member (Group settings, extra states: "Add member"): Cancel and "Add member" in the header; the 72 pt avatar
  * centred 8 below with its pencil badge, in the colour the new member will get (the id is chosen when the sheet
  * opens; a tap opens the emoji picker); "Name" and its 48 pt field (a 2 pt accent ring while typing); "They'll pick
- * this name when they join. Anyone can fix it until then."; then "Add", 12 above the keyboard.
+ * this name when they join."; then "Add", 12 above the keyboard.
  */
 import { memberColor, newId } from '@even/core';
 import { useState } from 'react';
@@ -93,7 +93,7 @@ function AddMemberBody({
           error={error}
         />
         <AppText variant="caption" color="textMuted" style={styles.helper}>
-          They&apos;ll pick this name when they join. Anyone can fix it until then.
+          They&apos;ll pick this name when they join.
         </AppText>
       </View>
       <Button label="Add" disabled={clean === '' || busy} onPress={add} style={styles.add} />

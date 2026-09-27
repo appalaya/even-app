@@ -51,7 +51,7 @@ export default function GroupsScreen() {
       visible={recovery.offer > 0}
       onDismiss={recovery.dismiss}
       question={recoverQuestion(recovery.offer)}
-      body="Even was on this phone before, and its keys are still in your keychain. Recover brings the groups back from their servers."
+      body="Even was on this phone before. Recover brings its groups back."
       drawnTop={420}
       confirmLabel="Recover"
       onConfirm={() => void recovery.recover()}

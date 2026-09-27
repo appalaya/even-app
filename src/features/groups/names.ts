@@ -11,10 +11,7 @@ export function isNameTaken(name: string, taken: readonly string[]): boolean {
   return key !== '' && taken.some((other) => nameKey(other) === key);
 }
 
-/**
- * The States board's duplicate-name line, first sentence ("Someone here is already called Maya."). The board's
- * suggestion ("Try Maya K.") needs a last initial the app does not know, so it is left out.
- */
+/** The States board's duplicate-name line: "Someone here is already called Maya." */
 export function nameTakenMessage(name: string): string {
   return `Someone here is already called ${name.trim()}.`;
 }

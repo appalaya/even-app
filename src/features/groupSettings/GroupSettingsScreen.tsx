@@ -126,7 +126,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
     void Share.share({ url: invite.link });
   };
 
-  // The old server's retention, for "The old copy expires on its own after 365 days".
+  // The old server's retention, for "The old copy there expires after 365 days".
   useEffect(() => {
     if (oldServer === null) return;
     let live = true;
@@ -399,10 +399,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
                   setAddOpen(true);
                 }}
               />
-              <Footnote>
-                You can edit your own name and avatar. Anyone can archive a member who&apos;s left.
-                Archived members stay in past expenses and balances.
-              </Footnote>
+              <Footnote>Archived members stay in past expenses and balances.</Footnote>
             </>
           )}
 
@@ -442,10 +439,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
                   onPress={() => setRegenerateOpen(true)}
                 />
               </Card>
-              <Footnote>
-                Makes a new link and closes this one. Everyone still in the group will need the new
-                link.
-              </Footnote>
+              <Footnote>Makes a new link and closes this one.</Footnote>
 
               <Card radius="group" style={[styles.card, styles.spaced]}>
                 <ActionRow
@@ -483,10 +477,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
                   onPress={openReport}
                 />
               </Card>
-              <Footnote>
-                For content that breaks our terms. We get the group&apos;s id and server, never
-                what&apos;s in it.
-              </Footnote>
+              <Footnote>For content that breaks our terms.</Footnote>
             </>
           )}
         </>
@@ -506,9 +497,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
         submitLabel="Save"
         variant={prompt?.kind === 'renameGroup' ? 'large' : 'row'}
         hint={
-          prompt?.kind === 'renameGroup'
-            ? `Everyone in the group sees the new name. Up to ${LIMITS.groupNameMax} characters.`
-            : undefined
+          prompt?.kind === 'renameGroup' ? 'Everyone in the group sees the new name.' : undefined
         }
         maxLength={prompt?.kind === 'renameGroup' ? LIMITS.groupNameMax : LIMITS.nameMax}
         initialValue={prompt?.kind === 'rename' ? prompt.member.name : name}

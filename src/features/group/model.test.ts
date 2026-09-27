@@ -261,7 +261,7 @@ describe('Which name is yours? marks and taps (SeatPick, SeatSameDevice)', () =>
     expect(tap.others.map((m) => m.name)).toEqual(['Maya K.']);
     expect(sameDeviceWords('Maya', ['Maya K.'])).toEqual({
       question: 'This phone was Maya before',
-      body: 'Continue as Maya? This phone was also Maya K. If that one is left over, archive it in Group settings.',
+      body: "This phone was also Maya K. If that's a leftover, archive it in Group settings.",
       confirm: 'Continue as Maya',
     });
     // An archived seat is not a seat: with Maya K. archived, Maya is this phone's alone.
@@ -270,10 +270,10 @@ describe('Which name is yours? marks and taps (SeatPick, SeatSameDevice)', () =>
     expect(namePick(archived, member(archived, maya), THIS_PHONE)).toEqual({ kind: 'claim' });
     // A third name on this phone (not drawn): all of them, and "those".
     expect(sameDeviceWords('Maya', ['Maya K.', 'Mo']).body).toBe(
-      'Continue as Maya? This phone was also Maya K. and Mo. If those are left over, archive them in Group settings.',
+      'This phone was also Maya K. and Mo. If those are leftovers, archive them in Group settings.',
     );
     expect(sameDeviceWords('Mo', ['Sam']).body).toBe(
-      'Continue as Mo? This phone was also Sam. If that one is left over, archive it in Group settings.',
+      "This phone was also Sam. If that's a leftover, archive it in Group settings.",
     );
     expect(namePick(state, member(state, jordan), THIS_PHONE)).toEqual({ kind: 'claim' });
   });

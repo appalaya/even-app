@@ -111,10 +111,10 @@ export function groupAgainstLabel(usage: GroupUsage, locale?: string): string {
  */
 export function usageWarning(usage: GroupUsage): string | null {
   if (usage.fraction >= 1) {
-    return 'This group is full. New entries stay on this phone. Export it and start a new one.';
+    return 'This group is full. Export it and start a new one.';
   }
   if (usage.warn) {
-    return 'This group is near its server limit. Export it and start a new one for the next trip.';
+    return 'This group is almost full. Export it and start a new one.';
   }
   return null;
 }

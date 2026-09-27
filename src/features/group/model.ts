@@ -182,8 +182,8 @@ function listNames(names: readonly string[]): string {
 
 /**
  * SeatSameDevice's words for a tap on Maya while this phone also claimed Maya K.: "This phone was Maya before",
- * "Continue as Maya? This phone was also Maya K. If that one is left over, archive it in Group settings.", "Continue as
- * Maya". With more than one other name (not drawn) the sentence names them all and says "those" and "them".
+ * "This phone was also Maya K. If that's a leftover, archive it in Group settings.", "Continue as Maya". With more
+ * than one other name (not drawn) the sentence names them all and says "those", "leftovers" and "them".
  */
 export function sameDeviceWords(
   name: string,
@@ -196,10 +196,10 @@ export function sameDeviceWords(
   return {
     question: `This phone was ${name} before`,
     body:
-      `Continue as ${name}? This phone was also ${list}${stop} ` +
+      `This phone was also ${list}${stop} ` +
       (one
-        ? 'If that one is left over, archive it in Group settings.'
-        : 'If those are left over, archive them in Group settings.'),
+        ? "If that's a leftover, archive it in Group settings."
+        : 'If those are leftovers, archive them in Group settings.'),
     confirm: `Continue as ${name}`,
   };
 }
