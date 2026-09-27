@@ -13,7 +13,8 @@
       "supportsTablet": false,
       "associatedDomains": ["applinks:even.appalaya.com"],
       "infoPlist": {
-        "UIBackgroundModes": ["fetch", "processing"]
+        "UIBackgroundModes": ["fetch", "processing"],
+        "ITSAppUsesNonExemptEncryption": true
       }
     },
     "android": {

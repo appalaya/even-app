@@ -1,0 +1,65 @@
+# TestFlight lanes for Even. Run only by .github/workflows/ios.yml; see RELEASE.md.
+#
+# Everything comes in through the environment, with absolute paths, so nothing here
+# depends on the directory fastlane runs from:
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8  the App Store Connect API key (repository secrets;
+#                                          ASC_KEY_P8 is the .p8 file, base64-encoded)
+#   WHAT_TO_TEST                           TestFlight/WhatToTest.en-US.txt
+#   IPA_PATH                               the exported .ipa (alpha lane only)
+
+opt_out_usage
+skip_docs
+default_platform(:ios)
+
+APP_IDENTIFIER = "com.appalaya.even"
+EXTERNAL_GROUP = "Family & Friends"
+
+def what_to_test
+  text = File.read(ENV.fetch("WHAT_TO_TEST")).strip
+  UI.user_error!("TestFlight/WhatToTest.en-US.txt is empty") if text.empty?
+  UI.user_error!("TestFlight/WhatToTest.en-US.txt is #{text.bytesize} bytes; keep it under 1024") if text.bytesize >= 1024
+  text
+end
+
+platform :ios do
+  before_all do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8"),
+      is_key_content_base64: true,
+      in_house: false
+    )
+  end
+
+  desc "Upload the .ipa to TestFlight with its What to Test. The internal group Alpha"
+  desc "gets it through App Store Connect's automatic distribution; no external group does."
+  lane :alpha do
+    upload_to_testflight(
+      app_identifier: APP_IDENTIFIER,
+      app_platform: "ios",
+      ipa: ENV.fetch("IPA_PATH"),
+      changelog: what_to_test,
+      distribute_external: false,
+      # Wait only until the build appears, set What to Test, and stop; processing
+      # finishes on Apple's side and Alpha is notified when it does.
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Give an already uploaded build to the external group Family & Friends,"
+  desc "with the What to Test from the tagged commit. Submits it for Beta App Review if needed."
+  lane :family_and_friends do |options|
+    upload_to_testflight(
+      app_identifier: APP_IDENTIFIER,
+      app_platform: "ios",
+      distribute_only: true,
+      app_version: options.fetch(:version),
+      build_number: options.fetch(:build),
+      changelog: what_to_test,
+      distribute_external: true,
+      groups: [EXTERNAL_GROUP],
+      notify_external_testers: true
+    )
+  end
+end

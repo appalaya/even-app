@@ -8,7 +8,13 @@ web-build/
 expo-env.d.ts
 
 # Native builds
-ios/
+# iOS: ios/ is committed (made by prebuild, see RELEASE.md); its build output is not
+ios/Pods/
+ios/build/
+ios/DerivedData/
+ios/*.xcworkspace/xcuserdata
+**/xcuserdata/
+.xcode.env.local
 android/
 .kotlin/
 *.jks
