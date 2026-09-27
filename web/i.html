@@ -26,13 +26,13 @@
   color-scheme: light dark;
   --bg: #F6F5F1; --surface: #FFFFFF; --fill: #F3F2EE; --text: #161715; --text-2: #595B56; --muted: #6B6D67;
   --separator: #ECEBE6; --accent: #1F6B5A; --accent-pressed: #17574A; --on-accent: #FFFFFF;
-  --accent-soft: rgba(31, 107, 90, 0.10); --badge: #161715; --badge-border: #161715;
+  --accent-soft: rgba(31, 107, 90, 0.10);
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0E100F; --surface: #1A1C1B; --fill: #252827; --text: #F1F1ED; --text-2: #A9ACA6; --muted: #8F928C;
     --separator: #2A2D2B; --accent: #74C1AB; --accent-pressed: #5FA893; --on-accent: #0B1A16;
-    --accent-soft: rgba(116, 193, 171, 0.16); --badge: #000000; --badge-border: #5A5E5B;
+    --accent-soft: rgba(116, 193, 171, 0.16);
   }
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -68,14 +68,9 @@ h1 {
 .button:hover { background: var(--accent-pressed); color: var(--on-accent); }
 .aside { margin: 16px 0 0; font-size: 15px; line-height: 21px; color: var(--text-2); }
 h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
-.stores { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 0; }
-.store {
-  flex: 1 1 140px; display: flex; flex-direction: column; justify-content: center; height: 52px; padding: 0 16px;
-  border-radius: 12px; border: 1px solid var(--badge-border); background: var(--badge); color: #FFFFFF;
-  text-decoration: none;
-}
-.store small { font-size: 11px; line-height: 13px; letter-spacing: 0.2px; }
-.store span { font-size: 19px; line-height: 23px; font-weight: 600; letter-spacing: -0.3px; }
+.stores { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 0; }
+.store { display: block; border-radius: 8px; }
+.store img { display: block; width: auto; height: 48px; }
 .codebox { position: relative; margin: 12px 0 0; padding: 16px 16px 64px; border-radius: 18px; background: var(--fill); }
 .code {
   margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; line-height: 22px;
@@ -119,9 +114,8 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
 
     <h2>Don't have Even yet?</h2>
     <div class="stores">
-      <!-- PLACEHOLDER: the official badge artwork for both stores (README, Placeholders). -->
-      <a class="store" href="https://apps.apple.com/app/id6816425117" rel="noreferrer"><small>Download on the</small><span>App Store</span></a>
-      <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><small>GET IT ON</small><span>Google Play</span></a>
+      <a class="store" href="https://apps.apple.com/app/id6816425117" rel="noreferrer"><img src="/badges/app-store.svg" alt="Download on the App Store" width="144" height="48"></a>
+      <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><img src="/badges/google-play.svg" alt="Get it on Google Play" width="162" height="48"></a>
     </div>
 
     <h2 id="code-label">Invite code</h2>
@@ -158,6 +152,7 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
   <a href="/privacy">Privacy</a>
   <a href="/terms">Terms</a>
   <a href="/abuse">Abuse</a>
+  <a href="/contact">Contact</a>
   <span>Appalaya Inc.</span>
 </footer>
 

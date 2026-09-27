@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="format-detection" content="telephone=no">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Contact · Even</title>
+<meta name="description" content="Report a group, get help, or tell us what you think.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+<!--
+  The contact form (README.md, "Contact page"). No inline code: contact.js and contact-lib.js are files on this site,
+  allowed by the /contact policy in _headers together with Cloudflare Turnstile, the one script from elsewhere,
+  loaded from the exact URL Cloudflare requires. An invite link pasted here is read in this browser only; the form
+  sends the group's id, never the invite. scripts/check.mjs allows the form, these scripts and Turnstile on this page
+  and no other.
+-->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+<script type="module" src="/contact.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main class="contact">
+  <h1>Contact</h1>
+  <p class="intro">Report a group, get help, or tell us what you think.</p>
+
+  <noscript>
+    <p class="contact-card">This page needs JavaScript to send a message. It works out a reported group's id here in your browser, so an invite link never leaves it, and runs Cloudflare's bot check before anything is sent.</p>
+  </noscript>
+
+  <form class="contact-form" id="form" aria-label="Contact form" hidden>
+    <fieldset class="plain topics">
+      <legend>What's this about?</legend>
+      <div class="topic-list">
+        <label class="topic"><input type="radio" name="purpose" value="report" checked><span class="topic-text"><span class="topic-title">Report a group</span><span class="topic-sub">Content in a group that breaks our terms.</span></span></label>
+        <label class="topic"><input type="radio" name="purpose" value="help"><span class="topic-text"><span class="topic-title">Get help</span><span class="topic-sub">Something in Even isn't working.</span></span></label>
+        <label class="topic"><input type="radio" name="purpose" value="feedback"><span class="topic-text"><span class="topic-title">Send feedback</span><span class="topic-sub">An idea, a gripe, or some praise.</span></span></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="plain" id="report-fields">
+      <fieldset class="plain" id="paste">
+        <label class="field-label" for="link">Invite link</label>
+        <p class="field-hint" id="link-hint">Paste the group's link. It stays in this browser; we only use it to work out the group's id.</p>
+        <textarea class="input input-link" id="link" rows="3" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="link-hint derived"></textarea>
+        <div class="derived" id="derived" role="status" hidden>
+          <span class="derived-icon"><span id="derived-ok"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="derived-problem" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 4.2L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5"/><path d="M12 17.2v.3"/></svg></span></span>
+          <span id="derived-text"></span>
+        </div>
+      </fieldset>
+
+      <div id="prefilled" hidden>
+        <p class="field-label">Group</p>
+        <div class="group-box">
+          <span class="group-source">Filled in by the Even app</span>
+          <span class="group-row"><span class="group-key">Group id</span><span class="group-id" id="prefill-id"></span></span>
+          <span class="group-row"><span class="group-key">Server</span><span class="group-server" id="prefill-server"></span></span>
+        </div>
+        <p class="field-hint">Never its key or contents.</p>
+        <p class="field-hint" id="prefill-note" hidden></p>
+      </div>
+
+      <label class="field-label" for="reason">Reason</label>
+      <div class="select-wrap">
+        <select class="input select" id="reason" required>
+          <option value="">Choose one</option>
+          <option>Illegal content</option>
+          <option>Harassment or threats</option>
+          <option>Spam or scam</option>
+          <option>Something else</option>
+        </select>
+        <span class="chevron" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+
+      <label class="field-label" for="details">What did you see? <span class="optional">(optional)</span></label>
+      <textarea class="input" id="details" rows="4" maxlength="3969" placeholder="Where you saw it, and when."></textarea>
+    </fieldset>
+
+    <fieldset class="plain" id="message-fields" disabled hidden>
+      <label class="field-label" for="message">Message</label>
+      <textarea class="input input-tall" id="message" rows="6" maxlength="4000" required placeholder="What happened, and what did you expect? Your phone and Even version help."></textarea>
+    </fieldset>
+
+    <label class="field-label" for="email">Your email <span class="optional">(optional)</span></label>
+    <input class="input" id="email" type="email" autocomplete="email" maxlength="254" pattern="[^@\s]+@[^@\s]+\.[^@\s]+" placeholder="you@example.com" aria-describedby="email-hint">
+    <p class="field-hint" id="email-hint">Only so we can reply. We don't add it to any list.</p>
+
+    <div class="turnstile" id="turnstile" role="group" aria-label="Bot check"></div>
+
+    <p class="form-alert" id="alert" role="alert" hidden><span class="alert-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 4.2L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5"/><path d="M12 17.2v.3"/></svg></span><span id="alert-text"></span></p>
+
+    <button class="send" id="send" type="submit">Send report</button>
+    <p class="field-hint handle" id="handle">How we handle it: <a href="/abuse">Report abuse</a>.</p>
+  </form>
+
+  <div class="sent" id="sent" role="status" tabindex="-1" hidden>
+    <span class="sent-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+    <h2 id="sent-title">Report sent</h2>
+    <p id="sent-text">Thanks. If the group is on our server and breaks our terms, we block it. We can't see inside it, so we can't tell you more than that.</p>
+    <button class="sent-again" id="again" type="button">Send another</button>
+  </div>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <a href="/contact" aria-current="page">Contact</a>
+  <span class="org">Appalaya Inc.</span>
+</footer>
+
+</div>
+</body>
+</html>

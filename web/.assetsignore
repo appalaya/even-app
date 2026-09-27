@@ -4,6 +4,8 @@
 /README.md
 /scripts/
 /worker/
+/vitest.config.mts
+/*.test.ts
 /.wrangler/
 /.dev.vars*
 /.env*

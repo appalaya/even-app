@@ -1,30 +1,34 @@
 # web — even.appalaya.com
 
 The static landing site: the universal-link and App Links association files, the invite page at `/i`, the
-product page, and the privacy, terms and abuse pages. Plain HTML and CSS, one inline script on one page, no build
-step, no framework, and no request to anything outside this site. Deployed to Cloudflare by GitHub Actions, as a
-Worker with static assets plus a small Worker script that answers only the contact form's API under `/api/` (see
-[Deploying](#deploying) and [Contact form](#contact-form)).
+product page, the contact page, and the privacy, terms and abuse pages. Plain HTML and CSS, one inline script on one
+page (`/i`), two script files on another (`/contact`), no build step and no framework. Nothing is loaded from outside
+this site except Cloudflare Turnstile's bot check, on the contact page only. Deployed to Cloudflare by GitHub
+Actions, as a Worker with static assets plus a small Worker script that answers only the contact form's API under
+`/api/` (see [Deploying](#deploying), [Contact page](#contact-page) and [Contact form](#contact-form)).
 
 | URL | File | Notes |
 |---|---|---|
 | `/` | `index.html` | Product page |
 | `/i` | `i.html` | Invite page. Reads the invite from the URL fragment, never sends it. Strict CSP. |
+| `/contact` | `contact.html`, `contact.js`, `contact-lib.js` | Report a group, get help, send feedback. The only form, the only script files, and the only page that loads Turnstile. See [Contact page](#contact-page). |
 | `/privacy`, `/terms`, `/abuse` | `privacy.html`, `terms.html`, `abuse.html` | The privacy page is [`even-server/THREAT-MODEL.md`](https://github.com/appalaya/even-server/blob/main/THREAT-MODEL.md) in plain words; keep them in step. |
 | any unknown path | `404.html` | Served with status 404 (`not_found_handling: "404-page"` in `wrangler.jsonc`). |
 | `/api/contact`, `/api/contact/config` | `worker/` | The contact form's API, the only code that runs on Cloudflare. See [Contact form](#contact-form). |
 | `/.well-known/apple-app-site-association` | same | iOS universal links for `/i` and `/i/*` |
 | `/.well-known/assetlinks.json` | same | Android App Links |
 | | `site.css`, `favicon.svg` | Shared by every page except `/i`, which has its own inline style |
+| | `badges/` | Apple's and Google's store badges, unmodified. See [Store badges](#store-badges). |
 | | `_headers` | Response headers, including every CSP. Read by Cloudflare as configuration, not served. |
 | | `wrangler.jsonc`, `.assetsignore` | Deploy configuration and the list of files kept out of the upload. Not served. |
 | | `worker/` | The Worker script's TypeScript source and its tests. Bundled into the script, not served. |
+| | `contact-lib.test.ts`, `vitest.config.mts` | The contact page's test and its Vitest config. Not served. |
 
 Colours are the app's `even` theme (`src/theme/themes.ts`) and the mark is `src/components/Mark.tsx`'s paths; change
 them there first.
 
-Everything in this folder is published except what `.assetsignore` lists: this README, `scripts/`, `worker/` and
-`wrangler.jsonc`. They contain nothing private; the repository is public anyway. No email address or key is in any
+Everything in this folder is published except what `.assetsignore` lists: this README, `scripts/`, `worker/`,
+`wrangler.jsonc`, `vitest.config.mts` and the `*.test.ts` files. They contain nothing private; the repository is public anyway. No email address or key is in any
 of them: those are Worker secrets and variables set by the deploy (see [Contact form](#contact-form)).
 
 ## Why `i.html` and not `i/index.html`
@@ -50,9 +54,12 @@ attributes anywhere (hashes cover neither), no second script or style, no extern
 the script that can send, store or inject (`fetch`, `sendBeacon`, `innerHTML`, storage, and so on). The group name is
 inserted with `textContent` only.
 
-`check.mjs` also fails on any external URL in any page other than the two store links, the server repository link and
-the abuse mailbox; on inline code in any other page; on a `_headers` file missing a required header or with the `/i`
-rules before `/*`; and on either association file not parsing or not naming the app. It lists every placeholder left.
+`check.mjs` also fails on any external URL in any page other than the two store links and the server repository link
+(and, on `contact.html` only, Turnstile's script); on any mail address or `mailto:` in any published file; on inline
+code in any other page; on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
+[Contact page](#contact-page)); on a `_headers` file missing a required header, with the `/i`, `/badges/*` or
+`/contact` rules before `/*`, or with a policy that differs from what `csp-hashes.mjs` generates; and on either
+association file not parsing or not naming the app. It lists every `PLACEHOLDER` left.
 
 ## Local preview
 
@@ -128,7 +135,7 @@ which a Custom Domain requires.
 
 For `appalaya.com`, keep **off** everything that injects scripts or rewrites HTML, since it would either break the
 hashes or add a script the invite page must not run: Rocket Loader, Web Analytics (including its automatic setup for
-proxied hostnames), Zaraz, Email Address Obfuscation (the pages also wrap the address in `<!--email_off-->`), and Bot
+proxied hostnames), Zaraz, Email Address Obfuscation (no page names an address, but it still rewrites HTML), and Bot
 Fight Mode's JavaScript detections.
 
 ### DNS
@@ -153,7 +160,10 @@ curl -si https://even.appalaya.com/.well-known/apple-app-site-association
 curl -si https://even.appalaya.com/.well-known/assetlinks.json
 
 # The tooling is not published: 404 for each
-for f in README.md wrangler.jsonc scripts/check.mjs worker/index.ts; do curl -s -o /dev/null -w "%{http_code} /$f\n" "https://even.appalaya.com/$f"; done
+for f in README.md wrangler.jsonc scripts/check.mjs worker/index.ts contact-lib.test.ts vitest.config.mts; do curl -s -o /dev/null -w "%{http_code} /$f\n" "https://even.appalaya.com/$f"; done
+
+# The contact page: its own policy (Turnstile allowed), and only one
+curl -sI https://even.appalaya.com/contact | grep -i content-security-policy
 
 # The contact form: its config (200, the site key), and a request from another origin refused (403 forbidden)
 curl -s https://even.appalaya.com/api/contact/config
@@ -174,7 +184,7 @@ Test universal links on a real device; the simulator is unreliable for them.
 
 ## Contact form
 
-The contact page (built separately) posts to the Worker script in `worker/`. For each submission the script checks
+The contact page ([Contact page](#contact-page)) posts to the Worker script in `worker/`. For each submission the script checks
 the request, verifies the Turnstile token with Cloudflare, applies a per-IP limit, and sends one plain-text email to
 the mailbox for the form's purpose through Resend's HTTP API, from the same verified sending domain and with the
 same Turnstile widget as the company site's contact form (appalaya.com). Nothing is stored. Its log lines carry the
@@ -239,11 +249,8 @@ rendering, `turnstile.render(element, { sitekey, action })`); the Worker rejects
 widget (`turnstile.reset(widgetId)`) after every POST, whatever the answer. The limit is counted only after a token
 passes, so a failed or expired challenge never costs the visitor their one message a minute.
 
-The page's CSP and `scripts/check.mjs` need changes that belong with the page: Turnstile needs
-`script-src https://challenges.cloudflare.com` and `frame-src https://challenges.cloudflare.com`, and the POST needs
-`connect-src 'self'` (the site-wide `default-src 'self'` already allows it). `check.mjs` today rejects any external
-URL outside its allow-list, inline code on any page but `/i`, and every `<form>` element, so the page either submits
-with `fetch` from a script file without a `<form>` or the check is changed with it.
+The page's CSP (`script-src` and `frame-src` for `https://challenges.cloudflare.com`, `connect-src 'self'`) and the
+matching rules in `scripts/check.mjs` are described under [Contact page](#contact-page).
 
 **The group id for a report** is derived in the browser from the invite, so the group's secret never leaves the
 page (even-server `PROTOCOL.md` §2 and §8): with `secret` the invite's `k` decoded from base64url (32 bytes) and
@@ -354,14 +361,105 @@ real key and your own mailbox as `CONTACT_TO_*`, typed in with `read -rs RESEND_
 `--var "RESEND_API_KEY:$RESEND_API_KEY"` so the key stays out of shell history. The rate limiter is simulated
 locally, so a second message within a minute gets 429.
 
-## Placeholders to fill before launch
+## Contact page
 
-`node web/scripts/check.mjs` prints each one with its file and line.
+`/contact` (`contact.html`) is drawn on the design canvas as "Website: contact page" (`ContactWeb`, `ContactWebDark`,
+`ContactWebDesktop`, `ContactWebDesktopDark`) and, as opened from the app, `ReportInBrowser`. Three topics: **Report a
+group** (an invite link, a reason, optional details), **Get help** and **Send feedback** (a message), each with an
+optional email, Cloudflare Turnstile, and a Send button. It replaces every mailbox the site used to name: no page
+carries an address, and `check.mjs` fails on one. Without JavaScript the page says it needs it; the form is hidden.
 
-| What | Where | How |
-|---|---|---|
-| Store badge artwork | `index.html`, `i.html` | The badges are text stand-ins. Download Apple's "Download on the App Store" and Google's "Get it on Google Play" artwork, save it in this folder (for example `badges/`), and use `<img src="/badges/…" alt="…">`. Local images are allowed by every CSP here (`img-src 'self'`); a remote one is not. |
-| Abuse and support mailboxes | `abuse.html`, `privacy.html`, `index.html` | Done: the abuse and support mailboxes are Zoho distribution lists that accept mail from anyone. |
+| File | |
+|---|---|
+| `contact.html` | The markup. No inline code: a `<script src>` for Turnstile's `api.js?render=explicit` (the exact URL Cloudflare requires, `defer`) and `<script type="module" src="/contact.js">`, in that order. Styles are in `site.css`. |
+| `contact.js` | The page: topics, the pasted link, the fragment, Turnstile, the POST, the sent and failed states. Inserts text with `textContent` only. |
+| `contact-lib.js` | No DOM, no dependencies: reads an invite exactly as `@even/core`'s `decodeInvite` does (a port of its base64url, `canonicalOrigin` and checksum), derives the group id with WebCrypto, reads the fragment, builds the request body and maps the API's answer. |
+| `contact-lib.test.ts` | Vitest: the id against `@even/core`'s known answers and its `deriveServer`/`groupIdForToken` for random secrets and servers, `canonicalOrigin` and invite reading against core on fixed and generated inputs, and every body against the Worker's `validateContact`. |
+
+**The report never sends the invite.** The page reads the pasted link in the browser, derives
+`groupId = base64url(SHA-256(HKDF-SHA256(secret, "even/v1", "auth|" + server)))` (even-server `PROTOCOL.md` §2) and
+sends only that id and the server. The line under the field says so: "We'll receive the group id ab12…u7Qx on
+sync.even.appalaya.com, never its key or contents." For a group on another server it reads "This group is on
+<host>. We can't act on it, but we'll read your report." A server URL with a path (`https://host/even`) cannot be
+reported through the form, because the API takes an origin only; the page says so and does not send.
+
+**The app opens the page with a fragment**, which a browser never sends: `#purpose=help`, `#purpose=feedback`, or
+`#purpose=report&id=<groupId>&server=<canonical server URL>` (percent-encoded, as `URLSearchParams` reads it). A
+report fragment preselects Report a group and shows the id and server read-only ("Filled in by the Even app") in
+place of the link field. With no fragment, Report a group is selected, as on the desktop board.
+
+**What each answer shows.** 202: "Report sent" or "Message sent". 403 `turnstile_failed`, or no token yet: "The bot
+check didn't finish. Try it again." 429: "Couldn't send. Try again in a minute." Any other answer (503, 502, 500, a
+page bug): "Couldn't send. The form isn't available right now; try again later." No answer: "Couldn't send. Check
+your connection and try again." Everything typed stays, and the widget is reset after every POST. A pasted link
+that the app would not accept reads "That link isn't complete. Copy it again." ("This invite needs a newer Even."
+for a newer invite version), as the app words a bad code.
+
+**CSP.** `_headers` gives `/contact` its own policy, written by `scripts/csp-hashes.mjs` from `contact.html` (which
+refuses to write it if inline code appears; put code in `contact.js`):
+
+```text
+default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com;
+connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+```
+
+`form-action 'none'` means the form can never submit natively; `contact.js` sends it with `fetch`. `check.mjs`
+allows a `<form>`, `<script src>` and Turnstile's URL on `contact.html` and nowhere else, requires exactly the two
+scripts above, allows no other `.js` file in the site, and checks both script files: they import only each other,
+`fetch` only `/api/contact` and `/api/contact/config`, and contain nothing that could inject, store, log, open a
+window or run text as code. It also loads `contact-lib.js` and checks it against `@even/core`'s known-answer group
+ids (`packages/core/src/keys.test.ts`), so CI checks the derivation even though the root Vitest config does not
+include this folder's test.
+
+```bash
+node web/scripts/csp-hashes.mjs                     # after editing contact.html or i.html
+node web/scripts/check.mjs                          # must pass
+npx vitest run --config web/vitest.config.mts       # contact-lib.js against @even/core and the Worker's rules
+```
+
+**Try it locally** with [Trying the form locally](#trying-the-form-locally) and open
+`http://localhost:4173/contact`. Cloudflare's test site key renders a widget marked "For testing only" that always
+passes. With the placeholder Resend key, a send goes through validation, Turnstile and the rate limit and then gets
+`502 send_failed` from Resend, which the page shows as "Couldn't send. The form isn't available right now; try again
+later."; a second send within a minute gets 429. The sent state needs a real key.
+
+The site-wide `Referrer-Policy: no-referrer` applies to `/contact` too. Turnstile's documentation lists only
+`script-src` and `frame-src` for the embedding page, and the test key does not check hostnames, so the first real
+deploy is where a hostname problem would show: if the widget reports error 110200 ("domain not authorized") while
+`even.appalaya.com` is in the widget's Hostname management, try `Referrer-Policy: strict-origin` on `/contact` (add
+`! Referrer-Policy` and the new value to its rule; only the site's origin would be sent, to Cloudflare, which serves
+the site anyway).
+
+## Store badges
+
+`badges/app-store.svg` and `badges/google-play.svg` are the official artwork, byte for byte, used on `/` and `/i`
+with the alt text "Download on the App Store" and "Get it on Google Play".
+
+- **Apple**: the black "Download on the App Store" badge, US English, from Apple's badge service
+  (`https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us`, the source behind the
+  App Store Marketing Tools at `https://toolbox.marketingtools.apple.com/app-store/`), under the App Store Marketing
+  Guidelines (`https://developer.apple.com/app-store/marketing/guidelines/`): at least 40 px tall on screen, clear
+  space of a quarter of the badge's height, never modified, the black badge whenever another store's badge is shown,
+  and the App Store badge first. Apple's badges are for apps available on the App Store (the pre-order badge is for
+  an app in pre-order), so **do not publicise the site before Even is live on the App Store**. The guidelines ask for
+  Apple's credit line wherever legal information is given; it is at the end of `terms.html`.
+- **Google**: "Get it on Google Play", English, the SVG from the badge package on Google's Partner Marketing Hub
+  (`https://partnermarketinghub.withgoogle.com/brands/google-play/google-play/lockups-icons-badges/`, where
+  `https://play.google.com/intl/en_us/badges/` now redirects; the package's
+  `Get it on Google Play Badges/Digital/svg/GetItOnGooglePlay_Badge_Web_color_English.svg`). Its guidelines: at least
+  28 px tall, clear space of a quarter of its height, never modified, and the same size as or larger than the other
+  stores' badges.
+
+Both files are the badge edge to edge, with no padding of their own (the older 646 × 250 Google PNG had padding
+built in; this artwork does not), so the same CSS height gives boxes of the same height: 48 px, 12 px apart,
+aligned at the top. The SVGs colour themselves with an inline `<style>` and `style` attributes, so `/badges/*` has
+its own policy in `_headers`, `default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'`: WebKit
+refuses those styles under the site-wide policy when a badge is opened directly. Replace a badge only with a newer
+download from the same place, unmodified.
+
+## Placeholders
+
+`node web/scripts/check.mjs` prints any `PLACEHOLDER` left in the site with its file and line. There are none now.
 
 The "Run your own server" link points at `https://github.com/appalaya/even-server`, which is private today; it
 returns 404 to the public until the repository is opened.

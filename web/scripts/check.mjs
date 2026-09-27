@@ -4,17 +4,32 @@
  *
  *   node web/scripts/check.mjs
  *
- * - No page links or loads anything outside this site, except the two store links, the server repository and the
- *   abuse mailbox. No inline event handlers or style attributes (the CSPs allow neither), no frames, forms or <base>.
+ * - No page links or loads anything outside this site, except the two store links and the server repository, and on
+ *   the contact page Cloudflare Turnstile's script. No mail address anywhere. No inline event handlers or style
+ *   attributes (the CSPs allow neither), no frames or <base>, and no form except the contact page's one.
  * - Only the invite page has inline code: exactly one <script> and one <style>, whose hashes match the /i policy in
  *   _headers, and whose script has no way to send anything.
- * - _headers carries the site-wide headers, the AASA Content-Type, and the strict /i policy in the right order.
+ * - Only the contact page loads scripts: Turnstile's api.js and /contact.js. The site's script files (contact.js,
+ *   contact-lib.js) import nothing else, fetch only the contact API, and cannot inject, store or open anything;
+ *   contact-lib.js still derives the known-answer group ids of @even/core (packages/core/src/keys.test.ts).
+ * - _headers carries the site-wide headers, the AASA Content-Type, and the /i and /contact policies in the right
+ *   order, each exactly as csp-hashes.mjs generates it.
  * - Both association files parse as JSON and name the app.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-import { INVITE_PAGE, WEB, inviteCsp, splitHtml, strictPolicies } from './csp-hashes.mjs';
+import {
+  CONTACT_PAGE,
+  CONTACT_PATH,
+  INVITE_PAGE,
+  TURNSTILE_ORIGIN,
+  WEB,
+  contactCsp,
+  inviteCsp,
+  splitHtml,
+  strictPolicies,
+} from './csp-hashes.mjs';
 
 const APP_ID = '9S29T387N4.com.appalaya.even';
 const PACKAGE = 'com.appalaya.even';
@@ -24,9 +39,36 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/apps\.apple\.com\/app\/id(?:PLACEHOLDER|\d+)$/,
   /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.appalaya\.even$/,
   /^https:\/\/github\.com\/appalaya\/even-server$/,
-  /^mailto:abuse@appalaya\.com$/,
-  /^mailto:support@appalaya\.com$/,
 ];
+
+/** Turnstile's api.js, from the exact URL Cloudflare requires (never proxied or cached). Contact page only. */
+const TURNSTILE_SCRIPT = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js?render=explicit`;
+
+/** More URLs one page may reference, and only that page. */
+const PAGE_EXTERNAL = new Map([[CONTACT_PAGE, [TURNSTILE_SCRIPT]]]);
+
+/** The contact page's scripts, in order: Turnstile first, so it is there when the module runs. */
+const CONTACT_SCRIPTS = [
+  { src: TURNSTILE_SCRIPT, attrs: ['defer'] },
+  { src: '/contact.js', attrs: ['type=module'] },
+];
+
+/** The site's script files and what each may import. Any other .js file in the site fails the check. */
+const SCRIPT_FILES = new Map([
+  ['contact.js', ['./contact-lib.js']],
+  ['contact-lib.js', []],
+]);
+
+/** The only requests the contact page's scripts may make. */
+const CONTACT_API = { CONFIG_URL: '/api/contact/config', CONTACT_URL: '/api/contact' };
+
+/** Store badge artwork (README.md, "Store badges"): SVGs styled inline by their makers, so inline style only. */
+const BADGES_PATH = '/badges/*';
+const BADGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
+
+/** An address in any published file: the site names no mailbox (README.md, "Contact page"). */
+const MAIL_ADDRESS =
+  /[A-Za-z0-9._%+'-]+@(?!(?:[A-Za-z0-9-]+\.)*example\.(?:com|net|org)\b)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b/;
 
 /** Attributes that take a URL. */
 const URL_ATTRS = new Set([
@@ -49,16 +91,7 @@ const URL_ATTRS = new Set([
   'profile',
   'usemap',
 ]);
-const FORBIDDEN_TAGS = new Set([
-  'iframe',
-  'frame',
-  'object',
-  'embed',
-  'form',
-  'base',
-  'applet',
-  'portal',
-]);
+const FORBIDDEN_TAGS = new Set(['iframe', 'frame', 'object', 'embed', 'base', 'applet', 'portal']);
 
 /** Anything in the invite script that could send, store, or inject. */
 const FORBIDDEN_IN_INVITE_SCRIPT = [
@@ -96,6 +129,17 @@ const FORBIDDEN_IN_INVITE_SCRIPT = [
   /location\.search/,
 ];
 
+/** Anything in the site's script files that could send elsewhere, store, inject, or run text as code. */
+const FORBIDDEN_IN_SCRIPT_FILES = FORBIDDEN_IN_INVITE_SCRIPT.filter(
+  (pattern) =>
+    !['/\\bfetch\\b/', '/location\\.search/', '/\\bWorker\\b/'].includes(String(pattern)),
+).concat([
+  /\bnew\s+(?:Shared)?Worker\b/,
+  /\bconsole\./,
+  /\bnavigator\.clipboard/,
+  /\blocation\.hash\s*=/,
+]);
+
 const failures = [];
 const warnings = [];
 const fail = (file, message) => failures.push(`${file}: ${message}`);
@@ -103,7 +147,8 @@ const fail = (file, message) => failures.push(`${file}: ${message}`);
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : walk(path);
+    if (entry.isDirectory())
+      return ['node_modules', '.wrangler'].includes(entry.name) ? [] : walk(path);
     return [path];
   });
 }
@@ -114,8 +159,9 @@ const isExternal = (value) =>
 function checkUrl(file, where, raw) {
   const value = raw.trim();
   if (value === '' || !isExternal(value)) return;
-  if (!ALLOWED_EXTERNAL.some((pattern) => pattern.test(value)))
-    fail(file, `external URL in ${where}: ${value}`);
+  if (ALLOWED_EXTERNAL.some((pattern) => pattern.test(value))) return;
+  if ((PAGE_EXTERNAL.get(file) ?? []).includes(value)) return;
+  fail(file, `external URL in ${where}: ${value}`);
 }
 
 function checkCss(file, css, where) {
@@ -135,6 +181,7 @@ function attributesOf(tagText) {
 
 function checkHtml(file, source) {
   const isInvite = file === INVITE_PAGE;
+  const isContact = file === CONTACT_PAGE;
   let parsed;
   try {
     parsed = splitHtml(source);
@@ -143,11 +190,22 @@ function checkHtml(file, source) {
     return;
   }
   const { markup, blocks } = parsed;
+  const scripts = [];
+  let forms = 0;
 
   for (const m of markup.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
     const tag = m[1].toLowerCase();
     const attrs = attributesOf(m[2]);
     if (FORBIDDEN_TAGS.has(tag)) fail(file, `<${tag}> is not allowed`);
+    if (tag === 'form') {
+      forms += 1;
+      if (!isContact) fail(file, `<form> is not allowed (only ${CONTACT_PAGE} has one)`);
+      for (const { name } of attrs) {
+        if (['action', 'method', 'target', 'enctype'].includes(name))
+          fail(file, `<form ${name}>: the form is sent by contact.js, never natively`);
+      }
+    }
+    if (tag === 'script' && attrs.some((a) => a.name === 'src')) scripts.push(attrs);
     for (const { name, value } of attrs) {
       if (name.startsWith('on')) fail(file, `inline event handler ${name}= on <${tag}>`);
       if (name === 'style') fail(file, `style="" attribute on <${tag}> (the CSP blocks it)`);
@@ -172,6 +230,24 @@ function checkHtml(file, source) {
   }
 
   for (const style of blocks.style) checkCss(file, style.body, '<style>');
+
+  if (isContact) {
+    if (forms !== 1) fail(file, `expected exactly one <form>, found ${forms}`);
+    const found = scripts.map((attrs) => ({
+      src: attrs.find((a) => a.name === 'src')?.value,
+      attrs: attrs
+        .filter((a) => a.name !== 'src')
+        .map((a) => (a.value === '' ? a.name : `${a.name}=${a.value}`)),
+    }));
+    if (JSON.stringify(found) !== JSON.stringify(CONTACT_SCRIPTS)) {
+      fail(
+        file,
+        `scripts must be exactly ${JSON.stringify(CONTACT_SCRIPTS)}, found ${JSON.stringify(found)}`,
+      );
+    }
+  } else if (!isInvite && scripts.length > 0) {
+    fail(file, `<script src> (only ${CONTACT_PAGE} loads scripts)`);
+  }
 
   if (!isInvite) {
     if (blocks.script.some((s) => s.body.trim() !== ''))
@@ -262,7 +338,127 @@ function checkHeaders(text, pages) {
     }
   }
   if (strictPolicies(text).length !== 2)
-    fail(file, "expected exactly two strict (default-src 'none') policies");
+    fail(file, "expected exactly two strict (hashed default-src 'none') policies, for /i and /i/*");
+
+  let contact = null;
+  try {
+    contact = contactCsp(pages.get(CONTACT_PAGE));
+  } catch (error) {
+    fail(CONTACT_PAGE, error.message);
+  }
+  const r = rule(CONTACT_PATH);
+  if (!r) fail(file, `missing the ${CONTACT_PATH} rule`);
+  else {
+    if (index(CONTACT_PATH) < index('/*'))
+      fail(file, `${CONTACT_PATH} must come after /* so it replaces the site-wide CSP`);
+    if (!r.lines.includes('! Content-Security-Policy'))
+      fail(file, `${CONTACT_PATH} must detach the site-wide CSP first`);
+    const csp = r.lines.filter((l) => l.startsWith('Content-Security-Policy:'));
+    if (csp.length !== 1)
+      fail(file, `${CONTACT_PATH} must set exactly one Content-Security-Policy`);
+    else if (contact !== null && csp[0] !== `Content-Security-Policy: ${contact}`) {
+      fail(
+        file,
+        `${CONTACT_PATH} CSP does not match ${CONTACT_PAGE}; run node web/scripts/csp-hashes.mjs`,
+      );
+    }
+  }
+  // The store badges: their own inline style and nothing else.
+  const badges = rule(BADGES_PATH);
+  if (!badges) fail(file, `missing the ${BADGES_PATH} rule`);
+  else {
+    if (index(BADGES_PATH) < index('/*')) fail(file, `${BADGES_PATH} must come after /*`);
+    const lines = badges.lines.filter((l) => l.startsWith('Content-Security-Policy:'));
+    if (
+      !badges.lines.includes('! Content-Security-Policy') ||
+      lines.length !== 1 ||
+      lines[0] !== `Content-Security-Policy: ${BADGES_CSP}`
+    )
+      fail(file, `${BADGES_PATH} must replace the site-wide CSP with exactly: ${BADGES_CSP}`);
+  }
+
+  // Turnstile is allowed on the contact page's policy and no other.
+  for (const other of rules) {
+    if (other.path === CONTACT_PATH) continue;
+    if (other.lines.some((l) => l.includes(TURNSTILE_ORIGIN)))
+      fail(file, `${other.path} names ${TURNSTILE_ORIGIN} (only ${CONTACT_PATH} may)`);
+  }
+}
+
+/** The site's script files: known files only, importing only each other, fetching only the contact API. */
+function checkScriptFile(file, source) {
+  const imports = SCRIPT_FILES.get(file);
+  if (imports === undefined) {
+    fail(file, 'a script file the check does not know; add it to SCRIPT_FILES with what it may do');
+    return;
+  }
+  for (const pattern of FORBIDDEN_IN_SCRIPT_FILES) {
+    if (pattern.test(source)) fail(file, `script matches forbidden pattern ${pattern}`);
+  }
+  const specifiers = [
+    ...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/gm),
+  ].map((m) => m[1]);
+  for (const specifier of specifiers) {
+    if (!imports.includes(specifier))
+      fail(file, `imports ${specifier} (allowed: ${imports.join(', ') || 'none'})`);
+  }
+  if (/^\s*import\s*['"]/m.test(source)) fail(file, 'side-effect import');
+  for (const m of source.matchAll(/\bfetch\s*\(\s*([^,)]*)/g)) {
+    const arg = m[1].trim();
+    if (!Object.hasOwn(CONTACT_API, arg))
+      fail(file, `fetch(${arg}): only ${Object.keys(CONTACT_API).join(' and ')}`);
+  }
+  for (const [name, url] of Object.entries(CONTACT_API)) {
+    if (
+      new RegExp(`\\bfetch\\s*\\(\\s*${name}\\b`).test(source) &&
+      !source.includes(`const ${name} = '${url}';`)
+    )
+      fail(file, `${name} must be the constant '${url}'`);
+  }
+  for (const m of source.matchAll(/\bhttps?:\/\/[A-Za-z0-9.-]+/g)) {
+    if (m[0] !== 'https://sync.even.appalaya.com') fail(file, `URL in a script file: ${m[0]}`);
+  }
+}
+
+/**
+ * contact-lib.js, loaded as the browser loads it (an ES module; as a data: URL so Node needs no package type), gives
+ * @even/core's known-answer group ids (packages/core/src/keys.test.ts, VECTORS) and reads a link to the same id.
+ * contact-lib.test.ts compares it with @even/core itself; this keeps the answers checked wherever check.mjs runs.
+ */
+async function checkDerivation(source) {
+  const file = 'contact-lib.js';
+  const secret = Uint8Array.from({ length: 32 }, (_, i) => i);
+  const vectors = {
+    'https://sync.even.appalaya.com': '5440R1lj0RAH5z7UZJ48_Fbl2cbrEBrp4DFswxKPwTI',
+    'https://home.example.net:8443/even': 'ohV9w_-dFphsCPCXCv7OQnwDcxnuhBeGmQNKiJkI8z4',
+  };
+  // makeInvite(secret, 'https://sync.even.appalaya.com'), encoded: {"v":1,"s":…,"k":…,"h":"Yw3NKQ"}.
+  const code = Buffer.from(
+    JSON.stringify({
+      v: 1,
+      s: 'https://sync.even.appalaya.com',
+      k: Buffer.from(secret).toString('base64url'),
+      h: 'Yw3NKQ',
+    }),
+  ).toString('base64url');
+  try {
+    const lib = await import(
+      `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
+    );
+    for (const [server, groupId] of Object.entries(vectors)) {
+      const got = await lib.groupIdFor(secret, server);
+      if (got !== groupId) fail(file, `group id for ${server} is ${got}, expected ${groupId}`);
+    }
+    const target = await lib.targetFromInvite(`https://even.appalaya.com/i#${code}`);
+    if (
+      target.groupId !== vectors['https://sync.even.appalaya.com'] ||
+      !target.reportable ||
+      !target.appalaya
+    )
+      fail(file, `an invite link reads as ${JSON.stringify(target)}`);
+  } catch (error) {
+    fail(file, `known answers: ${error.message}`);
+  }
 }
 
 function checkWellKnown(files) {
@@ -307,7 +503,7 @@ const files = new Map();
 for (const path of walk(WEB)) {
   const rel = relative(WEB, path).split('\\').join('/');
   if (rel.startsWith('scripts/') || rel === 'README.md') continue;
-  if (/\.(?:html|css|svg|json)$|^_headers$|^_redirects$|apple-app-site-association$/.test(rel)) {
+  if (/\.(?:html|css|svg|json|js)$|^_headers$|^_redirects$|apple-app-site-association$/.test(rel)) {
     files.set(rel, readFileSync(path, 'utf8'));
   }
 }
@@ -324,9 +520,18 @@ for (const [rel, source] of files) {
     fail(rel, 'SVG with a script, event handler, or external reference');
   }
 }
-if (files.has('_headers') && pages.has(INVITE_PAGE)) checkHeaders(files.get('_headers'), pages);
+if (!pages.has(CONTACT_PAGE)) fail(CONTACT_PAGE, 'missing');
+if (files.has('_headers') && pages.has(INVITE_PAGE) && pages.has(CONTACT_PAGE))
+  checkHeaders(files.get('_headers'), pages);
 else fail('_headers', 'missing');
 checkWellKnown(files);
+for (const [rel, source] of files) {
+  if (rel.endsWith('.js')) checkScriptFile(rel, source);
+  if (MAIL_ADDRESS.test(source) || /mailto:/i.test(source))
+    fail(rel, 'a mail address; the site names none');
+}
+if (files.has('contact-lib.js')) await checkDerivation(files.get('contact-lib.js'));
+else fail('contact-lib.js', 'missing');
 
 for (const [rel, source] of files) {
   source.split('\n').forEach((line, n) => {

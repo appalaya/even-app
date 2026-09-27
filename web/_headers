@@ -5,8 +5,15 @@
 # header set by an earlier rule. So /* comes first, and the /i rules replace its CSP instead of adding a second one
 # (two CSP headers would both be enforced, and the site-wide one would block the invite page's inline script).
 #
-# The two "default-src 'none'" lines are GENERATED from i.html by scripts/csp-hashes.mjs. After any edit to i.html,
-# run `node web/scripts/csp-hashes.mjs` and then `node web/scripts/check.mjs`.
+# The two "default-src 'none'; script-src 'sha256-…'" lines are GENERATED from i.html by scripts/csp-hashes.mjs.
+# After any edit to i.html, run `node web/scripts/csp-hashes.mjs` and then `node web/scripts/check.mjs`.
+#
+# The /contact policy is written by the same script: the contact form's scripts are files on this site, and it is
+# the one page that loads anything from elsewhere, Cloudflare Turnstile (script and challenge frame).
+#
+# /badges/* holds Apple's and Google's store badges, unmodified. Their SVG colours are an inline <style> and style
+# attributes, which the site-wide policy blocks when an engine applies an image's own CSP (WebKit does when the file
+# is opened directly), so these files get inline style and nothing else: no script, no loads.
 
 /*
   X-Content-Type-Options: nosniff
@@ -21,10 +28,18 @@
 
 /i
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-+3wBjErlMPDeji4DFCKSayA49Cs5hF1WeD4n+N1knM8='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
 
 /i/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-+3wBjErlMPDeji4DFCKSayA49Cs5hF1WeD4n+N1knM8='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-W+9Bl1AAKPhDUosCfanJ3V9+asVVD6WnlJ6evC5m+q4='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
+
+/badges/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'
+
+/contact
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
