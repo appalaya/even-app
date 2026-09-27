@@ -2,8 +2,8 @@
 #
 # Everything comes in through the environment, with absolute paths, so nothing here
 # depends on the directory fastlane runs from:
-#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8  the App Store Connect API key (repository secrets;
-#                                          ASC_KEY_P8 is the .p8 file, base64-encoded)
+#   ASC_KEY_ID, ASC_ISSUER_ID              the App Store Connect API key's ids (repository secrets)
+#   ASC_KEY_PATH                           the .p8 file, written by the workflow from ASC_KEY_P8
 #   WHAT_TO_TEST                           TestFlight/WhatToTest.en-US.txt
 #   IPA_PATH                               the exported .ipa (alpha lane only)
 
@@ -26,8 +26,7 @@ platform :ios do
     app_store_connect_api_key(
       key_id: ENV.fetch("ASC_KEY_ID"),
       issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      key_content: ENV.fetch("ASC_KEY_P8"),
-      is_key_content_base64: true,
+      key_filepath: ENV.fetch("ASC_KEY_PATH"),
       in_house: false
     )
   end

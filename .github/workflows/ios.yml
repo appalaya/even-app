@@ -104,10 +104,15 @@ jobs:
           mkdir -p "$dir"
           chmod 700 "$dir"
           key="$dir/AuthKey_$ASC_KEY_ID.p8"
-          printf '%s' "$ASC_KEY_P8" | tr -d ' \r\n' | base64 --decode > "$key"
+          # The secret is the .p8 file, pasted as is or base64-encoded.
+          if printf '%s' "$ASC_KEY_P8" | grep -q -- '-----BEGIN PRIVATE KEY-----'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_KEY_P8" | tr -d ' \r\n' | base64 --decode > "$key" 2>/dev/null || true
+          fi
           chmod 600 "$key"
-          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$key"; then
-            echo "::error::ASC_KEY_P8 is not a base64-encoded .p8 file (RELEASE.md, \"Secrets\")."
+          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$key" || ! grep -q -- '-----END PRIVATE KEY-----' "$key"; then
+            echo "::error::ASC_KEY_P8 is neither a .p8 file nor its base64 (RELEASE.md, \"Secrets\")."
             exit 1
           fi
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
@@ -218,7 +223,6 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           WHAT_TO_TEST: ${{ github.workspace }}/TestFlight/WhatToTest.en-US.txt
         run: fastlane ios alpha
 
@@ -250,6 +254,35 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not set (RELEASE.md, \"Secrets\")."
+              exit 1
+            fi
+          done
+          dir="$RUNNER_TEMP/asc"
+          mkdir -p "$dir"
+          chmod 700 "$dir"
+          key="$dir/AuthKey_$ASC_KEY_ID.p8"
+          # The secret is the .p8 file, pasted as is or base64-encoded.
+          if printf '%s' "$ASC_KEY_P8" | grep -q -- '-----BEGIN PRIVATE KEY-----'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key"
+          else
+            printf '%s' "$ASC_KEY_P8" | tr -d ' \r\n' | base64 --decode > "$key" 2>/dev/null || true
+          fi
+          chmod 600 "$key"
+          if ! grep -q -- '-----BEGIN PRIVATE KEY-----' "$key" || ! grep -q -- '-----END PRIVATE KEY-----' "$key"; then
+            echo "::error::ASC_KEY_P8 is neither a .p8 file nor its base64 (RELEASE.md, \"Secrets\")."
+            exit 1
+          fi
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
       - name: Read the tag
         id: tag
@@ -284,10 +317,13 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           WHAT_TO_TEST: ${{ github.workspace }}/TestFlight/WhatToTest.en-US.txt
           VERSION: ${{ steps.tag.outputs.version }}
           BUILD: ${{ steps.tag.outputs.build }}
         run: |
           fastlane ios family_and_friends version:"$VERSION" build:"$BUILD"
           echo "### Even $VERSION ($BUILD) given to Family & Friends" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

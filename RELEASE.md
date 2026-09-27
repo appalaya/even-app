@@ -91,7 +91,7 @@ requests never see them.
 |---|---|
 | `ASC_KEY_ID` | The API key's Key ID (10 characters) |
 | `ASC_ISSUER_ID` | The Issuer ID (a UUID) shown above the key list |
-| `ASC_KEY_P8` | The downloaded `AuthKey_<KEY_ID>.p8`, base64-encoded |
+| `ASC_KEY_P8` | The downloaded `AuthKey_<KEY_ID>.p8`: its text pasted as is, or base64-encoded; the workflow accepts either |
 | `IOS_DEV_CERT_P12` | Optional, see "Signing": an Apple Development certificate with its private key, exported as `.p12`, base64-encoded |
 | `IOS_DEV_CERT_PASSWORD` | Optional: the password set when exporting that `.p12` |
 
@@ -106,7 +106,7 @@ Apple offers it once. Then:
 ```bash
 gh secret set ASC_KEY_ID --body 'XXXXXXXXXX'
 gh secret set ASC_ISSUER_ID --body 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set ASC_KEY_P8
+gh secret set ASC_KEY_P8 < AuthKey_XXXXXXXXXX.p8
 ```
 
 Keep the `.p8` somewhere safe outside the repository (`*.p8` is gitignored).
