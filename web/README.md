@@ -94,10 +94,10 @@ Repository → Settings → Secrets and variables → Actions → New repository
 |---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages → Account details → Account ID |
 | `CLOUDFLARE_API_TOKEN` | An account API token with the permission below |
-| `CONTACT_TO_REPORT`, `CONTACT_TO_HELP`, `CONTACT_TO_FEEDBACK`, `CONTACT_FROM`, `TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY` | The contact form; see [Contact form](#contact-form), "Secrets and variables" |
+| `CONTACT_TO_REPORT`, `CONTACT_TO_HELP`, `CONTACT_TO_FEEDBACK`, `CONTACT_FROM`, `RESEND_API_KEY`, `TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY` | The contact form; see [Contact form](#contact-form), "Secrets and variables" |
 
 Until the first two exist, a deploy run fails at the Deploy step with a message naming them; until the contact
-form's six exist, it fails there with a message naming the missing ones.
+form's seven exist, it fails there with a message naming the missing ones.
 
 ### API token permissions
 
@@ -106,9 +106,9 @@ form's six exist, it fails there with a message naming the missing ones.
 | Account → **Workers Scripts** → Write (called Edit in some Cloudflare screens and docs) | Create the `even-web` Worker on the first run, upload the assets, deploy each version with its script and secrets, and keep its `workers.dev` and Preview URLs off |
 
 That is the whole list. The deploy needs no zone, DNS, Workers Routes, KV or Account Settings permission: the
-account ID comes from the secret, and nothing is routed or attached by the deploy. The email and rate-limit
-bindings and the secrets need nothing more either: Cloudflare's Workers permissions docs say deploying a Worker's
-bindings and managing its secrets need only edit access to that Worker. A token that also has Workers KV Storage
+account ID comes from the secret, and nothing is routed or attached by the deploy. The rate-limit binding and the
+secrets need nothing more either: Cloudflare's Workers permissions docs say deploying a Worker's bindings and
+managing its secrets need only edit access to that Worker. A token that also has Workers KV Storage
 Write, Account Settings Read and Workers Routes Write (all zones) works; those permissions go unused here.
 
 Cloudflare's newer Workers roles describe creating a Worker as needing Workers Admin, while the legacy Workers
@@ -137,8 +137,8 @@ Fight Mode's JavaScript detections.
 |---|---|---|---|
 | `even` | Worker Custom Domain | the `even-web` Worker | Created by the one-time step above; no manual record |
 | `sync.even` | Worker Custom Domain | the even-server Worker | Set up from the even-server repository; out of scope here |
-| `cf-bounce` (MX ×3, TXT SPF), `cf-bounce._domainkey` (TXT DKIM) | Email Sending | Cloudflare's bounce servers and keys | Added and locked by Email Sending onboarding ([Contact form](#once-email-service-for-appalayacom)) |
-| `@` (MX, TXT SPF), `_dmarc` (TXT) | Zoho Mail | Zoho | Existing mail for the domain. Keep; see the warnings in the Email Service steps |
+| `bounces.send` (MX, TXT SPF), `resend._domainkey.send` (TXT DKIM) | Resend | Resend's return path and key for `send.appalaya.com` | Set up for the company site's contact form, which Even's shares ([Contact form](#once-resend-and-turnstile)); leave as they are |
+| `@` (MX, TXT SPF), `_dmarc` (TXT) | Zoho Mail | Zoho | Mail for appalaya.com itself. The form does not touch them |
 
 ### Check after the first deploy
 
@@ -176,18 +176,20 @@ Test universal links on a real device; the simulator is unreliable for them.
 
 The contact page (built separately) posts to the Worker script in `worker/`. For each submission the script checks
 the request, verifies the Turnstile token with Cloudflare, applies a per-IP limit, and sends one plain-text email to
-the mailbox for the form's purpose. Nothing is stored. Its log lines carry the route, the purpose and the outcome,
-never the message, an address, a group id, a token or an IP (even-server `THREAT-MODEL.md`, "What we log", applies
-here too), and Cloudflare's invocation logs, traces and Logpush are off in `wrangler.jsonc`.
+the mailbox for the form's purpose through Resend's HTTP API, from the same verified sending domain and with the
+same Turnstile widget as the company site's contact form (appalaya.com). Nothing is stored. Its log lines carry the
+route, the purpose and the outcome, never the message, an address, a group id, a token or an IP (even-server
+`THREAT-MODEL.md`, "What we log", applies here too), and Cloudflare's invocation logs, traces and Logpush are off in
+`wrangler.jsonc`.
 
 | File | |
 |---|---|
 | `worker/index.ts` | Entry point: `/api/contact`, `/api/contact/config`, 404 for other `/api/` paths, everything else to the assets |
 | `worker/contact.ts` | The two routes: origin, size, Turnstile, rate limit, send |
 | `worker/validate.ts` | The request body's rules |
-| `worker/message.ts` | The email |
+| `worker/message.ts`, `worker/resend.ts` | The email, and sending it through Resend |
 | `worker/env.ts`, `worker/http.ts` | Bindings and secrets; JSON responses, logging, the rate-limit key |
-| `worker/*.test.ts` | Vitest, run from the repository root (`npx vitest run web/worker`) with every binding stubbed; `config.test.ts` also checks that `wrangler.jsonc`, the workflow and the code agree and hold no address or key |
+| `worker/*.test.ts` | Vitest, run from the repository root (`npx vitest run web/worker`) with the bindings, siteverify and Resend stubbed; `config.test.ts` also checks that `wrangler.jsonc`, the workflow and the code agree and hold no address or key |
 
 ### API for the page
 
@@ -279,80 +281,57 @@ name (repository → Settings → Secrets and variables → Actions) and fails, 
 | `CONTACT_TO_REPORT` | Secret | The abuse mailbox: where reports go |
 | `CONTACT_TO_HELP` | Secret | The support mailbox: where help requests go |
 | `CONTACT_TO_FEEDBACK` | Secret | Where feedback goes (the support mailbox again is fine) |
-| `CONTACT_FROM` | Secret | The sender, an address on a domain onboarded to Email Service (below), for example a no-reply address on appalaya.com. It need not be a mailbox; replies go to the visitor. |
-| `TURNSTILE_SECRET_KEY` | Secret | The Turnstile widget's secret key |
-| `TURNSTILE_SITE_KEY` | Variable (plain text, visible in the dashboard) | The Turnstile widget's site key. Public by nature, so it may be a repository **variable** (Variables tab) instead of a secret. |
+| `CONTACT_FROM` | Secret | The sender: the same address on `send.appalaya.com` the company site sends from, already verified in Resend. A bare address; the Worker sends as `Even <address>`. It need not be a mailbox; replies go to the visitor. |
+| `RESEND_API_KEY` | Secret | A Resend API key that may send (below) |
+| `TURNSTILE_SECRET_KEY` | Secret | The shared Turnstile widget's secret key |
+| `TURNSTILE_SITE_KEY` | Variable (plain text, visible in the dashboard) | The shared Turnstile widget's site key. Public by nature, so it may be a repository **variable** (Variables tab) instead of a secret. |
 | `SITE_ORIGIN` | Variable | `https://even.appalaya.com`, in `wrangler.jsonc` |
 
-The workflow writes the five secrets to a JSON file only its job can read and passes it to
+The workflow writes the six secrets to a JSON file only its job can read and passes it to
 `wrangler deploy --secrets-file`, so they are uploaded with the version they belong to; the site key goes in with
-`--var`. `wrangler.jsonc` lists the five under `secrets.required`, so no version can be deployed without them. The
+`--var`. `wrangler.jsonc` lists the six under `secrets.required`, so no version can be deployed without them. The
 deploy refuses Cloudflare's published Turnstile test keys. To change a value, change the GitHub secret and run the
 workflow on main. A deploy never deletes a secret; one no longer used is removed in the dashboard (`even-web` →
 Settings → Variables and Secrets).
 
-### Once: Email Service for appalaya.com
+### Once: Resend and Turnstile
 
-Before the form can deliver anything. Until then submissions answer `502 send_failed` and the Worker logs Email
-Service's error code (for example `E_SENDER_NOT_VERIFIED`).
+Even sends the way the company site's contact form already does, so nothing new is set up at Resend or in DNS. The
+Resend sending domain is `send.appalaya.com`: its records (MX and SPF on `bounces.send.appalaya.com`, DKIM at
+`resend._domainkey.send.appalaya.com`) all sit under the `send` subdomain, so the Zoho mail for appalaya.com itself
+is untouched (the company site's repository, README, "One-time Cloudflare setup", item 3). Until the secrets below
+exist the deploy stops; if one is wrong, submissions answer `502 send_failed` and the Worker logs Resend's status
+and error name (for example `resend_403,validation_error`).
 
-1. Cloudflare dashboard → **Compute** → **Email Service** → **Email Sending** → **Onboard Domain** → choose
-   `appalaya.com` → review the records → **Done**. Cloudflare adds and locks:
-
-   | Name | Type | Value |
-   |---|---|---|
-   | `cf-bounce.appalaya.com` | MX ×3 | `route1.mx.cloudflare.net`, `route2.mx.cloudflare.net`, `route3.mx.cloudflare.net` |
-   | `cf-bounce.appalaya.com` | TXT | `v=spf1 include:_spf.mx.cloudflare.net ~all` |
-   | `cf-bounce._domainkey.appalaya.com` | TXT | `v=DKIM1; h=sha256; k=rsa; p=…` (its key) |
-   | `_dmarc.appalaya.com` | TXT | `v=DMARC1; p=reject;` |
-
-2. **SPF: merge, never replace.** Zoho's record at `appalaya.com` itself, `v=spf1 include:zoho.com ~all`, must stay
-   exactly one record. Email Sending does not touch it: its SPF record is on `cf-bounce.appalaya.com`, a name with
-   no record today. If anything ever offers to write an SPF record at `appalaya.com` (Email Routing does), edit
-   Zoho's record to `v=spf1 include:zoho.com include:_spf.mx.cloudflare.net ~all` instead of adding a second one;
-   two `v=spf1` records make SPF fail for all mail from the domain.
-3. **DMARC: keep one.** `appalaya.com` already has `_dmarc` = `v=DMARC1; p=quarantine`, and a domain may have only
-   one DMARC record. After onboarding, open **DNS** → **Records** and search `_dmarc`. If there are two TXT records,
-   delete Cloudflare's `p=reject` one. If the dashboard shows it as locked, delete the older `p=quarantine` one
-   instead, but only after confirming in Zoho Mail's admin console that Zoho signs appalaya.com's mail with DKIM:
-   `p=reject` applies to mail sent through Zoho too, and receivers reject any of it that fails alignment.
-4. **Do not onboard `appalaya.com` to Email Routing.** Routing replaces the domain's MX records, and Zoho would stop
-   receiving mail.
-5. **Verify the three mailboxes.** **Email Service** → **Email Routing** → **Destination Addresses**: add each
-   address you put in a `CONTACT_TO_*` secret, then open the verification email Cloudflare sends to it and select
-   **Verify email address** (the mailboxes accept mail from anyone, so it arrives). Sends to verified destination
-   addresses are free on every plan and count toward no quota. If the dashboard insists on onboarding a domain to
-   Email Routing first, stop: see step 4.
-6. Check: **Email Sending** → `appalaya.com` → **Settings** → **DNS records**; each shows Locked or Unlocked, and
-   both mean configured.
-
-What the docs say about plans (Email Service pricing and limits pages, read 2026-09-27):
-
-- **Workers Free:** Email Sending to arbitrary recipients is not available. Sends to verified destination addresses
-  are free on all plans and do not count toward the monthly quota or the daily sending limits. This form only ever
-  sends to its three verified mailboxes, which is why step 5 matters. The docs do not say whether a Workers Free
-  account can onboard a sending domain (step 1); if the dashboard does not allow it, the form needs Workers Paid.
-- **Workers Paid:** 3,000 emails a month included, then $0.35 per 1,000.
-- Daily sending limit: new accounts start with a conservative quota that grows automatically; no number is
-  published.
-- Per message: 50 recipients, a 998-character subject, 5 MiB in total (25 MiB to verified destination addresses),
-  16 KB of custom headers. Per account: 200 destination addresses. Per zone: 30 domains across Email Routing and
-  Email Sending.
-- Workers Free itself: 100,000 Worker requests a day for the account, 10 ms of CPU and 50 subrequests per request.
-  Past the daily limit, `/api/*` answers with Cloudflare's 429 page until the next day; static pages keep working.
-- Turnstile Free: 20 widgets, 10 hostnames per widget, unlimited challenges and verifications.
-
-### Once: the Turnstile widget
-
-1. Cloudflare dashboard → **Turnstile** → **Add widget**.
-2. **Widget name**: `Even contact form`. **Hostname management**: add `even.appalaya.com` only (local testing uses
-   Cloudflare's test keys, so neither `localhost` nor `127.0.0.1` belongs here). **Widget mode**: Managed.
-   **Pre-clearance**: leave off.
-3. **Create**, then copy both keys into GitHub (repository → Settings → Secrets and variables → Actions):
-   - **Site Key** → Variables tab → New repository variable `TURNSTILE_SITE_KEY` (a secret of that name works too).
-   - **Secret Key** → Secrets tab → New repository secret `TURNSTILE_SECRET_KEY`.
-4. Run the workflow on main (or push). Neither key goes in any file; the page gets the site key from
+1. **Sender.** Set `CONTACT_FROM` to the address the company site sends from, on `send.appalaya.com`. Its exact
+   value is in the owner's secrets, never in this repository.
+2. **Resend API key.** Use the company site's existing key, or create one for Even: Resend → **API Keys** →
+   **Create API Key**, permission **Sending access**, domain `send.appalaya.com`. Store it as the repository secret
+   `RESEND_API_KEY`. A separate key can be revoked without touching the company site.
+3. **Mailboxes.** Set `CONTACT_TO_REPORT`, `CONTACT_TO_HELP` and `CONTACT_TO_FEEDBACK` to the abuse, support and
+   feedback mailboxes. Resend needs nothing for recipients.
+4. **Turnstile.** Reuse the company site's widget; it only needs this hostname. Cloudflare dashboard →
+   **Turnstile** → the company site's widget → **Settings** → **Hostname management** → add `even.appalaya.com` →
+   **Save**. Then copy its keys into this repository (Settings → Secrets and variables → Actions): the **Site Key**
+   as the repository variable `TURNSTILE_SITE_KEY` (Variables tab; a secret of that name works too) and the **Secret
+   Key** as the repository secret `TURNSTILE_SECRET_KEY`. The Worker still requires the action `contact` and the
+   hostname `even.appalaya.com`: siteverify reports the action the page rendered the widget with and the hostname it
+   was served on, so sharing the widget with the company site does not let its tokens through here.
+5. Run the workflow on main (or push). No address or key goes in any file; the page gets the site key from
    `/api/contact/config`.
+
+Plan limits (read 2026-09-27):
+
+- **Resend Free** (resend.com/pricing): 3,000 emails a month and 100 a day, 3 domains, 30 days of data retention,
+  no overage. The quota is shared with the company site's contact form, since both send from the same Resend
+  account. Past it, Resend answers `429 daily_quota_exceeded` or `monthly_quota_exceeded` and the form answers
+  `502 send_failed` until the quota resets. The API allows 10 requests a second per team (Resend API reference).
+  Resend Pro is $20 a month for 50,000 emails.
+- **Workers Free:** 100,000 Worker requests a day for the account, 10 ms of CPU and 50 subrequests per request (this
+  script makes two: siteverify and Resend). Past the daily limit, `/api/*` answers with Cloudflare's 429 page until
+  the next day; static pages keep working.
+- **Turnstile Free:** 20 widgets, 10 hostnames per widget (the shared widget gains one), unlimited challenges and
+  verifications.
 
 ### Trying the form locally
 
@@ -362,14 +341,18 @@ npx wrangler@4 dev --config web/wrangler.jsonc --port 4173 --persist-to .wrangle
   --var TURNSTILE_SITE_KEY:1x00000000000000000000AA \
   --var TURNSTILE_SECRET_KEY:1x0000000000000000000000000000000AA \
   --var CONTACT_TO_REPORT:report@example.com --var CONTACT_TO_HELP:help@example.com \
-  --var CONTACT_TO_FEEDBACK:feedback@example.com --var CONTACT_FROM:form@example.com
+  --var CONTACT_TO_FEEDBACK:feedback@example.com --var CONTACT_FROM:form@example.com \
+  --var RESEND_API_KEY:placeholder
 ```
 
 Open `http://localhost:4173` (not `127.0.0.1`: the page's `Origin` must equal `SITE_ORIGIN`). The two Turnstile
 values are Cloudflare's published always-pass test keys; the Worker accepts a test key's answer only when
-`SITE_ORIGIN` is a loopback address, and the deploy refuses them. Nothing is emailed: Wrangler simulates the email
-binding, prints the sender, recipient and subject, and writes the text under `web/.wrangler/tmp/email/` (ignored by
-git and by the upload). The rate limiter is simulated too, so a second message within a minute gets 429.
+`SITE_ORIGIN` is a loopback address, and the deploy refuses them. The placeholder Resend key makes a valid message
+go through every step and then reach Resend, which refuses it: the answer is `502 send_failed` and Wrangler's
+output shows `"detail":"resend_401,validation_error"`. Nothing is emailed. To send for real from your machine, use a
+real key and your own mailbox as `CONTACT_TO_*`, typed in with `read -rs RESEND_API_KEY` and passed as
+`--var "RESEND_API_KEY:$RESEND_API_KEY"` so the key stays out of shell history. The rate limiter is simulated
+locally, so a second message within a minute gets 429.
 
 ## Placeholders to fill before launch
 
