@@ -10,10 +10,11 @@ const SITE = 'https://even.appalaya.com';
 const base: ContactRequest = { purpose: 'help', message: 'Hello', turnstileToken: 't' };
 
 describe('composeEmail', () => {
-  it('addresses the mailbox from the sender, as plain text only', () => {
+  it('addresses the mailbox from Even at the sender, as plain text only', () => {
     const email = composeEmail(base, ADDRESSES, SITE);
-    expect(email.to).toBe('mailbox@example.com');
-    expect(email.from).toEqual({ email: 'form@example.net', name: SENDER_NAME });
+    expect(email.to).toEqual(['mailbox@example.com']);
+    expect(email.from).toBe(`${SENDER_NAME} <form@example.net>`);
+    expect(email.from).toBe('Even <form@example.net>');
     expect(Object.keys(email).sort()).toEqual(['from', 'subject', 'text', 'to']);
   });
 
@@ -33,13 +34,13 @@ describe('composeEmail', () => {
 
   it('sets Reply-To and names the address in the text when the visitor gave one', () => {
     const email = composeEmail({ ...base, email: 'visitor@example.com' }, ADDRESSES, SITE);
-    expect(email.replyTo).toBe('visitor@example.com');
+    expect(email.reply_to).toBe('visitor@example.com');
     expect(email.text).toContain('\nReply to: visitor@example.com\n');
   });
 
   it('says so when there is no one to reply to', () => {
     const email = composeEmail(base, ADDRESSES, SITE);
-    expect(email.replyTo).toBeUndefined();
+    expect(email).not.toHaveProperty('reply_to');
     expect(email.text).toContain('Reply to: none given');
   });
 

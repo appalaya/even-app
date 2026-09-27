@@ -75,12 +75,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # The contact form (web/README.md, "Contact form"). The five Worker secrets come from repository secrets
+          # The contact form (web/README.md, "Contact form"). The six Worker secrets come from repository secrets
           # of the same names; the site key is public, so it may be a repository variable instead of a secret.
           CONTACT_TO_REPORT: ${{ secrets.CONTACT_TO_REPORT }}
           CONTACT_TO_HELP: ${{ secrets.CONTACT_TO_HELP }}
           CONTACT_TO_FEEDBACK: ${{ secrets.CONTACT_TO_FEEDBACK }}
           CONTACT_FROM: ${{ secrets.CONTACT_FROM }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY || vars.TURNSTILE_SITE_KEY }}
         run: |
@@ -89,7 +90,7 @@ jobs:
             exit 1
           fi
 
-          secrets=(CONTACT_TO_REPORT CONTACT_TO_HELP CONTACT_TO_FEEDBACK CONTACT_FROM TURNSTILE_SECRET_KEY)
+          secrets=(CONTACT_TO_REPORT CONTACT_TO_HELP CONTACT_TO_FEEDBACK CONTACT_FROM RESEND_API_KEY TURNSTILE_SECRET_KEY)
           missing=()
           for name in "${secrets[@]}" TURNSTILE_SITE_KEY; do
             [ -n "${!name//[[:space:]]/}" ] || missing+=("$name")

@@ -33,7 +33,7 @@ const wrangler = jsonc('wrangler.jsonc', wranglerText) as {
     run_worker_first: string[];
     not_found_handling: string;
   };
-  send_email: { name: string; [restriction: string]: unknown }[];
+  send_email?: unknown;
   ratelimits: { name: string; namespace_id: string; simple: { limit: number; period: number } }[];
   vars: Record<string, string>;
   secrets: { required: string[] };
@@ -58,8 +58,8 @@ describe('wrangler.jsonc', () => {
     expect(wrangler.routes).toBeUndefined();
   });
 
-  it('binds what env.ts expects, with no address in the email binding', () => {
-    expect(wrangler.send_email).toEqual([{ name: 'EMAIL' }]);
+  it('binds what env.ts expects: assets and the rate limiter, no email binding (mail goes through Resend)', () => {
+    expect(wrangler.send_email).toBeUndefined();
     expect(wrangler.ratelimits.map((r) => r.name)).toEqual(['CONTACT_RATE_LIMIT']);
     expect(wrangler.ratelimits[0]?.simple.period).toBe(RATE_PERIOD_SECONDS);
     expect(Object.keys(wrangler.vars)).toEqual(['SITE_ORIGIN']);
@@ -118,11 +118,14 @@ describe('no address or key in the repository', () => {
     /[A-Za-z0-9._%+'-]+@(?!(?:[A-Za-z0-9-]+\.)*example\.(?:com|net|org)\b)(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b/g;
   // Turnstile site keys and secrets start 0x4AAAAAAA; the published test keys are 1x, 2x and 3x followed by zeros.
   const TURNSTILE_KEY = /\b0x4A{6,}[A-Za-z0-9_-]*/g;
+  // Resend API keys are re_<id>_<secret>.
+  const RESEND_KEY = /\bre_[A-Za-z0-9]{6,}_[A-Za-z0-9]{12,}/g;
 
   for (const [file, text] of Object.entries(files)) {
     it(file, () => {
       expect(text.match(ADDRESS) ?? []).toEqual([]);
       expect(text.match(TURNSTILE_KEY) ?? []).toEqual([]);
+      expect(text.match(RESEND_KEY) ?? []).toEqual([]);
     });
   }
 });

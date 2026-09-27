@@ -1,13 +1,16 @@
 /**
- * The Worker end to end in Node, with every binding stubbed: the assets binding, the rate limiter, the email
- * binding, and siteverify (global fetch). Requests go through the default export, as Cloudflare calls it.
+ * The Worker end to end in Node, with everything outside it stubbed: the assets binding, the rate limiter, and
+ * global fetch, which answers for siteverify and for Resend. Requests go through the default export, as
+ * Cloudflare calls it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { evaluateSiteverify, isLoopbackOrigin, readJsonBody, SITEVERIFY_URL } from './contact';
-import type { EmailBuilder, Env } from './env';
+import type { Env } from './env';
 import { ipKey } from './http';
 import worker from './index';
+import type { OutgoingEmail } from './message';
+import { RESEND_SEND_URL } from './resend';
 
 const SITE = 'https://even.appalaya.com';
 const GROUP_ID = 'q3Zb5y0f4n1xk2Qp9sVtWm8rLc7dE6gHjA-BuC_DeFg';
@@ -19,27 +22,34 @@ const SECRETS = {
   CONTACT_TO_HELP: 'help-box@example.com',
   CONTACT_TO_FEEDBACK: 'feedback-box@example.com',
   CONTACT_FROM: 'form@example.net',
+  RESEND_API_KEY: 'resend-key-value',
 };
+
+type FetchStub = Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>;
 
 interface Stubs {
   env: Env;
-  sent: EmailBuilder[];
+  /** The bodies posted to Resend. */
+  sent: OutgoingEmail[];
   assets: Mock<(request: Request) => Promise<Response>>;
   limit: Mock<(options: { key: string }) => Promise<{ success: boolean }>>;
-  send: Mock<(message: EmailBuilder) => Promise<{ messageId: string }>>;
+  /** Resend's side of global fetch for this test. */
+  send: FetchStub;
 }
 
+let resend: FetchStub;
+
 function stubs(overrides: Partial<Env> = {}): Stubs {
-  const sent: EmailBuilder[] = [];
+  const sent: OutgoingEmail[] = [];
   const assets = vi.fn(async (_request: Request) => new Response('<h1>404</h1>', { status: 404 }));
   const limit = vi.fn(async (_options: { key: string }) => ({ success: true }));
-  const send = vi.fn(async (message: EmailBuilder) => {
-    sent.push(message);
-    return { messageId: 'm-1' };
+  const send: FetchStub = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)) as OutgoingEmail);
+    return Response.json({ id: 'e-1' });
   });
+  resend = send;
   const env: Env = {
     ASSETS: { fetch: assets },
-    EMAIL: { send },
     CONTACT_RATE_LIMIT: { limit },
     SITE_ORIGIN: SITE,
     TURNSTILE_SITE_KEY: 'public-site-key',
@@ -49,7 +59,7 @@ function stubs(overrides: Partial<Env> = {}): Stubs {
   return { env, sent, assets, limit, send };
 }
 
-let siteverify: Mock<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>;
+let siteverify: FetchStub;
 let siteverifyAnswer: unknown;
 let logs: string[];
 
@@ -61,7 +71,15 @@ beforeEach(() => {
     'error-codes': [],
   };
   siteverify = vi.fn(async () => Response.json(siteverifyAnswer));
-  vi.stubGlobal('fetch', siteverify);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === SITEVERIFY_URL) return siteverify(input, init);
+      if (url === RESEND_SEND_URL) return resend(input, init);
+      throw new Error(`unexpected fetch ${url}`);
+    }),
+  );
   logs = [];
   for (const level of ['log', 'warn', 'error'] as const)
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -127,20 +145,42 @@ describe('POST /api/contact', () => {
     expect(body).toEqual({ ok: true });
     expect(s.sent).toHaveLength(1);
     expect(s.sent[0]).toMatchObject({
-      to: SECRETS.CONTACT_TO_HELP,
-      from: { email: SECRETS.CONTACT_FROM },
+      to: [SECRETS.CONTACT_TO_HELP],
+      from: `Even <${SECRETS.CONTACT_FROM}>`,
       subject: 'Even support',
-      replyTo: 'visitor@example.com',
+      reply_to: 'visitor@example.com',
     });
     expect(s.sent[0]?.text).toContain('Sync is stuck.');
+  });
+
+  it('posts to Resend with the API key, as JSON, with a User-Agent', async () => {
+    const s = stubs();
+    await call(post(helpBody), s.env);
+    expect(s.send).toHaveBeenCalledTimes(1);
+    const [url, init] = s.send.mock.calls[0] ?? [];
+    expect(String(url)).toBe('https://api.resend.com/emails');
+    expect(init?.method).toBe('POST');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBe(`Bearer ${SECRETS.RESEND_API_KEY}`);
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(headers.get('User-Agent')).toMatch(/^even-web\//);
+    expect(Object.keys(JSON.parse(String(init?.body))).sort()).toEqual([
+      'from',
+      'subject',
+      'text',
+      'to',
+    ]);
   });
 
   it('sends feedback to the feedback mailbox without a Reply-To when no address was given', async () => {
     const s = stubs();
     const { status } = await call(post({ ...helpBody, purpose: 'feedback' }), s.env);
     expect(status).toBe(202);
-    expect(s.sent[0]).toMatchObject({ to: SECRETS.CONTACT_TO_FEEDBACK, subject: 'Even feedback' });
-    expect(s.sent[0]).not.toHaveProperty('replyTo');
+    expect(s.sent[0]).toMatchObject({
+      to: [SECRETS.CONTACT_TO_FEEDBACK],
+      subject: 'Even feedback',
+    });
+    expect(s.sent[0]).not.toHaveProperty('reply_to');
   });
 
   it('sends a report to the report mailbox with the group id and server on their own lines', async () => {
@@ -148,8 +188,9 @@ describe('POST /api/contact', () => {
     const { status } = await call(post(reportBody), s.env);
     expect(status).toBe(202);
     expect(s.sent[0]).toMatchObject({
-      to: SECRETS.CONTACT_TO_REPORT,
+      to: [SECRETS.CONTACT_TO_REPORT],
       subject: `Even report: ${GROUP_ID}`,
+      reply_to: 'visitor@example.com',
     });
     const lines = s.sent[0]?.text.split('\n') ?? [];
     expect(lines).toContain(GROUP_ID);
@@ -512,18 +553,81 @@ describe('POST /api/contact', () => {
     });
   });
 
-  it('answers 502 when the email cannot be sent, logging only the error code', async () => {
-    const s = stubs();
-    s.send.mockRejectedValueOnce(
-      Object.assign(new Error(`sender ${SECRETS.CONTACT_FROM} not verified`), {
-        code: 'E_SENDER_NOT_VERIFIED',
-      }),
-    );
-    const { status, body } = await call(post(helpBody), s.env);
-    expect(status).toBe(502);
-    expect(body).toEqual({ ok: false, error: 'send_failed' });
-    expect(logs.join('\n')).toContain('E_SENDER_NOT_VERIFIED');
-    expect(logs.join('\n')).not.toContain(SECRETS.CONTACT_FROM);
+  describe('answers 502 when Resend does not accept the email, logging only a fixed code', () => {
+    const refusal = (status: number, body: unknown) => () =>
+      Promise.resolve(Response.json(body, { status }));
+    const cases: [string, () => Promise<Response>, string][] = [
+      [
+        'an unverified sender',
+        refusal(403, {
+          statusCode: 403,
+          name: 'validation_error',
+          message: `The ${SECRETS.CONTACT_FROM} domain is not verified.`,
+        }),
+        'resend_403,validation_error',
+      ],
+      [
+        'a wrong key',
+        refusal(401, { statusCode: 401, name: 'missing_api_key', message: 'Missing API key' }),
+        'resend_401,missing_api_key',
+      ],
+      [
+        'the daily quota',
+        refusal(429, {
+          statusCode: 429,
+          name: 'daily_quota_exceeded',
+          message: 'You have reached your daily sending limit.',
+        }),
+        'resend_429,daily_quota_exceeded',
+      ],
+      [
+        'a server error without JSON',
+        () => Promise.resolve(new Response('<html>oops</html>', { status: 500 })),
+        'resend_500',
+      ],
+      [
+        'an error name that is not a code',
+        refusal(422, { name: `bad ${SECRETS.CONTACT_TO_HELP}`, message: 'x' }),
+        'resend_422',
+      ],
+      [
+        'a network failure',
+        () => Promise.reject(new TypeError('fetch failed')),
+        'resend_TypeError',
+      ],
+      [
+        'a timeout',
+        () => Promise.reject(new DOMException('timed out', 'TimeoutError')),
+        'resend_TimeoutError',
+      ],
+    ];
+    for (const [name, answer, detail] of cases) {
+      it(name, async () => {
+        const s = stubs();
+        s.send.mockImplementationOnce(answer);
+        const { status, body } = await call(
+          post({ ...helpBody, email: 'visitor@example.com' }),
+          s.env,
+        );
+        expect(status).toBe(502);
+        expect(body).toEqual({ ok: false, error: 'send_failed' });
+        expect(JSON.parse(logs.at(-1) ?? '{}')).toEqual({
+          route: '/api/contact',
+          status: 502,
+          outcome: 'send_failed',
+          purpose: 'help',
+          detail,
+        });
+        const all = logs.join('\n');
+        for (const value of [
+          ...Object.values(SECRETS),
+          'visitor@example.com',
+          'sending limit',
+          'oops',
+        ])
+          expect(all).not.toContain(value);
+      });
+    }
   });
 
   it('answers 503 without verifying when a secret is missing, and logs its name only', async () => {

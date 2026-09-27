@@ -52,7 +52,7 @@ export interface LogLine {
   status: number;
   outcome: string;
   purpose?: Purpose;
-  /** A fixed code from Cloudflare (E_…, a Turnstile error code) or a field name; never request data. */
+  /** A fixed code (a Turnstile or Resend error name, an HTTP status) or a field name; never request data. */
   detail?: string;
 }
 

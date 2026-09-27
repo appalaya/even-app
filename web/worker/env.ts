@@ -9,20 +9,6 @@ export interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-/** The structured message accepted by an Email Service `send_email` binding. */
-export interface EmailBuilder {
-  to: string;
-  from: string | { email: string; name?: string };
-  subject: string;
-  text: string;
-  replyTo?: string;
-}
-
-/** An Email Service `send_email` binding. Throws an Error with a `code` (E_…) when a send fails. */
-export interface EmailSender {
-  send(message: EmailBuilder): Promise<{ messageId: string }>;
-}
-
 /** The static assets binding. */
 export interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -30,7 +16,6 @@ export interface AssetFetcher {
 
 export interface Env {
   ASSETS: AssetFetcher;
-  EMAIL: EmailSender;
   CONTACT_RATE_LIMIT: RateLimiter;
   /** The site's origin, `https://even.appalaya.com` in production (a var in wrangler.jsonc). */
   SITE_ORIGIN: string;
@@ -41,7 +26,10 @@ export interface Env {
   CONTACT_TO_REPORT?: string;
   CONTACT_TO_HELP?: string;
   CONTACT_TO_FEEDBACK?: string;
+  /** The sender: a bare address on a domain verified in Resend (the company site's send subdomain). */
   CONTACT_FROM?: string;
+  /** A Resend API key allowed to send. */
+  RESEND_API_KEY?: string;
 }
 
 /** The Worker secrets, as listed under `secrets.required` in wrangler.jsonc and set by the deploy workflow. */
@@ -50,6 +38,7 @@ export const SECRET_NAMES = [
   'CONTACT_TO_HELP',
   'CONTACT_TO_FEEDBACK',
   'CONTACT_FROM',
+  'RESEND_API_KEY',
   'TURNSTILE_SECRET_KEY',
 ] as const;
 
@@ -61,6 +50,7 @@ export type ContactConfig =
       ok: true;
       siteOrigin: string;
       turnstileSecret: string;
+      resendApiKey: string;
       from: string;
       to: { report: string; help: string; feedback: string };
     }
@@ -78,6 +68,7 @@ export function contactConfig(env: Env): ContactConfig {
   };
   const siteOrigin = read('SITE_ORIGIN');
   const turnstileSecret = read('TURNSTILE_SECRET_KEY');
+  const resendApiKey = read('RESEND_API_KEY');
   const from = read('CONTACT_FROM');
   const to = {
     report: read('CONTACT_TO_REPORT'),
@@ -85,5 +76,5 @@ export function contactConfig(env: Env): ContactConfig {
     feedback: read('CONTACT_TO_FEEDBACK'),
   };
   if (missing.length > 0) return { ok: false, missing };
-  return { ok: true, siteOrigin, turnstileSecret, from, to };
+  return { ok: true, siteOrigin, turnstileSecret, resendApiKey, from, to };
 }

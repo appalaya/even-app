@@ -35,11 +35,6 @@
   },
   "logpush": false,
 
-  // The form's mail goes out through Email Service (README.md, "Contact form", for the one-time dashboard steps).
-  // Unrestricted on purpose: allowed_destination_addresses or allowed_sender_addresses would put the addresses
-  // in this file, and the recipients are only ever the three CONTACT_TO_* secrets.
-  "send_email": [{ "name": "EMAIL" }],
-
   // Per IP (CF-Connecting-IP, IPv6 by /64), counted only once a submission has passed Turnstile. The binding's
   // period is 10 or 60 seconds, nothing longer: one message a minute is at most ten in ten minutes. Approximate
   // and per Cloudflare location. namespace_id is any integer string unique within the account (even-sync uses
@@ -55,13 +50,15 @@
   },
 
   // Uploaded by the deploy workflow with each version (--secrets-file); a deploy fails if any is missing. None of
-  // their values is in this repository.
+  // their values is in this repository. The form's mail goes out through Resend's HTTP API with RESEND_API_KEY,
+  // from CONTACT_FROM on the sending domain the company site already uses (README.md, "Contact form").
   "secrets": {
     "required": [
       "CONTACT_TO_REPORT",
       "CONTACT_TO_HELP",
       "CONTACT_TO_FEEDBACK",
       "CONTACT_FROM",
+      "RESEND_API_KEY",
       "TURNSTILE_SECRET_KEY"
     ]
   }

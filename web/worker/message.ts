@@ -2,12 +2,20 @@
  * The one email a valid submission produces: plain text, to the mailbox for its purpose, from CONTACT_FROM, with
  * the visitor's address (if given) as Reply-To. A report puts the group id and the server on lines of their own,
  * so the operator can copy each into the takedown command (even-server worker/README.md, "Takedown (blocklist)").
- * Pure, so it is tested in Node.
+ * The shape is the body of Resend's send-email request (resend.ts). Pure, so it is tested in Node.
  */
-import type { EmailBuilder } from './env';
 import type { ContactRequest, Purpose } from './validate';
 
-export const SENDER_NAME = 'Even contact form';
+export const SENDER_NAME = 'Even';
+
+/** The body of `POST https://api.resend.com/emails`, as far as this form uses it. */
+export interface OutgoingEmail {
+  from: string;
+  to: string[];
+  subject: string;
+  text: string;
+  reply_to?: string;
+}
 
 const PURPOSE_LINE: Record<Purpose, string> = {
   report: 'report (abuse)',
@@ -30,7 +38,7 @@ export function composeEmail(
   request: ContactRequest,
   addresses: { to: string; from: string },
   siteOrigin: string,
-): EmailBuilder {
+): OutgoingEmail {
   const lines = [`Purpose: ${PURPOSE_LINE[request.purpose]}`];
   if (request.purpose === 'report') {
     lines.push('', 'Group id:', request.groupId ?? '', '', 'Server:', request.server ?? '');
@@ -48,10 +56,10 @@ export function composeEmail(
     `Sent by the contact form at ${siteOrigin}. The site keeps no copy.`,
   );
   return {
-    to: addresses.to,
-    from: { email: addresses.from, name: SENDER_NAME },
+    from: `${SENDER_NAME} <${addresses.from}>`,
+    to: [addresses.to],
     subject: subjectFor(request),
     text: lines.join('\n'),
-    ...(request.email === undefined ? {} : { replyTo: request.email }),
+    ...(request.email === undefined ? {} : { reply_to: request.email }),
   };
 }

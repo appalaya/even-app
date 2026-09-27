@@ -11,7 +11,7 @@
  *   fields (validate.ts)                      400 invalid, with the field
  *   Turnstile siteverify, fail closed         403 turnstile_failed, 503 unavailable
  *   one message a minute per IP               429 rate_limited, Retry-After
- *   send the email                            502 send_failed
+ *   send the email through Resend             502 send_failed
  *                                             202 { ok: true }
  *
  * The rate limit is counted after Turnstile, so a visitor whose challenge failed or expired can retry at once, and
@@ -20,6 +20,7 @@
 import { contactConfig, type Env } from './env';
 import { clientKey, exceptionName, failure, json, logEvent, logLine } from './http';
 import { composeEmail } from './message';
+import { sendViaResend } from './resend';
 import { MAX_MESSAGE_LENGTH, validateContact, type Purpose } from './validate';
 
 export const CONTACT_ROUTE = '/api/contact';
@@ -129,11 +130,8 @@ export async function handleContact(request: Request, env: Env): Promise<Respons
     { to: config.to[contact.purpose], from: config.from },
     config.siteOrigin,
   );
-  try {
-    await env.EMAIL.send(email);
-  } catch (error) {
-    return done(failure(502, 'send_failed'), 'send_failed', sendErrorCode(error));
-  }
+  const sent = await sendViaResend(config.resendApiKey, email);
+  if (!sent.ok) return done(failure(502, 'send_failed'), 'send_failed', sent.detail);
   return done(json({ ok: true }, 202), 'sent');
 }
 
@@ -278,10 +276,4 @@ async function allowed(env: Env, request: Request): Promise<boolean> {
     logEvent('warn', 'ratelimit_failed', { exception: exceptionName(error) });
     return true;
   }
-}
-
-/** Email Service's error code (E_SENDER_NOT_VERIFIED and so on), never its message, which can name addresses. */
-function sendErrorCode(error: unknown): string {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'string' && /^E_[A-Z_]{1,60}$/.test(code) ? code : exceptionName(error);
 }
