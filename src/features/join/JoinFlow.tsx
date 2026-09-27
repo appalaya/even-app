@@ -1,5 +1,6 @@
 /**
- * The Join flow (design.md "Invites" → Paste, Join screen, Already have it): the code sheet with its preview, Join
+ * The Join flow (design.md "Invites" → Paste, Join screen, Already have it): the code sheet with its preview (a code
+ * typed, pasted, or read by the Scan pill's scanner, `ScanSheet`, which hands it back to the code sheet), Join
  * through the GroupService, then "Which name is yours?" (`PickNameStep`: `claimMember` / `joinAsNewMember`), or, for
  * an invite naming a group this phone holds on another server, "Move Banff 2026 from <old> to <new>?"
  * (`acceptInviteMove`). Closing any of its sheets (`onClose`) leaves the Join route for Groups; the group a join
@@ -17,12 +18,14 @@ import { ConfirmSheet } from './ConfirmSheet';
 import { moveQuestion, problemMessage } from './invite';
 import { JoinCodeSheet, type CodeState } from './JoinCodeSheet';
 import { PickNameStep } from './PickNameStep';
+import { ScanSheet } from './ScanSheet';
 
 /** The kit Sheet's exit (220 ms) and a frame. */
 const SWAP_MS = 260;
 
 type Step =
   | { kind: 'code' }
+  | { kind: 'scan' }
   | { kind: 'pick'; localId: string }
   | { kind: 'move'; localId: string; name: string; fromServer: string; toServer: string };
 
@@ -93,6 +96,15 @@ export function JoinFlow({
       });
     });
   }, [text, groups]);
+
+  // A scanned invite goes into the field as if pasted, and the code sheet comes back to preview it.
+  const onScanned = useCallback(
+    (scanned: string) => {
+      setText(scanned);
+      go({ kind: 'code' });
+    },
+    [go],
+  );
 
   const code: CodeState =
     text.trim() === ''
@@ -179,10 +191,19 @@ export function JoinFlow({
         onCancel={onClose}
         text={text}
         onChangeText={setText}
+        onScan={() => go({ kind: 'scan' })}
         state={code}
         onJoin={() => void join()}
         busy={busy}
       />
+      {step.kind === 'scan' && (
+        <ScanSheet
+          visible={visible && shown === 'scan'}
+          onCancel={() => go({ kind: 'code' })}
+          onPasteInstead={() => go({ kind: 'code' })}
+          onFound={onScanned}
+        />
+      )}
       {localId !== null && step.kind === 'pick' && (
         <PickNameStep
           localId={localId}

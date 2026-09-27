@@ -1158,6 +1158,7 @@ function FieldSection() {
           variant="code"
           placeholder="Paste a code or link"
           onPaste={() => {}}
+          onScan={() => {}}
           accessibilityLabel="Invite code"
         />
         <TextField
@@ -1165,6 +1166,7 @@ function FieldSection() {
           accessibilityLabel="Invite code"
           defaultValue="eyJ2IjoxLCJzIjoiaHR0cHM6Ly9zeW5jLmV2ZW4uYXBwYWxheWEuY29tIiwiayI6IkJ3Z0pDZ3NNRFE0UEVCRVNFeFFWRmhjWUdSb2JIQjBl"
           onPaste={() => {}}
+          onScan={() => {}}
           error="That code isn't complete. Copy it again."
         />
       </Gutter>

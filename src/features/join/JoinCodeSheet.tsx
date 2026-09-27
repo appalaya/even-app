@@ -1,8 +1,9 @@
 /**
  * Join with code (JoinCode, JoinCodePreview, JoinCodeError and their dark twins): a sheet 150 pt from the top (the
  * safe area + 88) over Groups, Cancel and "Join with code" in its header (title inset 100), then:
- * - "Paste the code someone sent you. A full invite link works too." 15/21 `textSecondary`, 8 below, inset 20;
- * - the 208 pt code field with its Paste button, 16 below, inset 16;
+ * - "Paste the code someone sent you, or scan it from their phone. A full invite link works too." 15/21
+ *   `textSecondary`, 8 below, inset 20;
+ * - the 208 pt code field with its Scan and Paste pills, 16 below, inset 16 (Scan opens `ScanSheet`);
  * - empty: nothing more, and Join disabled;
  * - read: an outlined card 16 below (padding 16 18, gap 4): "Code complete" with a 13 pt check, "Join Banff 2026?"
  *   24/30 bold, "Canadian dollar · CAD" 15/20 `textSecondary`, the server host with a 13 pt lock 4 further down;
@@ -34,6 +35,8 @@ export interface JoinCodeSheetProps {
   onCancel: () => void;
   text: string;
   onChangeText: (text: string) => void;
+  /** The Scan pill: the invite scanner (JoinScan). */
+  onScan: () => void;
   state: CodeState;
   onJoin: () => void;
   busy: boolean;
@@ -44,6 +47,7 @@ export function JoinCodeSheet({
   onCancel,
   text,
   onChangeText,
+  onScan,
   state,
   onJoin,
   busy,
@@ -70,7 +74,7 @@ export function JoinCodeSheet({
       accessibilityLabel="Join with code"
     >
       <AppText variant="subheadLoose" color="textSecondary" style={styles.intro}>
-        Paste the code someone sent you. A full invite link works too.
+        Paste the code someone sent you, or scan it from their phone. A full invite link works too.
       </AppText>
       <TextField
         variant="code"
@@ -82,6 +86,7 @@ export function JoinCodeSheet({
         autoCorrect={false}
         spellCheck={false}
         onPaste={() => void paste()}
+        onScan={onScan}
         error={state.kind === 'error' ? state.message : undefined}
         containerStyle={styles.field}
       />

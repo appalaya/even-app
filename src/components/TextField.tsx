@@ -26,7 +26,7 @@ import { FieldLabel } from './SectionHeader';
  * - `pill`   44 · radius 22 · 15/20 (Settle: "Note (optional)").
  * - `cell`   40 · radius 10 · 16/21 medium, right-aligned tabular, on `surface`; a 2 pt accent ring while focused
  *            (Split amounts and percentages).
- * - `code`   208 · radius 18 · 15/22 mono, multiline, a Paste button in the corner (Join with code).
+ * - `code`   208 · radius 18 · 15/22 mono, multiline, Scan and Paste pills in the corner, 8 apart (Join with code).
  *
  * While focused, `large`, `title`, `row` and `cell` draw a 2 pt accent ring (Add expense typing the title; Rename
  * group; Add member; a Split cell).
@@ -117,6 +117,8 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   onAdd?: () => void;
   /** `code`: the Paste button's action. */
   onPaste?: () => void;
+  /** `code`: the Scan button's action; the pill sits before Paste (JoinCode). */
+  onScan?: () => void;
   /**
    * The error line under the field; also rings the field. `code`: "That code isn't complete. Copy it again.";
    * a name: "Someone here is already called Maya. Try Maya K."
@@ -141,6 +143,7 @@ export function TextField({
   trailing,
   onAdd,
   onPaste,
+  onScan,
   error,
   on = 'surface',
   active = false,
@@ -222,19 +225,11 @@ export function TextField({
           <Icon name="plus" size={16} color={tokens.onAccent} strokeWidth={2.6} />
         </Pressable>
       )}
-      {variant === 'code' && onPaste !== undefined && (
-        <Pressable
-          onPress={onPaste}
-          hitSlop={2}
-          accessibilityRole="button"
-          accessibilityLabel="Paste"
-          style={[styles.paste, { backgroundColor: tokens.accentSoft }]}
-        >
-          <Icon name="paste" size={16} color={tokens.accent} />
-          <AppText variant="subhead" weight="semibold" color="accent">
-            Paste
-          </AppText>
-        </Pressable>
+      {variant === 'code' && (onPaste !== undefined || onScan !== undefined) && (
+        <View style={styles.codeActions}>
+          {onScan !== undefined && <CodePill label="Scan" icon="scan" onPress={onScan} />}
+          {onPaste !== undefined && <CodePill label="Paste" icon="paste" onPress={onPaste} />}
+        </View>
       )}
     </View>
   );
@@ -272,6 +267,37 @@ export function TextField({
           </View>
         ))}
     </View>
+  );
+}
+
+/** A 40 pt soft-accent pill in the code field's corner: a 16 pt glyph and a 15/20 semibold label, 6 apart. */
+function CodePill({
+  label,
+  icon,
+  onPress,
+}: {
+  label: string;
+  icon: 'scan' | 'paste';
+  onPress: () => void;
+}) {
+  const { tokens } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={2}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.pill,
+        { backgroundColor: tokens.accentSoft },
+        pressed && styles.pressed,
+      ]}
+    >
+      <Icon name={icon} size={16} color={tokens.accent} />
+      <AppText variant="subhead" weight="semibold" color="accent">
+        {label}
+      </AppText>
+    </Pressable>
   );
 }
 
@@ -318,10 +344,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  paste: {
+  codeActions: {
     position: 'absolute',
     right: 12,
     bottom: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pill: {
     minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
@@ -348,6 +378,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   errorIcon: { paddingTop: 1 },
+  pressed: { opacity: 0.7 },
   flex: { flex: 1 },
   search: {
     flexDirection: 'row',

@@ -1,7 +1,17 @@
 import * as Clipboard from 'expo-clipboard';
-import { Share, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, Share, StyleSheet, View } from 'react-native';
 
-import { AppText, AvatarStack, Button, Card, ProgressRing, type StackMember } from '@/components';
+import {
+  AppText,
+  AvatarStack,
+  Button,
+  Card,
+  Icon,
+  ProgressRing,
+  type StackMember,
+} from '@/components';
+import { InviteQrSheet } from '@/features/invite/InviteQrSheet';
 import { layout, useTheme } from '@/theme';
 import type { InviteInfo } from '@/state';
 
@@ -17,9 +27,10 @@ export function shareInvite(invite: InviteInfo, groupName: string): void {
 }
 
 /**
- * Group, just created: "Invite your group", the one-sentence warning, and "Share link" · "Copy code" (48 pt, 10
- * apart). Until the server has acknowledged the group (`InviteInfo.ready`) the sentence becomes a spinning ring and
- * "Preparing your invite…" and both buttons are disabled (Invite card, preparing).
+ * Group, just created (GroupNew, GroupNewWithExpenses): "Invite your group", the one-sentence warning, and "Share
+ * link" · "Copy code" · the round 48 pt "Show QR code" button (10 apart), which opens "Scan to join"
+ * (`InviteQrSheet`). Until the server has acknowledged the group (`InviteInfo.ready`) the sentence becomes a spinning
+ * ring and "Preparing your invite…" and all three buttons are disabled (InviteSyncing).
  */
 export function InviteCard({
   invite,
@@ -29,6 +40,7 @@ export function InviteCard({
   groupName: string;
 }) {
   const ready = invite?.ready === true;
+  const [qrOpen, setQrOpen] = useState(false);
   return (
     <Card style={styles.card} accessibilityLabel="Invite your group">
       <AppText variant="headline" accessibilityRole="header">
@@ -71,8 +83,36 @@ export function InviteCard({
             if (invite !== null) void Clipboard.setStringAsync(invite.code);
           }}
         />
+        <QrButton disabled={!ready} onPress={() => setQrOpen(true)} />
       </View>
+      <InviteQrSheet
+        visible={qrOpen}
+        onClose={() => setQrOpen(false)}
+        invite={invite}
+        groupName={groupName}
+      />
     </Card>
+  );
+}
+
+/** "Show QR code": 48 pt round, the 20 pt QR glyph; soft accent, or `disabledFill` while preparing (InviteSyncing). */
+function QrButton({ disabled, onPress }: { disabled: boolean; onPress: () => void }) {
+  const { tokens } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Show QR code"
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [
+        styles.qr,
+        { backgroundColor: disabled ? tokens.disabledFill : tokens.accentSoft },
+        pressed && styles.pressed,
+      ]}
+    >
+      <Icon name="qr" size={20} color={disabled ? tokens.onDisabledFill : tokens.accent} />
+    </Pressable>
   );
 }
 
@@ -102,6 +142,15 @@ const styles = StyleSheet.create({
   preparing: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   buttons: { flexDirection: 'row', gap: layout.stackGap, marginTop: 4 },
   half: { flex: 1, flexBasis: 0 },
+  qr: {
+    width: 48,
+    height: 48,
+    flexShrink: 0,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: { opacity: 0.7 },
   people: {
     flexDirection: 'row',
     alignItems: 'center',
