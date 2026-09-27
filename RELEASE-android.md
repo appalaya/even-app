@@ -71,7 +71,7 @@ scripts/release/android-keystore.sh                 # writes ~/Desktop/even-uplo
 scripts/release/android-keystore.sh ~/somewhere     # or another folder
 ```
 
-It needs a JDK for `keytool` (`brew install openjdk@17`, then put `/opt/homebrew/opt/openjdk@17/bin` on `PATH`).
+It needs a JDK for `keytool` (`brew install openjdk@17`; the script finds Homebrew's keg-only JDK, `JAVA_HOME` or one on `PATH` by itself).
 It generates `even-upload.keystore` (RSA 4096, alias `even-upload`, valid 100 years, random password) and
 `even-upload-secrets.txt`, which lists each GitHub secret by name with its value, plus `gh secret set` commands.
 It prints only the two file paths and refuses to overwrite an existing key. It never builds or uploads.

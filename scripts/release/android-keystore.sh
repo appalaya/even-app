@@ -17,9 +17,22 @@ keystore="$out_dir/even-upload.keystore"
 secrets="$out_dir/even-upload-secrets.txt"
 repo="appalaya/even-app"
 
-# macOS ships a /usr/bin/keytool stub that fails without a JDK, so run it rather than look for it.
-if ! keytool -help >/dev/null 2>&1; then
-  echo "error: keytool does not run. It ships with a JDK: brew install openjdk@17, then put it on PATH." >&2
+# Find a keytool that runs. Homebrew's openjdk is keg-only, so it is never on PATH by itself, and
+# macOS ships a /usr/bin/keytool stub that only offers to install Java. Try JAVA_HOME, then the
+# Homebrew locations, then PATH, and keep the first one that answers.
+keytool=""
+for candidate in \
+  "${JAVA_HOME:+$JAVA_HOME/bin/keytool}" \
+  /opt/homebrew/opt/openjdk@17/bin/keytool /opt/homebrew/opt/openjdk/bin/keytool \
+  /usr/local/opt/openjdk@17/bin/keytool /usr/local/opt/openjdk/bin/keytool \
+  "$(command -v keytool 2>/dev/null || true)"; do
+  if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -help >/dev/null 2>&1; then
+    keytool="$candidate"
+    break
+  fi
+done
+if [[ -z "$keytool" ]]; then
+  echo "error: no working keytool found. Install a JDK (brew install openjdk@17) and rerun; the script finds it." >&2
   exit 1
 fi
 if ! command -v openssl >/dev/null 2>&1; then
@@ -41,14 +54,14 @@ chmod 700 "$out_dir"
 EVEN_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
 export EVEN_KEYSTORE_PASSWORD
 
-keytool -genkeypair -v \
+"$keytool" -genkeypair -v \
   -keystore "$keystore" -alias "$key_alias" \
   -keyalg RSA -keysize 4096 -validity 36500 -storetype PKCS12 \
   -dname "CN=Even upload key, O=Appalaya Inc" \
   -storepass:env EVEN_KEYSTORE_PASSWORD -keypass:env EVEN_KEYSTORE_PASSWORD >&2
 
 keystore_b64="$(openssl base64 -A -in "$keystore")"
-upload_sha256="$(keytool -list -v -keystore "$keystore" -alias "$key_alias" \
+upload_sha256="$("$keytool" -list -v -keystore "$keystore" -alias "$key_alias" \
   -storepass:env EVEN_KEYSTORE_PASSWORD | awk '/SHA256:/ { print $2 }')"
 
 cat > "$secrets" <<SECRETS
