@@ -630,9 +630,9 @@ describe('reduce: members', () => {
     expect(n?.initials).toBe('NP');
     expect(n && 'emoji' in n).toBe(false);
     expect(summaries(s).slice(4)).toEqual([
-      "Nathan renamed Nathan to nathan park; Nathan set nathan park's emoji to 🐻",
-      "Maya set nathan park's emoji to 🐼",
-      "Maya cleared nathan park's emoji",
+      "Nathan renamed Nathan to nathan park; Nathan set nathan park's avatar to 🐻",
+      "Maya set nathan park's avatar to 🐼",
+      "Maya set nathan park's avatar to initials",
     ]);
   });
 
@@ -665,7 +665,7 @@ describe('reduce: members', () => {
     ]);
     expect(s.members.get(JORDAN)?.archived).toBe(false);
     expect(s.members.get(NATHAN)?.archived).toBe(true);
-    expect(summaries(s).slice(4)).toEqual(['Maya archived Jordan', 'Nathan restored Jordan', 'Maya archived Nathan']);
+    expect(summaries(s).slice(4)).toEqual(['Maya archived Jordan', 'Nathan unarchived Jordan', 'Maya archived Nathan']);
   });
 
   it('detects name collisions case-insensitively, ignoring archived and placeholders', () => {
@@ -774,7 +774,7 @@ describe('reduce: group events', () => {
     expect(reduce([...base(), toSelf], { selfLocalId: 'self-local-id' }).activity).toHaveLength(4);
     const s = reduce([...base(), toSelf], { selfLocalId: 'other' });
     expect(s.closed).toEqual({ reason: 'rotated', to: 'self-local-id' });
-    expect(summaries(s).at(-1)).toBe('Maya closed this group');
+    expect(summaries(s).at(-1)).toBe('Maya regenerated the invite link');
     expect(reduce([...base(), entry(5, { type: 'group.closed', reason: 'rotated' })]).closed).toEqual({ reason: 'rotated' });
   });
 
@@ -786,7 +786,7 @@ describe('reduce: group events', () => {
       entry(7, { type: 'group.rotated', from: 'old-a' }),
     ]);
     expect(s.rotatedFrom).toEqual(['old-a', 'old-b']);
-    expect(summaries(s).slice(4)).toEqual(['Maya created this group from a new invite', 'Maya created this group from a new invite']);
+    expect(summaries(s).slice(4)).toEqual(['Maya regenerated the invite link', 'Maya regenerated the invite link']);
   });
 
   it('group.moved: the latest wins regardless of input order', () => {

@@ -320,12 +320,13 @@ class Fold {
         const prev = s.closed;
         if (prev !== null && prev.reason === ev.reason && prev.to === ev.to) return null;
         s.closed = ev.to === undefined ? { reason: ev.reason } : { reason: ev.reason, to: ev.to };
-        return `${actor} closed this group`;
+        // Worded as the action the member took (Group settings, "Regenerate invite link").
+        return `${actor} regenerated the invite link`;
       }
       case 'group.rotated': {
         if (s.rotatedFrom.includes(ev.from)) return null;
         s.rotatedFrom = [...s.rotatedFrom, ev.from];
-        return `${actor} created this group from a new invite`;
+        return `${actor} regenerated the invite link`;
       }
       case 'group.moved': {
         if (s.movedTo === ev.server) return null;
@@ -364,7 +365,7 @@ class Fold {
         const m = this.ensureMember(ev.id);
         if (!m.archived) return null;
         m.archived = false;
-        return `${actor} restored ${m.name}`;
+        return `${actor} unarchived ${m.name}`;
       }
       case 'member.done': {
         if (s.doneMembers.includes(ev.id)) return null;
@@ -441,11 +442,11 @@ class Fold {
     if (emoji === null) {
       if (m.emoji !== undefined) {
         delete m.emoji;
-        parts.push(`${actor} cleared ${m.name}'s emoji`);
+        parts.push(`${actor} set ${m.name}'s avatar to initials`);
       }
     } else if (emoji !== undefined && emoji !== m.emoji) {
       m.emoji = emoji;
-      parts.push(`${actor} set ${m.name}'s emoji to ${emoji}`);
+      parts.push(`${actor} set ${m.name}'s avatar to ${emoji}`);
     }
     return parts.length === 0 ? null : parts.join('; ');
   }
