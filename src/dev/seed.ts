@@ -99,6 +99,7 @@ export const SEED_STATES = [
   'share',
   'unclaimed',
   'unclaimed-own',
+  'unclaimed-two',
   'owed',
   'settled-member',
   'collision',
@@ -309,6 +310,7 @@ export const GROUP_SCENARIOS = [
   'share',
   'unclaimed',
   'unclaimed-own',
+  'unclaimed-two',
   'expense-detail',
 ] as const;
 export type GroupScenario = (typeof GROUP_SCENARIOS)[number];
@@ -715,6 +717,101 @@ function banffNew(myDevice: string, now: number, expenses = false): { log: Log; 
   return { log, sam };
 }
 
+/**
+ * Banff 2026 held by a phone with no seat in it (GroupNoSeat, SeatPick): Sam created it on another phone ("K4…") and
+ * pre-added the others; Maya and Jordan (🏂) joined on theirs and Nathan has not; the five expenses come to
+ * $1,780.00 ("Spent so far") and list as drawn (Dinner, the lift tickets, Parking, Gas, the Fairmont). With
+ * `twoSeats` (SeatSameDevice) Sam also pre-added "Maya K.", and this phone claimed both Maya and Maya K., as a phone
+ * that lost its seat and picked again would have.
+ */
+function banffNoSeat(myDevice: string, twoSeats: boolean): { log: Log; sam: SeedMember } {
+  const log = new Log();
+  const sam: SeedMember = { id: memberIdFor(VIOLET), name: 'Sam', dev: deviceIdFor('K4') };
+  const maya: SeedMember = {
+    id: memberIdFor(CLAY),
+    name: 'Maya',
+    dev: twoSeats ? myDevice : newId(),
+  };
+  const mayaK: SeedMember = { id: memberIdFor(PLUM), name: 'Maya K.', dev: myDevice };
+  const jordan: SeedMember = { id: memberIdFor(OCHRE), name: 'Jordan', dev: newId() };
+  // Nathan never claims his name: SeatPick draws him with a chevron.
+  const nathan: SeedMember = { id: memberIdFor(STEEL), name: 'Nathan', dev: newId() };
+
+  log.add(sep(17, 18, 0), sam, { type: 'member.added', member: { id: sam.id, name: 'Sam' } });
+  log.add(sep(17, 18, 0), sam, { type: 'member.claimed', id: sam.id });
+  log.add(sep(17, 18, 0), sam, { type: 'group.created', name: 'Banff 2026', currency: 'CAD' });
+  for (const m of twoSeats ? [maya, mayaK, jordan, nathan] : [maya, jordan, nathan]) {
+    log.add(sep(17, 18, 1), sam, { type: 'member.added', member: { id: m.id, name: m.name } });
+  }
+  log.add(sep(17, 18, 30), maya, { type: 'member.claimed', id: maya.id });
+  log.add(sep(17, 19, 0), jordan, { type: 'member.claimed', id: jordan.id });
+  log.add(sep(17, 19, 2), jordan, {
+    type: 'member.updated',
+    id: jordan.id,
+    changes: { emoji: '🏂' },
+  });
+  if (twoSeats) log.add(sep(19, 8, 0), mayaK, { type: 'member.claimed', id: mayaK.id });
+
+  const all = [sam, maya, jordan, nathan];
+  const each = (amount: number, who: SeedMember[]) =>
+    Object.fromEntries(who.map((m) => [m.id, amount / who.length]));
+  log.add(
+    sep(18, 15, 0),
+    maya,
+    expense(
+      newId(),
+      'Fairmont Banff Springs',
+      118000,
+      maya,
+      '2026-09-18',
+      'lodging',
+      each(118000, all),
+    ),
+  );
+  log.add(
+    sep(18, 17, 0),
+    jordan,
+    expense(newId(), 'Gas at Petro-Canada', 6000, jordan, '2026-09-18', 'fuel', each(6000, all)),
+  );
+  log.add(
+    sep(19, 10, 0),
+    sam,
+    expense(
+      newId(),
+      'Banff Town Parking',
+      2400,
+      sam,
+      '2026-09-19',
+      'parking',
+      each(2400, [sam, jordan, nathan]),
+    ),
+  );
+  log.add(
+    sep(20, 7, 5),
+    sam,
+    expense(newId(), 'Sunshine Village lift tickets', 42000, nathan, '2026-09-20', 'activities', {
+      [sam.id]: 9500,
+      [jordan.id]: 9500,
+      [nathan.id]: 23000,
+    }),
+  );
+  log.add(
+    sep(20, 20, 47),
+    maya,
+    expense(
+      newId(),
+      'Dinner at Park Distillery',
+      9600,
+      maya,
+      '2026-09-20',
+      'food',
+      each(9600, [sam, maya, jordan]),
+      'Split the wine',
+    ),
+  );
+  return { log, sam: twoSeats ? maya : sam };
+}
+
 /** The scenario for a seed state. `myDevice` is this install's device id; `now` pins "Today". */
 export function buildScenario(state: GroupScenario, myDevice: string, now: number): Scenario {
   switch (state) {
@@ -795,16 +892,20 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
       );
     case 'newWithExpenses':
       return scenario('banff-new-expenses', banffNew(myDevice, now, true), now);
-    // Group, just created, held by a phone with no seat in it. `unclaimed`: Sam created it on another phone, so no
-    // member carries this device and Group offers "Which name is yours?". `unclaimed-own`: this phone created it as Sam
-    // and the row lost the seat (a reinstall's keychain recovery), so Sam's seat still lists this device and Group
-    // restores it without asking (Group, just created).
+    // A group held by a phone with no seat in it. `unclaimed`: Sam created it on another phone, so no member carries
+    // this device and Group offers "Which name is yours?" as offered again (SeatPick; closed, GroupNoSeat).
+    // `unclaimed-own`: this phone created it as Sam and the row lost the seat (a reinstall's keychain recovery), so
+    // Sam's seat still lists this device and Group restores it without asking (Group, just created).
+    // `unclaimed-two`: this phone claimed both Maya and Maya K., so it cannot tell which is its own and asks, marking
+    // both "this phone" (SeatSameDevice, once Maya is tapped).
     case 'unclaimed':
-      return scenario('banff-unclaimed', banffNew(deviceIdFor('K4'), now), now, {
-        claimed: false,
-      });
+      return scenario('banff-unclaimed', banffNoSeat(myDevice, false), now, { claimed: false });
     case 'unclaimed-own':
       return scenario('banff-unclaimed-own', banffNew(myDevice, now), now, { claimed: false });
+    case 'unclaimed-two':
+      return scenario('banff-unclaimed-two', banffNoSeat(myDevice, true), now, {
+        claimed: false,
+      });
     case 'expense-detail': {
       const b = banffBase(myDevice, 'detail');
       banffRecent(b, now);
@@ -1904,6 +2005,7 @@ export async function seed(
     case 'share':
     case 'unclaimed':
     case 'unclaimed-own':
+    case 'unclaimed-two':
     case 'expense-detail':
       return openScenario(s, buildScenario(state, s.deviceId, Date.now()));
 

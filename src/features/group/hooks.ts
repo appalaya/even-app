@@ -37,9 +37,15 @@ interface TransitionEvents {
  * A sheet offered each time this screen comes into view: `open` from the end of the transition that shows the screen
  * (its push, or the pop of the screen above it) until the screen loses focus or `close()` is called. The focus event
  * alone is too early: it fires as the transition starts, and iOS does not present a modal asked for mid-transition
- * (it never appears). `round` changes with each showing, so the sheet can start fresh.
+ * (it never appears). `reopen()` shows it again on demand ("Pick your name", GroupNoSeat). `round` changes with each
+ * showing, so the sheet can start fresh.
  */
-export function useSheetOnEachView(): { round: number; open: boolean; close: () => void } {
+export function useSheetOnEachView(): {
+  round: number;
+  open: boolean;
+  close: () => void;
+  reopen: () => void;
+} {
   const navigation = useNavigation() as unknown as TransitionEvents;
   const [round, setRound] = useState(0);
   const [open, setOpen] = useState(false);
@@ -63,7 +69,11 @@ export function useSheetOnEachView(): { round: number; open: boolean; close: () 
     [navigation],
   );
   const close = useCallback(() => setOpen(false), []);
-  return { round, open, close };
+  const reopen = useCallback(() => {
+    setRound((n) => n + 1);
+    setOpen(true);
+  }, []);
+  return { round, open, close, reopen };
 }
 
 /** The clock, re-read every `ms` so relative labels ("Synced 2 min ago", "Today") stay true. */

@@ -20,9 +20,12 @@ import {
   everyoneSettled,
   inviteLayout,
   myTransfers,
+  namePick,
   offersNamePick,
+  seatMark,
   showsDoneRow,
   sortedExpenses,
+  spentSoFar,
 } from '../features/group/model';
 import { deviceSeat } from '../state/seat';
 import {
@@ -250,15 +253,27 @@ describe('seed scenarios', () => {
 
   it('Group, held without a seat: another phone asks for a name, this phone gets its own back', () => {
     const pick = { needsClaim: true, writable: true, deviceId: DEVICE };
-    // Sam created it on another phone: no member carries this one, so Group offers "Which name is yours?".
+    // Sam created it on another phone: no member carries this one, so Group offers "Which name is yours?" and reads
+    // GroupNoSeat behind it: "Spent so far $1,780.00", the five expenses as listed.
     const other = load('unclaimed');
     expect(other.spec.claimed).toBe(false);
     expect(deviceSeat(other.group, DEVICE)).toBeNull();
     expect(offersNamePick(other.group, pick)).toBe(true);
-    // Nothing added yet: "You're even", but not "Everyone's settled".
-    expect(everyoneSettled(other.group, other.transfers, false)).toBe(false);
-    // Picking Sam ("It's me") leaves Sam the only joined member: the invite card replaces the header.
-    expect(inviteLayout(other.group, other.me)).toBe('alone');
+    expect(money(spentSoFar(other.group))).toBe('$1,780.00');
+    expect(sortedExpenses(other.group).map((e) => [e.title, money(e.amount)])).toEqual([
+      ['Dinner at Park Distillery', '$96.00'],
+      ['Sunshine Village lift tickets', '$420.00'],
+      ['Banff Town Parking', '$24.00'],
+      ['Gas at Petro-Canada', '$60.00'],
+      ['Fairmont Banff Springs', '$1,180.00'],
+    ]);
+    // SeatPick: Sam, Maya and Jordan joined on other phones; Nathan has not.
+    expect([...other.group.members.values()].map((m) => [m.name, seatMark(m, DEVICE)])).toEqual([
+      ['Sam', 'joined'],
+      ['Maya', 'joined'],
+      ['Jordan', 'joined'],
+      ['Nathan', null],
+    ]);
 
     // This phone created it as Sam and the row lost the seat: the log names Sam, so it is restored, not asked.
     const own = load('unclaimed-own');
@@ -266,6 +281,32 @@ describe('seed scenarios', () => {
     expect(deviceSeat(own.group, DEVICE)).toBe(own.me);
     expect(offersNamePick(own.group, pick)).toBe(false);
     expect(inviteLayout(own.group, own.me)).toBe('alone');
+    // Nothing added yet: "You're even", but not "Everyone's settled".
+    expect(everyoneSettled(own.group, own.transfers, false)).toBe(false);
+  });
+
+  it('Group, two seats on this phone: both marked, and a tap on Maya names Maya K.', () => {
+    const two = load('unclaimed-two');
+    expect(two.spec.claimed).toBe(false);
+    expect(deviceSeat(two.group, DEVICE)).toBeNull();
+    expect(offersNamePick(two.group, { needsClaim: true, writable: true, deviceId: DEVICE })).toBe(
+      true,
+    );
+    const members = [...two.group.members.values()];
+    expect(members.map((m) => [m.name, seatMark(m, DEVICE)])).toEqual([
+      ['Sam', 'joined'],
+      ['Maya', 'thisPhone'],
+      ['Maya K.', 'thisPhone'],
+      ['Jordan', 'joined'],
+      ['Nathan', null],
+    ]);
+    const maya = members.find((m) => m.name === 'Maya');
+    expect(maya).toBeDefined();
+    if (maya === undefined) return;
+    const tap = namePick(two.group, maya, DEVICE);
+    expect(tap.kind === 'sameDevice' ? tap.others.map((m) => m.name) : tap.kind).toEqual([
+      'Maya K.',
+    ]);
   });
 
   it('Expense detail: the dinner history as drawn', () => {

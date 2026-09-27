@@ -106,6 +106,58 @@ export function BalanceSection({
   );
 }
 
+/**
+ * Group with no name picked (GroupNoSeat): "Spent so far" 17/22 `textSecondary`, the trip's total (`spentSoFar`) at
+ * 56/64 with the code, then the status line 4 below, drawn without its sync button (pull to refresh still syncs).
+ * Padded as the big number: 18 above (4 less under a flush banner), inset 20.
+ */
+export function SpentSection({
+  amount,
+  currency,
+  status,
+  hasBanner,
+}: {
+  amount: number;
+  currency: string;
+  status: StatusLineProps | null;
+  hasBanner: boolean;
+}) {
+  return (
+    <View
+      style={[styles.section, { paddingTop: 18 - (hasBanner ? 4 : 0) }]}
+      accessibilityLabel="Group total"
+    >
+      <AppText color="textSecondary">Spent so far</AppText>
+      <MoneyText amount={amount} currency={currency} size="big" />
+      {status !== null && (
+        <View style={styles.status}>
+          <StatusLine {...status} button={false} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * "This phone doesn't know which name is yours, so it can't add or settle anything yet." (GroupNoSeat): 16 below the
+ * header, inset 16; `surface` with a 1 pt `border`, radius 14, padded 12 · 14; the 20 pt person glyph in
+ * `textSecondary`, 1 down, 10 before the 15/21 sentence.
+ */
+export function NoSeatNote() {
+  const { tokens } = useTheme();
+  return (
+    <View style={[styles.note, { backgroundColor: tokens.surface, borderColor: tokens.border }]}>
+      <View style={styles.noteGlyph}>
+        <Icon name="person" size={20} color={tokens.textSecondary} />
+      </View>
+      <AppText variant="subheadLoose" style={styles.flex}>
+        This phone doesn&apos;t know which name is yours, so it can&apos;t add or settle anything
+        yet.
+      </AppText>
+    </View>
+  );
+}
+
 /** "✓ Everyone's settled" (Group, even: 18 below the status line, inset 20; archived: inside the header, 8 below). */
 export function SettledLine({ style }: { style?: object }) {
   const { tokens } = useTheme();
@@ -240,6 +292,18 @@ const styles = StyleSheet.create({
     marginHorizontal: layout.textInset,
   },
   settledInSection: { marginTop: 8, marginHorizontal: 0 },
+  note: {
+    marginTop: 16,
+    marginHorizontal: layout.gutter,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: radii.tile,
+    borderWidth: strokes.hairline,
+  },
+  noteGlyph: { paddingTop: 1 },
   offer: {
     marginTop: 14,
     marginHorizontal: layout.gutter,

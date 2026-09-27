@@ -20,13 +20,22 @@ import {
   type Segment,
   type StackMember,
 } from '@/components';
+import { InviteQrSheet } from '@/features/invite/InviteQrSheet';
 import { PickNameStep } from '@/features/join/PickNameStep';
 import { deviceSeat, useApp, useGroup } from '@/state';
 import { layout, useTheme } from '@/theme';
 
 import { DoneRow, DoneSheet } from './DoneAdding';
 import { GroupBanners, lastBannerFlush } from './GroupBanners';
-import { ArchiveOffer, BalanceSection, ClosedNote, SettledLine, SettleList } from './GroupHeader';
+import {
+  ArchiveOffer,
+  BalanceSection,
+  ClosedNote,
+  NoSeatNote,
+  SettledLine,
+  SettleList,
+  SpentSection,
+} from './GroupHeader';
 import { ActivityTab, BalancesTab, ExpensesTab } from './GroupTabs';
 import {
   useGroupNotifications,
@@ -49,9 +58,12 @@ import {
   offersNamePick,
   peopleOf,
   showsDoneRow,
+  showsShareButton,
   sortedExpenses,
+  spentSoFar,
 } from './model';
 import { groupHrefs } from './routes';
+import { ShareButton, ShareMenu } from './ShareMenu';
 
 export type GroupTab = 'expenses' | 'balances' | 'activity';
 
@@ -81,9 +93,13 @@ export interface GroupScreenProps {
  * Balances and Activity boards) as far as the content allows, and Expenses scrolls back to the top (Group).
  *
  * A phone holding the group without a seat cannot add anything, so while it has none, each time Group comes into view
- * it presents "Which name is yours?" (the Join boards' sheet, `PickNameStep`). Closing it only closes it: the group
- * stays as it is, and the sheet comes back on the next focus. A seat the log already gives this device (a keychain
- * recovery after a reinstall) is restored without asking (`GroupService.restoreSeat`).
+ * it presents "Which name is yours?" (SeatPick: the Join boards' sheet as offered again, `PickNameStep`). Closing it
+ * only closes it: the group stays as it is and reads GroupNoSeat ("Spent so far", the note, no settle list or
+ * done-adding row, no share arrow, "Pick your name" in place of Add expense, which opens the sheet again), and the
+ * sheet comes back on the next focus. A seat the log already gives this device (a keychain recovery after a
+ * reinstall) is restored without asking (`GroupService.restoreSeat`).
+ *
+ * The share arrow opens "Share link" · "Show QR code" (GroupShareMenu, `ShareMenu`).
  */
 export function GroupScreen({
   localId,
@@ -104,8 +120,20 @@ export function GroupScreen({
 
   const [tab, setTab] = useState<GroupTab>(initialTab);
   const [doneOpen, setDoneOpen] = useState(initialSheet === 'done');
-  // The sheet is a modal over the window: close it when another screen covers this one.
-  useFocusEffect(useCallback(() => () => setDoneOpen(false), []));
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  // The sheets are modals over the window: close them (and the share menu) when another screen covers this one.
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        setDoneOpen(false);
+        setMenuOpen(false);
+        setQrOpen(false);
+      },
+      [],
+    ),
+  );
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   // "Which name is yours?": up each time Group comes into view (a fresh sheet each time), down on blur and on close.
   // Whether it shows at all is `offersNamePick` below.
@@ -231,11 +259,13 @@ export function GroupScreen({
   // Nothing to settle is not settled: "Everyone's settled" and the archive offer need an expense or a payment.
   const settledAll = everyoneSettled(state, derived.transfers, derived.balancesUnavailable);
   const canWrite = !readOnly && !derived.needsClaim;
+  // Also Group's no-seat layout (GroupNoSeat): exactly while the pick is offered.
   const offerPick = offersNamePick(state, {
     needsClaim: derived.needsClaim,
     writable: !readOnly,
     deviceId,
   });
+  const shareShown = showsShareButton(card, { readOnly, needsClaim: derived.needsClaim });
   const bannerShown = lastBannerFlush(derived);
 
   const toggleDone = () => {
@@ -243,17 +273,15 @@ export function GroupScreen({
   };
   const settle = canWrite ? (t: Transfer) => router.push(groupHrefs.settle(localId, t)) : null;
 
-  // Share is hidden while the invite card shows and in a read-only group; until the server has the group it waits.
+  // Share is hidden while the invite card shows, in a read-only group and with no seat; until the server has the group
+  // it waits. It opens the share menu (GroupShareMenu).
   const headerRight = (
     <>
-      {card === 'none' && !readOnly && (
-        <HeaderButton
-          icon="share"
-          accessibilityLabel="Share invite"
+      {shareShown && (
+        <ShareButton
+          expanded={menuOpen}
           disabled={invite?.ready !== true}
-          onPress={() => {
-            if (invite?.ready === true) shareInvite(invite, name);
-          }}
+          onPress={() => setMenuOpen(true)}
         />
       )}
       <HeaderButton
@@ -267,7 +295,21 @@ export function GroupScreen({
   // ----- the block above the segment -----
   let header: ReactNode;
   let segmentGap: number;
-  if (card === 'alone') {
+  if (offerPick) {
+    // GroupNoSeat: 20 from the note to the segmented control.
+    header = (
+      <>
+        <SpentSection
+          amount={spentSoFar(state)}
+          currency={currency}
+          status={status}
+          hasBanner={bannerShown}
+        />
+        <NoSeatNote />
+      </>
+    );
+    segmentGap = 20;
+  } else if (card === 'alone') {
     const people: StackMember[] = peopleOf(state).map((m) => ({
       id: m.id,
       name: m.name,
@@ -325,85 +367,113 @@ export function GroupScreen({
   const onSettleUp =
     canWrite && derived.transfers.length > 0 ? () => router.push(groupHrefs.settle(localId)) : null;
 
-  const footer = canWrite ? (
-    <Button
-      label="Add expense"
-      icon="plus"
-      onPress={() => router.push(groupHrefs.addExpense(localId))}
-    />
-  ) : undefined;
+  let footer: ReactNode = undefined;
+  if (canWrite) {
+    footer = (
+      <Button
+        label="Add expense"
+        icon="plus"
+        onPress={() => router.push(groupHrefs.addExpense(localId))}
+      />
+    );
+  } else if (offerPick) {
+    footer = <Button label="Pick your name" icon="person" onPress={pick.reopen} />;
+  }
 
   return (
-    <Screen back={back} title={name} headerRight={headerRight} footer={footer} scroll={false}>
-      <ScrollView
-        ref={scrollRef}
-        style={styles.flex}
-        contentContainerStyle={{
-          paddingBottom: footer === undefined ? Math.max(insets.bottom, layout.homeIndicator) : 16,
-        }}
-        stickyHeaderIndices={[1]}
-        onLayout={onScrollLayout}
-        onContentSizeChange={onContentSize}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={tokens.textMuted}
-          />
-        }
-      >
-        <View>
-          <GroupBanners derived={derived} />
-          {header}
-        </View>
-        <View
-          onLayout={onSegmentLayout}
-          style={[
-            styles.segment,
-            { marginTop: segmentGap - STUCK_GAP, backgroundColor: tokens.background },
-          ]}
+    <View style={styles.flex}>
+      <Screen back={back} title={name} headerRight={headerRight} footer={footer} scroll={false}>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.flex}
+          contentContainerStyle={{
+            paddingBottom:
+              footer === undefined ? Math.max(insets.bottom, layout.homeIndicator) : 16,
+          }}
+          stickyHeaderIndices={[1]}
+          onLayout={onScrollLayout}
+          onContentSizeChange={onContentSize}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={tokens.textMuted}
+            />
+          }
         >
-          <SegmentedControl segments={SEGMENTS} value={tab} onChange={changeTab} />
-        </View>
-        <View>
-          {tab === 'expenses' && (
-            <ExpensesTab
-              expenses={view.expenses}
-              state={state}
-              myId={myId}
-              currency={currency}
-              now={now}
-              onOpen={(expenseId) => router.push(groupHrefs.expense(localId, expenseId))}
-            />
-          )}
-          {tab === 'balances' && (
-            <BalancesTab
-              rows={view.balances}
-              categories={view.categories}
-              currency={currency}
-              unavailable={derived.balancesUnavailable}
-              onSettle={onSettleUp}
-            />
-          )}
-          {tab === 'activity' && <ActivityTab sections={sections} now={now} />}
-        </View>
-      </ScrollView>
-      <DoneSheet
-        visible={doneOpen}
-        summary={view.done}
-        onDismiss={() => setDoneOpen(false)}
-        onToggle={toggleDone}
+          <View>
+            <GroupBanners derived={derived} />
+            {header}
+          </View>
+          <View
+            onLayout={onSegmentLayout}
+            style={[
+              styles.segment,
+              { marginTop: segmentGap - STUCK_GAP, backgroundColor: tokens.background },
+            ]}
+          >
+            <SegmentedControl segments={SEGMENTS} value={tab} onChange={changeTab} />
+          </View>
+          <View>
+            {tab === 'expenses' && (
+              <ExpensesTab
+                expenses={view.expenses}
+                state={state}
+                myId={myId}
+                currency={currency}
+                now={now}
+                onOpen={(expenseId) => router.push(groupHrefs.expense(localId, expenseId))}
+              />
+            )}
+            {tab === 'balances' && (
+              <BalancesTab
+                rows={view.balances}
+                categories={view.categories}
+                currency={currency}
+                unavailable={derived.balancesUnavailable}
+                onSettle={onSettleUp}
+              />
+            )}
+            {tab === 'activity' && <ActivityTab sections={sections} now={now} />}
+          </View>
+        </ScrollView>
+        <DoneSheet
+          visible={doneOpen}
+          summary={view.done}
+          onDismiss={() => setDoneOpen(false)}
+          onToggle={toggleDone}
+        />
+        {/* Closing only closes it (unlike the Join route's close, which leaves for Groups); nothing changes the group. */}
+        <PickNameStep
+          key={pick.round}
+          localId={localId}
+          visible={pick.open && offerPick}
+          again
+          fallbackName={null}
+          onClose={pick.close}
+          onClaimed={pick.close}
+        />
+        <InviteQrSheet
+          visible={qrOpen}
+          onClose={() => setQrOpen(false)}
+          invite={invite}
+          groupName={name}
+        />
+      </Screen>
+      <ShareMenu
+        visible={menuOpen && shareShown}
+        groupName={name}
+        onDismiss={closeMenu}
+        onShareLink={() => {
+          setMenuOpen(false);
+          if (invite?.ready === true) shareInvite(invite, name);
+        }}
+        onShowQr={() => {
+          setMenuOpen(false);
+          setQrOpen(true);
+        }}
       />
-      {/* Closing only closes it (unlike the Join route's close, which leaves for Groups); nothing changes the group. */}
-      <PickNameStep
-        key={pick.round}
-        localId={localId}
-        visible={pick.open && offerPick}
-        fallbackName={null}
-        onClose={pick.close}
-        onClaimed={pick.close}
-      />
-    </Screen>
+    </View>
   );
 }
 

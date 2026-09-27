@@ -16,6 +16,11 @@
  *
  * A tap on a name marked joined asks, stacked over this sheet, "Is that you on another phone, or a different Maya?"
  * (extra states 5): "It's me" claims it; "Different Maya" opens "I'm not listed" with the name empty.
+ *
+ * Offered again on a group this phone already holds (`again`; SeatPick, SeatPickDark): "You're already in" over the
+ * group name, the question 24 below the header and 2 above "This phone doesn't know which one is you yet." (15/21
+ * `textSecondary`, 10 above the list). With five rows the sheet's top edge sits at 214. A name this phone claimed
+ * reads "this phone" (a 13 pt phone glyph and the caption, both `textSecondary`) in place of "joined" (SeatSameDevice).
  */
 import type { MemberState } from '@even/core';
 import { Fragment, type ReactNode } from 'react';
@@ -43,15 +48,25 @@ const DRAWN_ROWS = 4;
 const ROW = 59;
 /** Expanded, as drawn: 874 − 176 with four rows. */
 const EXPANDED_HEIGHT = 698;
+/**
+ * Offered again (SeatPick): 874 − 214 with five rows. SeatSameDevice draws six at 156, 58 higher; a row and its
+ * separator are 59, so six rows sit at 155 here. Expanded (not drawn) it rises as Join's does, to the safe area + 48.
+ */
+const AGAIN_HEIGHT = 660;
+const AGAIN_ROWS = 5;
 
 export interface PickNameSheetProps {
   visible: boolean;
   onClose: () => void;
+  /** Offered again on Group, to a phone that already holds the group (SeatPick): "You're already in". */
+  again?: boolean;
   groupName: string;
   host: string;
   currency: string | null;
   /** Claimable members, in the group's order. */
   members: readonly MemberState[];
+  /** The members this phone claimed: "this phone" in place of "joined" (SeatPick, SeatSameDevice). */
+  thisPhone?: ReadonlySet<string>;
   onPick: (member: MemberState) => void;
   /** "I'm not listed" is open: the name field shows under it. */
   notListed: boolean;
@@ -75,10 +90,12 @@ export interface PickNameSheetProps {
 export function PickNameSheet({
   visible,
   onClose,
+  again = false,
   groupName,
   host,
   currency,
   members,
+  thisPhone,
   onPick,
   notListed,
   onToggleNotListed,
@@ -98,11 +115,12 @@ export function PickNameSheet({
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const rows = members.length + 1;
+  // The drawn height with four rows (Join; SeatPick's five less one), expanded or not; each further row adds one.
+  const drawn =
+    (again ? AGAIN_HEIGHT - (AGAIN_ROWS - DRAWN_ROWS) * ROW : DRAWN_HEIGHT) +
+    (notListed ? EXPANDED_HEIGHT - DRAWN_HEIGHT : 0);
   const extra = Math.max(0, rows - DRAWN_ROWS) * ROW;
-  const top = Math.max(
-    insets.top + 48,
-    height - (notListed ? EXPANDED_HEIGHT : DRAWN_HEIGHT) - extra,
-  );
+  const top = Math.max(insets.top + 48, height - drawn - extra);
   const shown = newName.trim();
 
   return (
@@ -111,10 +129,12 @@ export function PickNameSheet({
       onDismiss={onClose}
       onClose={onClose}
       top={top}
-      accessibilityLabel="Join a group"
+      accessibilityLabel={again ? 'Which name is yours?' : 'Join a group'}
     >
       <View style={styles.intro}>
-        <AppText color="textSecondary">You&apos;ve been invited to</AppText>
+        <AppText color="textSecondary">
+          {again ? "You're already in" : "You've been invited to"}
+        </AppText>
         <AppText variant="title1" accessibilityRole="header">
           {groupName}
         </AppText>
@@ -128,13 +148,23 @@ export function PickNameSheet({
       <AppText
         variant="headline"
         accessibilityRole="header"
-        style={[styles.question, notListed && styles.questionExpanded]}
+        style={[
+          styles.question,
+          notListed && styles.questionExpanded,
+          again && styles.questionAgain,
+        ]}
       >
         Which name is yours?
       </AppText>
+      {again && (
+        <AppText variant="subheadLoose" color="textSecondary" style={styles.again}>
+          This phone doesn&apos;t know which one is you yet.
+        </AppText>
+      )}
       <ScrollView style={styles.flex} keyboardShouldPersistTaps="handled">
         <View style={[styles.list, { backgroundColor: tokens.surfaceInset }]}>
           {members.map((m) => {
+            const mine = thisPhone?.has(m.id) === true;
             const joined = m.devices.length > 0;
             return (
               <Fragment key={m.id}>
@@ -151,10 +181,14 @@ export function PickNameSheet({
                     />
                   }
                   title={m.name}
-                  trailing={joined ? <JoinedMark size={13} /> : undefined}
+                  trailing={
+                    mine ? <ThisPhoneMark /> : joined ? <JoinedMark size={13} /> : undefined
+                  }
                   chevron={!joined}
                   onPress={busy ? undefined : () => onPick(m)}
-                  accessibilityLabel={joined ? `${m.name}, joined` : m.name}
+                  accessibilityLabel={
+                    mine ? `${m.name}, this phone` : joined ? `${m.name}, joined` : m.name
+                  }
                 />
                 <Separator inset={62} tone="inset" />
               </Fragment>
@@ -233,12 +267,28 @@ export function PickNameSheet({
   );
 }
 
+/** "this phone" (SeatSameDevice): the 13 pt phone glyph (stroke 2.4) 4 before the 13/18 caption, in `textSecondary`. */
+function ThisPhoneMark() {
+  const { tokens } = useTheme();
+  return (
+    <View style={styles.mark}>
+      <Icon name="phone" size={13} color={tokens.textSecondary} />
+      <AppText variant="caption" color="textSecondary">
+        this phone
+      </AppText>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   intro: { gap: 2, paddingHorizontal: 20 },
   host: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
   question: { marginTop: 28, marginBottom: 10, marginHorizontal: 20 },
   questionExpanded: { marginTop: 20 },
+  questionAgain: { marginTop: 24, marginBottom: 2 },
+  again: { marginBottom: 10, marginHorizontal: 20 },
+  mark: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   list: { marginHorizontal: 16, borderRadius: radii.card, overflow: 'hidden' },
   newSeat: {
     flexDirection: 'row',

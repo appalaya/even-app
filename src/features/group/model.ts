@@ -12,7 +12,7 @@ import {
   type Transfer,
 } from '@even/core';
 
-import { deviceSeat } from '@/state/seat';
+import { deviceSeat, deviceSeats } from '@/state/seat';
 
 import { dayKey, deviceShort } from './format';
 
@@ -122,6 +122,100 @@ export function offersNamePick(
     peopleOf(state).length > 0 &&
     deviceSeat(state, seat.deviceId) === null
   );
+}
+
+/*
+ * While the pick is offered, Group is drawn with no name picked (GroupNoSeat): "Spent so far" and the note in place of
+ * the big number, no settle list or done-adding row, "Pick your name" in place of Add expense, and no share arrow.
+ */
+
+/**
+ * "Spent so far" (GroupNoSeat: $1,780.00 CAD, the Banff trip's five expenses): the trip total Balances' "Spend by
+ * category" adds up, so an expense the reducer flags (a split that does not add up, another currency) stands aside
+ * here too. Payments are not spending.
+ */
+export function spentSoFar(state: GroupState): number {
+  let total = 0;
+  for (const amount of state.totalsByCategory.values()) total += amount;
+  return total;
+}
+
+/**
+ * The mark beside a name in "Which name is yours?" offered again on Group: 'thisPhone' when this device claimed it
+ * ("this phone", SeatSameDevice), 'joined' when only other phones did, null when nobody has (the row has a chevron).
+ * After Join the boards draw every claimed name "joined".
+ */
+export type SeatMark = 'thisPhone' | 'joined' | null;
+
+export function seatMark(member: MemberState, deviceId: string): SeatMark {
+  if (member.devices.includes(deviceId)) return 'thisPhone';
+  return member.devices.length > 0 ? 'joined' : null;
+}
+
+/**
+ * What a tap on a name in "Which name is yours?", offered again on Group (SeatPick), does:
+ * - 'claim': a name nobody has claimed, or one only this phone claimed. This phone's own name skips "Is that you on
+ *   another phone?" (SeatPick); claiming it again writes nothing (`claimMember` is idempotent per device).
+ * - 'otherPhone': a name another phone claimed asks "Is that you on another phone, or a different Maya?" (Join).
+ * - 'sameDevice': this phone claimed this name and others too, so it asks "This phone was Maya before", naming the
+ *   others (SeatSameDevice).
+ */
+export type NamePick =
+  { kind: 'claim' } | { kind: 'otherPhone' } | { kind: 'sameDevice'; others: MemberState[] };
+
+export function namePick(state: GroupState, member: MemberState, deviceId: string): NamePick {
+  const mark = seatMark(member, deviceId);
+  if (mark === 'joined') return { kind: 'otherPhone' };
+  if (mark === null) return { kind: 'claim' };
+  const others = deviceSeats(state, deviceId)
+    .filter((id) => id !== member.id)
+    .map((id) => state.members.get(id))
+    .filter((m): m is MemberState => m !== undefined);
+  return others.length === 0 ? { kind: 'claim' } : { kind: 'sameDevice', others };
+}
+
+/** "Maya K.", "Maya K. and Sam", "Maya K., Sam and Jo". */
+function listNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1] ?? ''}`;
+}
+
+/**
+ * SeatSameDevice's words for a tap on Maya while this phone also claimed Maya K.: "This phone was Maya before",
+ * "Continue as Maya? This phone was also Maya K. If that one is left over, archive it in Group settings.", "Continue as
+ * Maya". With more than one other name (not drawn) the sentence names them all and says "those" and "them".
+ */
+export function sameDeviceWords(
+  name: string,
+  others: readonly string[],
+): { question: string; body: string; confirm: string } {
+  const one = others.length <= 1;
+  const list = listNames(others);
+  // "Maya K." ends its own sentence.
+  const stop = list.endsWith('.') ? '' : '.';
+  return {
+    question: `This phone was ${name} before`,
+    body:
+      `Continue as ${name}? This phone was also ${list}${stop} ` +
+      (one
+        ? 'If that one is left over, archive it in Group settings.'
+        : 'If those are left over, archive them in Group settings.'),
+    confirm: `Continue as ${name}`,
+  };
+}
+
+// ---------- Share ----------
+
+/**
+ * The share arrow in Group's nav bar, which opens "Share link" · "Show QR code" (GroupShareMenu): hidden while the
+ * invite card shows (it carries its own buttons), in a read-only group, and while this phone has no seat
+ * (GroupNoSeat draws the gear alone).
+ */
+export function showsShareButton(
+  card: InviteLayout,
+  seat: { readOnly: boolean; needsClaim: boolean },
+): boolean {
+  return card === 'none' && !seat.readOnly && !seat.needsClaim;
 }
 
 // ---------- Settled ----------
