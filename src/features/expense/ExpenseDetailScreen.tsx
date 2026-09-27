@@ -33,7 +33,9 @@ export function ExpenseDetailScreen({
     return <Screen back={{ label: derived?.name ?? '', onPress: back }}>{null}</Screen>;
   }
 
-  const failed = () => Alert.alert("That didn't save", 'Try again in a moment.');
+  // "Couldn't save. Try again." is how Add expense words a failed write; these say which write failed.
+  const deleteFailed = () => Alert.alert("Couldn't delete. Try again.");
+  const restoreFailed = () => Alert.alert("Couldn't restore. Try again.");
 
   return (
     <ExpenseDetailView
@@ -53,13 +55,13 @@ export function ExpenseDetailScreen({
             text: 'Delete',
             style: 'destructive',
             onPress: () => {
-              groups.deleteExpense(localId, expenseId).then(back, failed);
+              groups.deleteExpense(localId, expenseId).then(back, deleteFailed);
             },
           },
         ])
       }
       onRestore={(index) => {
-        groups.restoreExpenseVersion(localId, expenseId, index).catch(failed);
+        groups.restoreExpenseVersion(localId, expenseId, index).catch(restoreFailed);
       }}
     />
   );

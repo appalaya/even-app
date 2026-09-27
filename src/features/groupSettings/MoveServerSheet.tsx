@@ -4,7 +4,8 @@
  * follow."; "New server" with the address field (starting at the current URL) and "Check" beside it. Check reads the
  * server's `/v1/info`: a good answer shows "✓ home.example.net is an Even server" with its operator, limits,
  * retention and this group against its caps; "Move" turns on after a good Check and off again once the address is
- * edited. What goes wrong reads as the error-copy panel words it, under the field.
+ * edited. What goes wrong reads as the error-copy panel words it, under the field. The board's caption under the
+ * details ("From /v1/info. Move turns on after …") is a designer's note describing that behaviour, not copy.
  */
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -154,25 +155,20 @@ function MoveBody({
         </View>
       </View>
       {checked !== null && (
-        <>
-          <Card tone="fill" radius="group" separatorInset={16} style={styles.details}>
-            <View style={styles.status} accessibilityRole="text">
-              <Icon name="check" size={16} color={tokens.accent} strokeWidth={2.8} />
-              <AppText variant="subhead" weight="semibold" style={styles.flex}>
-                {`${hostOf(checked.serverUrl)} is an Even server`}
-              </AppText>
-            </View>
-            <Detail label="Operator" value={operatorLabel(checked.info)} />
-            <Detail label="Limits" value={limitsLabel(checked.info)} />
-            <Detail label="Keeps" value={retentionLabel(checked.info.retention_days)} />
-            {checked.usage !== null && (
-              <Detail label="This group" value={groupAgainstLabel(checked.usage)} />
-            )}
-          </Card>
-          <AppText variant="caption" color="textMuted" style={styles.caption}>
-            From /v1/info. Move turns on after a good Check and off again if you edit the address.
-          </AppText>
-        </>
+        <Card tone="fill" radius="group" separatorInset={16} style={styles.details}>
+          <View style={styles.status} accessibilityRole="text">
+            <Icon name="check" size={16} color={tokens.accent} strokeWidth={2.8} />
+            <AppText variant="subhead" weight="semibold" style={styles.flex}>
+              {`${hostOf(checked.serverUrl)} is an Even server`}
+            </AppText>
+          </View>
+          <Detail label="Operator" value={operatorLabel(checked.info)} />
+          <Detail label="Limits" value={limitsLabel(checked.info)} />
+          <Detail label="Keeps" value={retentionLabel(checked.info.retention_days)} />
+          {checked.usage !== null && (
+            <Detail label="This group" value={groupAgainstLabel(checked.usage)} />
+          )}
+        </Card>
       )}
       <View style={styles.flex} />
       <Button
@@ -222,6 +218,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   label: { width: 80, flexShrink: 0 },
-  caption: { marginTop: 8, marginHorizontal: layout.textInset },
   move: { marginHorizontal: layout.gutter },
 });

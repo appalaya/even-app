@@ -28,14 +28,14 @@ export function errorMessage(error: unknown, name?: string): string {
       case 'not_allowed':
         return "Another member's name and avatar are theirs to change.";
       case 'no_secret':
-        return "This phone doesn't have this group's key.";
+        return "This phone can't write to this group.";
       case 'invalid_url':
         return "That URL isn't an Even server. Check the address.";
       default:
         break;
     }
   }
-  return 'That didn’t work. Try again.';
+  return "That didn't work. Try again.";
 }
 
 /** Why a move did not happen, or null when it did. */
@@ -53,8 +53,8 @@ export function moveFailure(result: MoveResult, host: string): string | null {
     case 'not_movable':
       return 'This group is read-only.';
     case 'no_secret':
-      return "This phone doesn't have this group's key.";
+      return "This phone can't write to this group.";
     default:
-      return 'That didn’t work. Try again.';
+      return "That didn't work. Try again.";
   }
 }

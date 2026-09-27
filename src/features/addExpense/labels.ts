@@ -65,7 +65,7 @@ export function saveErrorMessage(error: unknown): string {
   if (isStateError(error)) {
     switch (error.code) {
       case 'read_only':
-        return 'This group is read-only now.';
+        return 'This group is read-only.';
       case 'clock':
         return "Check your phone's date.";
       case 'not_claimed':

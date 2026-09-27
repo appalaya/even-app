@@ -38,7 +38,8 @@ export interface ServerCardProps {
  *
  * Extra states: from 80 % the figure and the bar turn to the text colour (never red), with the warning line and
  * "Export group file"; after a move, "Delete the copy on <old host>" in `danger` with the trash glyph, and the
- * footnote saying when the old copy expires on its own.
+ * footnote saying when the old copy expires on its own. The board's last sentence there ("The row goes away once
+ * it's deleted.") describes the row's behaviour for the engineer and is not shown.
  */
 export function ServerCard({
   serverUrl,
@@ -85,7 +86,7 @@ export function ServerCard({
         <Footnote>
           {`Moved here from ${hostOf(oldServer)}. The old copy expires on its own${
             oldRetentionDays === null ? '' : ` after ${oldRetentionDays} days`
-          }; delete it now if you'd rather not wait. The row goes away once it's deleted.`}
+          }; delete it now if you'd rather not wait.`}
         </Footnote>
       )}
     </>

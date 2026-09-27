@@ -1,7 +1,8 @@
 /**
  * "Import group file" (Groups and App settings): pick a `.even` file, import it through the GroupService, and open
  * the group. What can go wrong reads as the error-copy panel words it (Groups, create and join, extra states):
- * - not a group file (or a newer one): an alert, "That isn't an Even group file." / "This invite needs a newer Even.";
+ * - not a group file (or a newer one): an alert, "That isn't an Even group file." / "This group file needs a
+ *   newer Even." (the panel's "This invite needs a newer Even." is for a pasted code, not a file);
  * - damaged (the invite's checksum fails, or it is malformed): an alert, "That group file is damaged. Export it
  *   again.";
  * - the group's invite was regenerated since (the group is closed or hidden here): a sheet, "This file is from
@@ -54,7 +55,7 @@ export function useImportGroupFile() {
             result.problem === 'format'
               ? "That isn't an Even group file."
               : result.problem === 'version'
-                ? 'This invite needs a newer Even.'
+                ? 'This group file needs a newer Even.'
                 : 'That group file is damaged. Export it again.',
           );
           return;
