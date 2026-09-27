@@ -30,26 +30,20 @@ export function isAppalayaServer(serverUrl: string): boolean {
 }
 
 /**
- * The scheme, host and port of a server URL, without a path ("https://home.example.net:8443" for
- * "https://home.example.net:8443/even"): the contact form takes an origin (web/worker/validate.ts, `isHttpsOrigin`).
- * Throws for a URL with no canonical form.
- */
-export function serverOrigin(serverUrl: string): string {
-  const canonical = canonicalOrigin(serverUrl);
-  const path = canonical.indexOf('/', 'https://'.length);
-  return path === -1 ? canonical : canonical.slice(0, path);
-}
-
-/**
  * "Continue to report" and "Tell Appalaya anyway": the contact page with the group in the fragment,
- * `https://even.appalaya.com/contact#purpose=report&id=<groupId>&server=<https origin>`. A browser never sends the
- * fragment, so neither value reaches a server or its log until the person sends the form. Only these two: never the
- * secret, the invite or the group's name. Neither value can hold a character that needs escaping (base64url; a
- * canonical https origin), so they are checked instead, and a group id of the wrong shape throws.
+ * `https://even.appalaya.com/contact#purpose=report&id=<groupId>&server=<server>`, each value percent-encoded as
+ * URLSearchParams reads it (the page does). A browser never sends the fragment, so neither value reaches a server or
+ * its log until the person sends the form. Only these two: never the secret, the invite or the group's name.
+ *
+ * `server` is the group's canonical server URL (PROTOCOL.md §8.1), the one its id is derived for: an origin for
+ * every server Appalaya runs, and one with a path for a server that has one, which the page shows but the form
+ * cannot take (web/contact-lib.js, `reportTarget`). A group id of the wrong shape, or a server with no canonical
+ * form, throws.
  */
 export function reportUrl(report: { groupId: string; server: string }): string {
   if (!GROUP_ID.test(report.groupId)) throw new RangeError('a group id is 43 base64url characters');
-  return `${CONTACT_PAGE}#purpose=report&id=${report.groupId}&server=${serverOrigin(report.server)}`;
+  const server = canonicalOrigin(report.server);
+  return `${CONTACT_PAGE}#purpose=report&id=${report.groupId}&server=${encodeURIComponent(server)}`;
 }
 
 /** "ab12…u7Qx": a group id as the report sheet shows it, its first and last four characters. */

@@ -3,14 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ServerInfo } from '../../services/sync/types';
 
-import {
-  CONTACT_PAGE,
-  isAppalayaServer,
-  reportUrl,
-  serverDetails,
-  serverOrigin,
-  shortGroupId,
-} from './contact';
+import { CONTACT_PAGE, isAppalayaServer, reportUrl, serverDetails, shortGroupId } from './contact';
 
 const GROUP_ID = 'ab12cdEFghIJklMNopQRstUVwxYZ012345678-_u7Qx';
 
@@ -49,32 +42,37 @@ describe('isAppalayaServer', () => {
 });
 
 describe('reportUrl', () => {
-  it('puts the purpose, the group id and the server origin in the fragment', () => {
+  it('puts the purpose, the group id and the server in the fragment', () => {
     expect(CONTACT_PAGE).toBe('https://even.appalaya.com/contact');
     const url = reportUrl({ groupId: GROUP_ID, server: 'https://sync.even.appalaya.com' });
     expect(url).toBe(
-      `https://even.appalaya.com/contact#purpose=report&id=${GROUP_ID}&server=https://sync.even.appalaya.com`,
+      `https://even.appalaya.com/contact#purpose=report&id=${GROUP_ID}&server=https%3A%2F%2Fsync.even.appalaya.com`,
     );
     // Nothing before the fragment changes, so the request is the plain contact page.
     expect(url.split('#')[0]).toBe(CONTACT_PAGE);
+    expect(url.split('#')).toHaveLength(2);
   });
 
   it('reads back exactly with URLSearchParams, as the page parses it', () => {
-    const url = reportUrl({ groupId: GROUP_ID, server: 'https://home.example.net:8443' });
-    const params = new URLSearchParams(url.slice(url.indexOf('#') + 1));
-    expect([...params.keys()]).toEqual(['purpose', 'id', 'server']);
-    expect(params.get('purpose')).toBe('report');
-    expect(params.get('id')).toBe(GROUP_ID);
-    expect(params.get('server')).toBe('https://home.example.net:8443');
+    for (const server of [
+      'https://sync.even.appalaya.com',
+      'https://home.example.net:8443',
+      'https://home.example.net:8443/even',
+      "https://home.example.net/a&b+c=d;e,f!g$h'i(j)k*l@m:n",
+    ]) {
+      const url = reportUrl({ groupId: GROUP_ID, server });
+      const params = new URLSearchParams(url.slice(url.indexOf('#') + 1));
+      expect([...params.keys()]).toEqual(['purpose', 'id', 'server']);
+      expect(params.get('purpose')).toBe('report');
+      expect(params.get('id')).toBe(GROUP_ID);
+      expect(params.get('server')).toBe(server);
+    }
   });
 
-  it('sends the origin of a server with a path, as the contact form takes it', () => {
-    expect(serverOrigin('https://home.example.net:8443/even')).toBe(
-      'https://home.example.net:8443',
-    );
-    expect(serverOrigin('HTTPS://Home.Example.net/')).toBe('https://home.example.net');
-    const url = reportUrl({ groupId: GROUP_ID, server: 'https://home.example.net/even' });
-    expect(url.endsWith('&server=https://home.example.net')).toBe(true);
+  it('sends the canonical server URL', () => {
+    const url = reportUrl({ groupId: GROUP_ID, server: 'HTTPS://Home.Example.net:443/even/' });
+    const params = new URLSearchParams(url.slice(url.indexOf('#') + 1));
+    expect(params.get('server')).toBe('https://home.example.net/even');
   });
 
   it('refuses a group id of the wrong shape and a server that is not one', () => {
