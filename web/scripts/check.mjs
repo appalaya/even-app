@@ -39,6 +39,7 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/apps\.apple\.com\/app\/id(?:PLACEHOLDER|\d+)$/,
   /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.appalaya\.even$/,
   /^https:\/\/github\.com\/appalaya\/even-server$/,
+  /^https:\/\/appalaya\.com$/,
 ];
 
 /** Turnstile's api.js, from the exact URL Cloudflare requires (never proxied or cached). Contact page only. */
