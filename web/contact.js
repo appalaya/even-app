@@ -37,17 +37,17 @@ const alertBox = $('alert');
 
 /** What the page says when a send cannot go through (ContactWeb board, "Failed"). */
 const FAILURES = {
-  network: "Couldn't send. Check your connection and try again.",
-  turnstile: "The bot check didn't finish. Try it again.",
-  rate_limited: "Couldn't send. Try again in a minute.",
-  unavailable: "Couldn't send. Try again later.",
+  network: 'Couldn’t send. Check your connection and try again.',
+  turnstile: 'The bot check didn’t finish. Try it again.',
+  rate_limited: 'Couldn’t send. Try again in a minute.',
+  unavailable: 'Couldn’t send. Try again later.',
 };
 
 /**
  * A pasted link the app would not accept, worded as the app words a pasted code (src/features/join/invite.ts,
  * problemMessage): cut short, damaged or not an invite reads as incomplete; a newer invite version asks for a newer Even.
  */
-const INVITE_INCOMPLETE = "That link isn't complete. Copy it again.";
+const INVITE_INCOMPLETE = 'That link isn’t complete. Copy it again.';
 const INVITE_NEWER = 'This invite needs a newer Even.';
 
 const MESSAGE_HINTS = {
@@ -58,18 +58,18 @@ const MESSAGE_HINTS = {
 const SENT = {
   report: {
     title: 'Report sent',
-    text: "Thanks. If the group is on our server and breaks our terms, we block it. We can't see inside it, so we can't tell you more than that.",
+    text: 'Thanks. If the group is on our server and breaks our terms, we block it. We can’t see inside it, so we can’t tell you more than that.',
   },
   message: {
     title: 'Message sent',
-    text: "Thanks. If you left an email, we'll reply there.",
+    text: 'Thanks. If you left an email, we’ll reply there.',
   },
 };
 
 const otherServerText = (target) =>
-  `This group is on ${serverLabel(target.server)}. We can't act on it, but we'll read your report.`;
+  `This group is on ${serverLabel(target.server)}. We can’t act on it, but we’ll read your report.`;
 const pathServerText = (target) =>
-  `This group is on ${serverLabel(target.server)}. This form can't take reports for a server with a path; tell whoever runs it.`;
+  `This group is on ${serverLabel(target.server)}. This form can’t take reports for a server with a path; tell whoever runs it.`;
 
 // ---------- state ----------
 
@@ -159,7 +159,7 @@ function renderDerived() {
     id.textContent = shortGroupId(pasted.target.groupId);
     id.title = pasted.target.groupId;
     text.append(
-      "We'll receive the group id ",
+      'We’ll receive the group id ',
       id,
       ` on ${serverLabel(DEFAULT_SERVER)}, never its key or contents.`,
     );

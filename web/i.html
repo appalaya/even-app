@@ -105,14 +105,14 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
 <main>
   <section id="invite" hidden>
     <div class="card">
-      <p class="eyebrow" id="eyebrow">You've been invited to</p>
+      <p class="eyebrow" id="eyebrow">You&rsquo;ve been invited to</p>
       <h1 id="group">a group</h1>
       <p class="meta" id="currency" hidden></p>
       <a class="button" id="open" hidden>Open in Even</a>
       <p class="aside" id="desktop" hidden>Open this link on your phone to join.</p>
     </div>
 
-    <h2>Don't have Even yet?</h2>
+    <h2>Don&rsquo;t have Even yet?</h2>
     <div class="stores">
       <a class="store" href="https://apps.apple.com/app/id6816425117" rel="noreferrer"><img src="/badges/app-store.svg" alt="Download on the App Store" width="144" height="48"></a>
       <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><img src="/badges/google-play.svg" alt="Get it on Google Play" width="162" height="48"></a>
@@ -215,7 +215,7 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
     byId('group').textContent = invite.g;
   } else {
     byId('eyebrow').hidden = true;
-    byId('group').textContent = "You've been invited to a group";
+    byId('group').textContent = 'You\u2019ve been invited to a group';
   }
   if (invite.cur !== '') {
     var name = currencyName(invite.cur);
