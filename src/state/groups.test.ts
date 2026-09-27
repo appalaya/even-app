@@ -1190,12 +1190,69 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       const onA = await derived(a, localId);
       const recovered = await derived(b2, localId);
       expect(recovered.name).toBe('Banff 2026');
-      expect(recovered.needsClaim).toBe(true);
+      // B claimed Nathan before the reinstall, and its device id survived: the seat comes back without asking.
+      expect(recovered.needsClaim).toBe(false);
+      expect(recovered.myMemberId).toBe(nathan);
       expect([...recovered.state.members.values()].map((m) => m.name)).toEqual(
         [...onA.state.members.values()].map((m) => m.name),
       );
       expect([...recovered.state.expenses.values()].map((e) => e.title)).toEqual(['Groceries']);
-      expect((await derived(b2, other)).name).toBe('Elsewhere');
+      // B joined Elsewhere but never picked a name: that one still asks.
+      const elsewhere = await derived(b2, other);
+      expect(elsewhere.name).toBe('Elsewhere');
+      expect(elsewhere.needsClaim).toBe(true);
+    });
+
+    it('gives a row that lost its seat the member this device claimed, without writing an event', async () => {
+      const w = await setup(kind);
+      const a = await w.device('A');
+      const { localId, memberId: maya } = await createTrip(a);
+      expectSynced(await sync(a, localId));
+      const count = (await a.store.dump(localId)).length;
+      // What a keychain recovery (or a leave and re-join) leaves: the log says Maya is this device's, the row does not.
+      await a.store.setMyMember(localId, null);
+      a.services.groupState.invalidate(localId);
+      expect((await derived(a, localId)).needsClaim).toBe(true);
+
+      await g(a).processLifecycle(localId); // runs after every sync, join, import and at app start
+      const after = await derived(a, localId);
+      expect(after.needsClaim).toBe(false);
+      expect(after.myMemberId).toBe(maya);
+      expect((await a.store.getGroup(localId))?.myMemberId).toBe(maya);
+      expect((await a.store.dump(localId)).length).toBe(count);
+      expect((await a.services.groupState.list()).map((r) => r.needsClaim)).toEqual([false]);
+      // Writes work again, signed by the restored seat.
+      await g(a).setDone(localId);
+      expect((await derived(a, localId)).state.doneMembers).toEqual([maya]);
+      // Nothing to restore once the row has its seat.
+      expect(await g(a).restoreSeat(localId)).toBe(false);
+    });
+
+    it('leaves the seat empty when no member, or more than one, carries this device', async () => {
+      const w = await setup(kind);
+      const { a, b, localId, maya, nathan } = await twoDevices(w);
+      const c = await w.device('C');
+      expect((await g(c).joinInvite((await g(a).inviteFor(localId)).code)).kind).toBe('joined');
+      // C never claimed anything: it must pick a name, and keeps whatever it picks.
+      expect(await g(c).restoreSeat(localId)).toBe(false);
+      expect((await derived(c, localId)).needsClaim).toBe(true);
+
+      // B claims Priya as well as Nathan, then loses its seat: two members carry B's device, so B asks.
+      const priya = memberId((await derived(b, localId)).state, 'Priya');
+      await g(b).claimMember(localId, priya);
+      await b.store.setMyMember(localId, null);
+      b.services.groupState.invalidate(localId);
+      expect(await g(b).restoreSeat(localId)).toBe(false);
+      expect((await derived(b, localId)).needsClaim).toBe(true);
+
+      // "Is that you on another phone?" still works for a joined name on a genuinely other phone.
+      await g(c).claimMember(localId, maya);
+      const onC = await derived(c, localId);
+      expect(onC.myMemberId).toBe(maya);
+      expect(onC.state.members.get(maya)?.devices).toEqual(
+        [a.services.deviceId, c.services.deviceId].sort(),
+      );
+      expect(onC.state.members.get(nathan)?.devices).toEqual([b.services.deviceId]);
     });
 
     it('creates rows only for missing groups, and skips entries without a URL or a secret', async () => {

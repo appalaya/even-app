@@ -54,7 +54,8 @@ export function ClosedNote() {
  * The big number (Group): "You owe" / "You're owed" at 17/22 in `textSecondary`, the amount at 56/64 with the code,
  * then the status line 4 below. At a zero net (Group, even): "You're even" at 44/52 and the status line 6 below. Read
  * only (Group, archived; Group screen copy, closed) the figure is `textSecondary` and there is no status line; an
- * even archived group carries "Everyone's settled" 8 below instead.
+ * even archived group carries "Everyone's settled" 8 below instead. `settled` is `everyoneSettled` (model.ts): no
+ * transfers, and at least one expense or payment, since a group with nothing in it has nothing settled.
  */
 export function BalanceSection({
   net,

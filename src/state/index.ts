@@ -41,6 +41,7 @@ export type {
 } from './groupState';
 export type { SplitSpec } from './split';
 export { isStateError, StateError, type InviteProblem, type StateErrorCode } from './errors';
+export { deviceSeat } from './seat';
 export type { Appearance, NotificationStatus, Prefs } from './prefs';
 export {
   chipAfterReply,

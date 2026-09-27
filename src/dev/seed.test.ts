@@ -17,11 +17,14 @@ import {
   balanceRows,
   categoryRows,
   doneSummary,
+  everyoneSettled,
   inviteLayout,
   myTransfers,
+  offersNamePick,
   showsDoneRow,
   sortedExpenses,
 } from '../features/group/model';
+import { deviceSeat } from '../state/seat';
 import {
   buildCopyScenario,
   buildScenario,
@@ -243,6 +246,26 @@ describe('seed scenarios', () => {
     expect(inviteLayout(fresh.group, fresh.me)).toBe('alone');
     const main = load('group');
     expect(inviteLayout(main.group, main.me)).toBe('none');
+  });
+
+  it('Group, held without a seat: another phone asks for a name, this phone gets its own back', () => {
+    const pick = { needsClaim: true, writable: true, deviceId: DEVICE };
+    // Sam created it on another phone: no member carries this one, so Group offers "Which name is yours?".
+    const other = load('unclaimed');
+    expect(other.spec.claimed).toBe(false);
+    expect(deviceSeat(other.group, DEVICE)).toBeNull();
+    expect(offersNamePick(other.group, pick)).toBe(true);
+    // Nothing added yet: "You're even", but not "Everyone's settled".
+    expect(everyoneSettled(other.group, other.transfers, false)).toBe(false);
+    // Picking Sam ("It's me") leaves Sam the only joined member: the invite card replaces the header.
+    expect(inviteLayout(other.group, other.me)).toBe('alone');
+
+    // This phone created it as Sam and the row lost the seat: the log names Sam, so it is restored, not asked.
+    const own = load('unclaimed-own');
+    expect(own.spec.claimed).toBe(false);
+    expect(deviceSeat(own.group, DEVICE)).toBe(own.me);
+    expect(offersNamePick(own.group, pick)).toBe(false);
+    expect(inviteLayout(own.group, own.me)).toBe('alone');
   });
 
   it('Expense detail: the dinner history as drawn', () => {

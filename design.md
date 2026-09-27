@@ -128,7 +128,10 @@ is backed up and survives uninstall, so a restore or reinstall can list the
 index, recover each secret, and re-pull the logs. Each index entry carries the
 group's server URL beside its local id (the URL is not secret), which is what
 rebuilding the `groups` row needs, and the app offers this recovery on first
-launch when the store is empty but the index is not. On Android the keystore
+launch when the store is empty but the index is not. A recovered row has no
+seat; after its first sync the seat this device claimed is restored from the
+log (the device id is in the keychain too), and if none is found Group asks
+"Which name is yours?". On Android the keystore
 wrapping key is not restorable, so a restored Android phone has ciphertext
 without keys; recovery there is a re-shared invite or the group file. The
 privacy page states both.
@@ -887,7 +890,9 @@ checksum, and canonicalises the server URL.
   with "I'm not listed" to add a member (prefilled from `prefs`). Picking a
   name writes `member.claimed`. If the server is
   unreachable, the group is created in state "Joined, waiting for first sync";
-  the name pick is deferred until members arrive.
+  the name pick is deferred until members arrive. Closing the name pick leaves
+  the Join route for Groups and keeps the group, unclaimed; Group offers the
+  pick again when it is opened (see "Group").
 - **Already have it**: an invite whose `localId` matches a local group and
   whose server differs is treated as a move (above), with confirmation, not as
   a duplicate.
@@ -1000,7 +1005,19 @@ Deviating from the canvas in implementation is a no-go.
   nobody claims never show or block it) with an "I'm done" pill that toggles
   your own mark; when `allDone` it reads "Everyone's done".
   Even state: at a zero net the big number reads "You're even"; with an empty
-  settle list it reads "Everyone's settled" and offers to archive the group.
+  settle list and at least one expense or payment it reads "Everyone's
+  settled" and offers to archive the group (a group with nothing in it reads
+  only "You're even" and "No expenses yet", as on the Groups card; the
+  archived header follows the same rule).
+  No seat: a phone that holds the group without a claimed member (a name pick
+  closed after Join, or a keychain recovery) cannot add anything, so each time
+  Group comes into view, once the members are known, it presents the Join
+  boards' "Which name is yours?" sheet over the screen, with the same
+  behaviour as after Join. Closing it only closes it; the group is untouched
+  and the sheet is re-offered on Group until a seat is claimed. When the log
+  already shows this device claimed exactly one member (the device id
+  outlives an uninstall), that seat is restored silently instead
+  (`GroupService.restoreSeat`, on every lifecycle check), and nothing is asked.
   On Balances a settled member reads "Nathan is settled" (no amount, last).
   Banners, when relevant: unreadable entries, update required, group closed,
   group moved, two members with one name, group archived. An archived group is

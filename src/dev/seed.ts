@@ -11,8 +11,8 @@
  * - other members' events are staged the way a sync delivers them: sealed with the group key for the group's server
  *   and inserted as `remote`, acknowledged rows; this device's own as `local`;
  * - `/v1/info` is primed into the info cache (`infoOnly`) for the servers a board names;
- * - the name-pick seed clears this phone's claimed seat; the recovery seed deletes rows but keeps their secrets, as a
- *   reinstall would.
+ * - the name-pick seed clears this phone's claimed seat, and the `unclaimed` states write their row with none; the
+ *   recovery seed deletes rows but keeps their secrets, as a reinstall would.
  * Member ids are drawn until their avatar colour lands on the boards' slots (Sam violet, Maya clay, Nathan steel…),
  * and timestamps are chosen so Activity and Expense detail read like their boards.
  *
@@ -96,6 +96,8 @@ export const SEED_STATES = [
   'newWithExpenses',
   'invite',
   'share',
+  'unclaimed',
+  'unclaimed-own',
   'owed',
   'settled-member',
   'collision',
@@ -302,6 +304,8 @@ export const GROUP_SCENARIOS = [
   'newWithExpenses',
   'invite',
   'share',
+  'unclaimed',
+  'unclaimed-own',
   'expense-detail',
 ] as const;
 export type GroupScenario = (typeof GROUP_SCENARIOS)[number];
@@ -331,6 +335,8 @@ export interface Scenario {
   syncOnOpen: boolean;
   /** Hand the invite to the share sheet once the group is open (the share sheet board). */
   shareOnOpen: boolean;
+  /** `false` writes the row with no seat (`my_member_id` null), as a keychain recovery or an abandoned name pick leaves it. */
+  claimed: boolean;
 }
 
 /** A server nobody answers (a non-routable address): a sync hangs for the transport's 30 s timeout. */
@@ -533,6 +539,7 @@ function scenario(
     open: {},
     syncOnOpen: false,
     shareOnOpen: false,
+    claimed: true,
     ...overrides,
   };
 }
@@ -785,6 +792,16 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
       );
     case 'newWithExpenses':
       return scenario('banff-new-expenses', banffNew(myDevice, now, true), now);
+    // Group, just created, held by a phone with no seat in it. `unclaimed`: Sam created it on another phone, so no
+    // member carries this device and Group offers "Which name is yours?". `unclaimed-own`: this phone created it as Sam
+    // and the row lost the seat (a reinstall's keychain recovery), so Sam's seat still lists this device and Group
+    // restores it without asking (Group, just created).
+    case 'unclaimed':
+      return scenario('banff-unclaimed', banffNew(deviceIdFor('K4'), now), now, {
+        claimed: false,
+      });
+    case 'unclaimed-own':
+      return scenario('banff-unclaimed-own', banffNew(myDevice, now), now, { claimed: false });
     case 'expense-detail': {
       const b = banffBase(myDevice, 'detail');
       banffRecent(b, now);
@@ -883,7 +900,7 @@ export async function seedGroup(services: AppServices, spec: Scenario): Promise<
       serverUrl: spec.serverUrl,
       epoch: null,
       cursor: 0,
-      myMemberId: spec.me.id,
+      myMemberId: spec.claimed ? spec.me.id : null,
       nameCache: spec.name,
       currencyCache: 'CAD',
       createdAt,
@@ -1872,6 +1889,8 @@ export async function seed(
     case 'newWithExpenses':
     case 'invite':
     case 'share':
+    case 'unclaimed':
+    case 'unclaimed-own':
     case 'expense-detail':
       return openScenario(s, buildScenario(state, s.deviceId, Date.now()));
 

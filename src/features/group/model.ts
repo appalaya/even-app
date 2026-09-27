@@ -12,6 +12,8 @@ import {
   type Transfer,
 } from '@even/core';
 
+import { deviceSeat } from '@/state/seat';
+
 import { dayKey, deviceShort } from './format';
 
 // ---------- Done adding ----------
@@ -100,6 +102,46 @@ export function inviteLayout(state: GroupState, myId: string | null): InviteLayo
 /** Non-archived people for "4 people · nobody else has joined yet", in member order. */
 export function peopleOf(state: GroupState): MemberState[] {
   return [...state.members.values()].filter((m) => !m.archived && !m.unknown);
+}
+
+// ---------- Your seat ----------
+
+/**
+ * "Which name is yours?" over Group (the Join boards' sheet, re-offered on every focus until a seat is claimed):
+ * this phone holds a writable group without a seat, the members are known (not "Joined, waiting for first sync"),
+ * and no member already carries this device (that seat is this phone's and comes back without asking,
+ * `GroupService.restoreSeat`).
+ */
+export function offersNamePick(
+  state: GroupState,
+  seat: { needsClaim: boolean; writable: boolean; deviceId: string },
+): boolean {
+  return (
+    seat.needsClaim &&
+    seat.writable &&
+    peopleOf(state).length > 0 &&
+    deviceSeat(state, seat.deviceId) === null
+  );
+}
+
+// ---------- Settled ----------
+
+/** At least one live expense or payment: only then can a zero balance mean "settled" (design.md "Groups"). */
+export function hasActivity(state: GroupState): boolean {
+  return state.expenses.size > 0 || state.payments.size > 0;
+}
+
+/**
+ * "✓ Everyone's settled" and the archive offer (Group, even; inside the archived header): nobody owes anybody, the
+ * balances could be computed, and something has been added. A group with nothing in it is not settled: it reads
+ * "You're even" and "No expenses yet" only (the same rule as the Groups card).
+ */
+export function everyoneSettled(
+  state: GroupState,
+  transfers: readonly Transfer[],
+  balancesUnavailable: boolean,
+): boolean {
+  return transfers.length === 0 && !balancesUnavailable && hasActivity(state);
 }
 
 // ---------- Settle list ----------

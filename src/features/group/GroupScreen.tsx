@@ -20,7 +20,8 @@ import {
   type Segment,
   type StackMember,
 } from '@/components';
-import { useApp, useGroup } from '@/state';
+import { PickNameStep } from '@/features/join/PickNameStep';
+import { deviceSeat, useApp, useGroup } from '@/state';
 import { layout, useTheme } from '@/theme';
 
 import { DoneRow, DoneSheet } from './DoneAdding';
@@ -33,6 +34,7 @@ import {
   useInvite,
   useLeaveWhenGone,
   useNow,
+  useSheetOnEachView,
   useStatusLine,
 } from './hooks';
 import { InviteCard, PeopleRow, shareInvite } from './InviteCard';
@@ -41,8 +43,10 @@ import {
   balanceRows,
   categoryRows,
   doneSummary,
+  everyoneSettled,
   inviteLayout,
   myTransfers,
+  offersNamePick,
   peopleOf,
   showsDoneRow,
   sortedExpenses,
@@ -75,6 +79,11 @@ export interface GroupScreenProps {
  * sticky footer. Until another member joins, the invite card replaces the big number (Group, just created) or, once
  * there are expenses, is pinned above it (Group, new with expenses). The segmented control sticks under the nav bar; choosing Balances or Activity scrolls it there (the
  * Balances and Activity boards) as far as the content allows, and Expenses scrolls back to the top (Group).
+ *
+ * A phone holding the group without a seat cannot add anything, so while it has none, each time Group comes into view
+ * it presents "Which name is yours?" (the Join boards' sheet, `PickNameStep`). Closing it only closes it: the group
+ * stays as it is, and the sheet comes back on the next focus. A seat the log already gives this device (a keychain
+ * recovery after a reinstall) is restored without asking (`GroupService.restoreSeat`).
  */
 export function GroupScreen({
   localId,
@@ -84,7 +93,7 @@ export function GroupScreen({
 }: GroupScreenProps) {
   const { tokens } = useTheme();
   const insets = useSafeAreaInsets();
-  const { groups } = useApp();
+  const { groups, deviceId } = useApp();
   const snapshot = useGroup(localId);
   const derived = snapshot.derived;
   const state = derived?.state ?? null;
@@ -97,6 +106,21 @@ export function GroupScreen({
   const [doneOpen, setDoneOpen] = useState(initialSheet === 'done');
   // The sheet is a modal over the window: close it when another screen covers this one.
   useFocusEffect(useCallback(() => () => setDoneOpen(false), []));
+
+  // "Which name is yours?": up each time Group comes into view (a fresh sheet each time), down on blur and on close.
+  // Whether it shows at all is `offersNamePick` below.
+  const pick = useSheetOnEachView();
+
+  // This device's own seat is in the log but not on the row: give it back rather than ask. The lifecycle check does
+  // this after every sync and at app start; this covers a group opened before that has run.
+  const ownSeat =
+    state !== null && derived?.needsClaim === true ? deviceSeat(state, deviceId) : null;
+  useEffect(() => {
+    if (ownSeat === null) return;
+    groups.restoreSeat(localId).catch((error: unknown) => {
+      console.warn('restoring the seat failed', error instanceof Error ? error.message : error);
+    });
+  }, [ownSeat, groups, localId]);
 
   const card = state !== null && derived?.readOnly === null ? inviteLayout(state, myId) : 'none';
   const invite = useInvite(
@@ -204,8 +228,14 @@ export function GroupScreen({
 
   const readOnly = derived.readOnly !== null;
   const net = derived.myNet ?? 0;
-  const settledAll = derived.transfers.length === 0 && !derived.balancesUnavailable;
+  // Nothing to settle is not settled: "Everyone's settled" and the archive offer need an expense or a payment.
+  const settledAll = everyoneSettled(state, derived.transfers, derived.balancesUnavailable);
   const canWrite = !readOnly && !derived.needsClaim;
+  const offerPick = offersNamePick(state, {
+    needsClaim: derived.needsClaim,
+    writable: !readOnly,
+    deviceId,
+  });
   const bannerShown = lastBannerFlush(derived);
 
   const toggleDone = () => {
@@ -363,6 +393,15 @@ export function GroupScreen({
         summary={view.done}
         onDismiss={() => setDoneOpen(false)}
         onToggle={toggleDone}
+      />
+      {/* Closing only closes it (unlike the Join route's close, which leaves for Groups); nothing changes the group. */}
+      <PickNameStep
+        key={pick.round}
+        localId={localId}
+        visible={pick.open && offerPick}
+        fallbackName={null}
+        onClose={pick.close}
+        onClaimed={pick.close}
       />
     </Screen>
   );

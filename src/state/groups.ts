@@ -87,6 +87,7 @@ import { fromSealError, inviteProblemOf, StateError, type InviteProblem } from '
 import type { DerivedGroup, GroupStateStore } from './groupState';
 import { CONTROL_TYPES, isReadable, openType, parseEnvelopeText, typeOf } from './log';
 import { checkEmoji, normaliseName, type PrefsService } from './prefs';
+import { deviceSeat } from './seat';
 import { resolveSplit, sameSplit, type SplitSpec } from './split';
 
 // ---------- Public shapes ----------
@@ -1107,17 +1108,46 @@ export class GroupService {
   }
 
   /**
-   * Checks one group's lifecycle after it changed (a sync finished, a join, an import, app start): refreshes the
-   * name/currency cache, applies a closure, and recognises a rotation. Runs one at a time per group.
+   * Checks one group's lifecycle after it changed (a sync finished, a join, an import, app start): gives the row back
+   * its seat when the log says which one is this phone's (`restoreSeat`), refreshes the name/currency cache, applies
+   * a closure, and recognises a rotation. Runs one at a time per group.
    */
   processLifecycle(localId: string): Promise<void> {
     return this.withLock(`lifecycle|${localId}`, async () => {
       const derived = await this.groupState.get(localId);
       if (derived === null || derived.state === null) return;
+      await this.restoreSeat(localId, derived);
       await this.refreshNameCache(derived);
       await this.handleClosure(localId, derived);
       if (derived.state.rotatedFrom.length > 0) await this.recognizeRotation(localId, derived);
     });
+  }
+
+  /**
+   * A row with no seat (`my_member_id` null) whose log has exactly one member claimed by this device: sets
+   * `my_member_id` to it, silently. That is this phone's own seat, lost from the row by a keychain recovery after a
+   * reinstall (the device id outlives the uninstall; the row does not) or by leaving and joining again. No event is
+   * written: the member already lists this device, so a `member.claimed` would change nothing. The row is re-read
+   * in the transaction, so a name picked meanwhile wins. None, or more than one: nothing changes, and the phone asks
+   * "Which name is yours?". Returns whether the seat was restored. Runs on every `processLifecycle`; the Group screen
+   * also calls it when it finds such a seat before the lifecycle check has run.
+   */
+  async restoreSeat(localId: string, known?: DerivedGroup): Promise<boolean> {
+    const derived = known ?? (await this.groupState.get(localId));
+    if (derived === null || derived.state === null || derived.row.myMemberId !== null) return false;
+    const seat = deviceSeat(derived.state, this.deviceId);
+    if (seat === null) return false;
+    const restored = await this.store.transaction(async (tx) => {
+      const row = await tx.getGroup(localId);
+      if (row === null || row.myMemberId !== null) return false;
+      await tx.setMyMember(localId, seat);
+      return true;
+    });
+    if (restored) {
+      this.groupState.invalidate(localId);
+      this.groupState.groupsChanged();
+    }
+    return restored;
   }
 
   /**
