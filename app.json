@@ -8,6 +8,11 @@
     "scheme": "even",
     "userInterfaceStyle": "automatic",
     "ios": {
+      "icon": {
+        "light": "./assets/icon.png",
+        "dark": "./assets/icon-dark.png",
+        "tinted": "./assets/icon-tinted.png"
+      },
       "bundleIdentifier": "com.appalaya.even",
       "appleTeamId": "9S29T387N4",
       "supportsTablet": false,
@@ -61,6 +66,7 @@
           "resizeMode": "contain",
           "backgroundColor": "#F6F5F1",
           "dark": {
+            "image": "./assets/splash-icon-dark.png",
             "backgroundColor": "#0E100F"
           }
         }
