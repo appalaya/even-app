@@ -15,7 +15,6 @@ ios/DerivedData/
 ios/*.xcworkspace/xcuserdata
 **/xcuserdata/
 .xcode.env.local
-android/
 .kotlin/
 *.jks
 *.p8
@@ -23,6 +22,17 @@ android/
 *.key
 *.mobileprovision
 *.orig.*
+
+# Android: android/ is committed (made by prebuild, see RELEASE-android.md); its build output is not
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/.kotlin/
+android/app/release/
+*.keystore
+!android/app/debug.keystore
+even-upload-secrets.txt
 
 # Environment
 .env

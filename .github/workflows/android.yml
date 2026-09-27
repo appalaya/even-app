@@ -1,0 +1,181 @@
+# Android release: build a signed App Bundle on a GitHub-hosted Ubuntu runner and publish it to
+# Google Play. This workflow is the only place Android release builds are made and uploaded.
+# Secrets, one-time Play Console setup, tracks and version codes: RELEASE-android.md.
+#
+#   push to main              -> Play internal testing track
+#   push a tag beta/<name>    -> Play closed testing track "family-and-friends"
+#   workflow_dispatch         -> the same, by the ref it runs on; any other ref builds without uploading
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ['beta/*']
+    # Commits that cannot change the Android app do not make a new build. Path filters never
+    # apply to tag pushes, so every beta/* tag builds.
+    paths-ignore:
+      - 'web/**'
+      - 'docs/**'
+      - 'ios/**'
+      - 'fastlane/**'
+      - 'TestFlight/**'
+      - '**/*.md'
+      - '.github/workflows/ios.yml'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  # A Play upload is one edit committed at the end, so cancelling a run part-way publishes nothing.
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Play version code = github.run_number + this offset (RELEASE-android.md, "Version numbers").
+  # It may only ever be raised.
+  ANDROID_VERSION_CODE_OFFSET: 1000
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PLAY_TRACK: ${{ startsWith(github.ref, 'refs/tags/beta/') && 'family-and-friends' || 'internal' }}
+      PUBLISH: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/beta/') }}
+      BUNDLE: android/app/build/outputs/bundle/release/app-release.aab
+      MAPPING: android/app/build/outputs/mapping/release/mapping.txt
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The Android SDK is preinstalled on the runner (ANDROID_HOME, licences accepted). Gradle
+      # installs what the build pins and the image lacks, such as React Native's NDK version.
+      # Basic caching is the MIT-licensed provider over actions/cache: free, no extra terms.
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - run: npm ci
+
+      - name: Version code
+        # A re-run keeps its run number, so Play refuses a re-run of a run that already uploaded.
+        run: echo "EVEN_VERSION_CODE=$((GITHUB_RUN_NUMBER + ANDROID_VERSION_CODE_OFFSET))" >> "$GITHUB_ENV"
+
+      - name: Upload key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          missing=()
+          [ -n "$KEYSTORE_B64" ] || missing+=(ANDROID_UPLOAD_KEYSTORE_B64)
+          [ -n "$STORE_PASSWORD" ] || missing+=(ANDROID_UPLOAD_STORE_PASSWORD)
+          [ -n "$KEY_ALIAS" ] || missing+=(ANDROID_UPLOAD_KEY_ALIAS)
+          [ -n "$KEY_PASSWORD" ] || missing+=(ANDROID_UPLOAD_KEY_PASSWORD)
+          if [ "$PUBLISH" = true ] && [ -z "$PLAY_JSON" ]; then missing+=(PLAY_SERVICE_ACCOUNT_JSON); fi
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}. See RELEASE-android.md."
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/even-upload.keystore"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keystore"
+          # Fail now, not after the build, if the password or alias does not open the keystore.
+          if ! keytool -list -keystore "$keystore" -alias "$KEY_ALIAS" -storepass:env STORE_PASSWORD > /dev/null; then
+            echo "::error::The upload keystore does not open with ANDROID_UPLOAD_STORE_PASSWORD and ANDROID_UPLOAD_KEY_ALIAS."
+            exit 1
+          fi
+          echo "EVEN_UPLOAD_STORE_FILE=$keystore" >> "$GITHUB_ENV"
+
+      - name: Build the App Bundle
+        working-directory: android
+        env:
+          EVEN_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          EVEN_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          EVEN_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Check the bundle is signed with the upload key
+        # Catches android/app/build.gradle losing its release signing config, which a prebuild run
+        # without --no-clean does (RELEASE-android.md); Gradle would then sign with the debug key.
+        env:
+          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: |
+          expected=$(keytool -list -v -keystore "$EVEN_UPLOAD_STORE_FILE" -alias "$KEY_ALIAS" -storepass:env STORE_PASSWORD | awk '/SHA256:/ { print $2 }')
+          actual=$(keytool -printcert -jarfile "$BUNDLE" | awk '/SHA256:/ { print $2 }')
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::The bundle is not signed with the upload key. Check the Even release signing block in android/app/build.gradle (RELEASE-android.md)."
+            exit 1
+          fi
+
+      # R8 is on (android.enableMinifyInReleaseBuilds in android/gradle.properties), so the
+      # mapping file travels with the bundle for readable crash reports.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: even-android-${{ env.EVEN_VERSION_CODE }}
+          path: |
+            ${{ env.BUNDLE }}
+            ${{ env.MAPPING }}
+          if-no-files-found: error
+
+      - name: Release notes
+        # Play's "What's new" is the iOS "What to Test" text, cut to Play's 500-character limit.
+        run: |
+          mkdir -p distribution/whatsnew
+          node -e '
+            const fs = require("fs");
+            const source = "TestFlight/WhatToTest.en-US.txt";
+            let text = fs.existsSync(source) ? fs.readFileSync(source, "utf8").trim() : "";
+            if (!text) text = "Build " + process.env.EVEN_VERSION_CODE + ".";
+            const chars = [...text];
+            if (chars.length > 500) text = chars.slice(0, 499).join("") + "…";
+            fs.writeFileSync("distribution/whatsnew/whatsnew-en-US", text);
+          '
+
+      - name: Upload to Google Play (${{ env.PLAY_TRACK }})
+        if: env.PUBLISH == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.appalaya.even
+          releaseFiles: ${{ env.BUNDLE }}
+          track: ${{ env.PLAY_TRACK }}
+          # "draft" only while the app is a draft in Play: set the repository variable
+          # PLAY_RELEASE_STATUS=draft until the first release is rolled out (RELEASE-android.md).
+          status: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
+          whatsNewDirectory: distribution/whatsnew
+          mappingFile: ${{ env.MAPPING }}
+
+      - name: Summary
+        if: always()
+        env:
+          STATUS: ${{ vars.PLAY_RELEASE_STATUS || 'completed' }}
+        run: |
+          {
+            echo "### Android ${EVEN_VERSION_CODE:-?}"
+            echo ""
+            if [ "$PUBLISH" = true ]; then
+              echo "- Play track: \`$PLAY_TRACK\`, release status \`$STATUS\`"
+            else
+              echo "- Not uploaded: \`$GITHUB_REF\` is neither main nor a beta/* tag"
+            fi
+            echo "- Bundle and mapping file: the \`even-android-${EVEN_VERSION_CODE:-?}\` artifact of this run"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -90,13 +90,17 @@ web/                  — landing page (even.appalaya.com, Cloudflare Pages): as
 
 ## Releases
 
-iOS builds are made only by GitHub Actions (`.github/workflows/ios.yml`):
-every merge to main becomes a TestFlight build for the internal group Alpha,
-and pushing a tag `beta/<version>-<build>` gives that same build to the
-external group Family & Friends. Each change adds to `CHANGELOG.md` and
-`TestFlight/WhatToTest.en-US.txt` in App Store voice. `RELEASE.md` covers the
-secrets, the one-time App Store Connect setup, build numbers, and the
-prebuild rule; `ci.yml` checks every pull request.
+Store builds are made only by GitHub Actions; nothing is built or uploaded
+from a local machine. On iOS (`.github/workflows/ios.yml`) every merge to main
+becomes a TestFlight build for the internal group Alpha, and pushing a tag
+`beta/<version>-<build>` gives that same build to the external group Family &
+Friends. On Android (`.github/workflows/android.yml`) every merge to main goes
+to Play's internal testing track, and the same `beta/*` tag builds a bundle for
+the closed track `family-and-friends`. Each change adds to `CHANGELOG.md` and
+`TestFlight/WhatToTest.en-US.txt` in App Store voice; Play's "What's new" is
+the same text. `RELEASE.md` and `RELEASE-android.md` cover the secrets, the
+one-time console setup, build numbers, and the prebuild rule; `ci.yml` checks
+every pull request.
 
 ## License
 

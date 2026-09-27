@@ -272,8 +272,8 @@ with locally. To move:
    path on the image (`/Applications/Xcode_27.1.app`, say).
 3. When GitHub publishes a generally available macOS 27 label (or points
    `macos-latest` at macOS 27), switch `runs-on` in both jobs to it and update
-   this section. `actionlint` does not know the `xcode-27` label yet and
-   reports it as unknown; that warning is expected.
+   this section, and remove the label from `.github/actionlint.yaml`, which
+   tells `actionlint` about it until it is in the label list actionlint ships.
 
 Uploads use fastlane (`fastlane/Fastfile`), which the image already has. It
 sends the build with `xcrun altool --upload-app` (still in Xcode 27), sets the
