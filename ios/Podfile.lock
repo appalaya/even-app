@@ -110,6 +110,8 @@ PODS:
     - ExpoModulesCore
   - ExpoSQLite (58.0.6):
     - ExpoModulesCore
+  - ExpoSystemUI (58.0.2):
+    - ExpoModulesCore
   - ExpoTaskManager (58.0.8):
     - ExpoModulesCore
     - UMAppLoader
@@ -2278,6 +2280,7 @@ DEPENDENCIES:
   - ExpoSharing (from `../node_modules/expo-sharing/ios`)
   - ExpoSplashScreen (from `../node_modules/expo-splash-screen/ios`)
   - ExpoSQLite (from `../node_modules/expo-sqlite/ios`)
+  - ExpoSystemUI (from `../node_modules/expo-system-ui/ios`)
   - ExpoTaskManager (from `../node_modules/expo-task-manager/ios`)
   - fast_float (from `build/rndeps-facades/fast_float`)
   - FBLazyVector (from `build/rncore-facades/FBLazyVector`)
@@ -2430,6 +2433,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-splash-screen/ios"
   ExpoSQLite:
     :path: "../node_modules/expo-sqlite/ios"
+  ExpoSystemUI:
+    :path: "../node_modules/expo-system-ui/ios"
   ExpoTaskManager:
     :path: "../node_modules/expo-task-manager/ios"
   fast_float:
@@ -2647,6 +2652,7 @@ SPEC CHECKSUMS:
   ExpoSharing: e2c03bb9a4b93f8c05f92d9a29550ddee8d87659
   ExpoSplashScreen: ffaf80c17808dfeaaa7cfed540b9baaeed774bc5
   ExpoSQLite: de1231d66297cbc39dbb9ef029efd5c56c3978b5
+  ExpoSystemUI: 1d3aacad80f2c2155bd042b7658fb8e7d539776a
   ExpoTaskManager: 53a6c999b103b7d8eacb0b65e614ac16e17d40f6
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: c70429ca8ce61cad7c477bdbe6ba8b30996bff6f

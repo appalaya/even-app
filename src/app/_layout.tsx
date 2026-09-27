@@ -3,6 +3,7 @@ import '@/polyfills';
 
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as SystemUI from 'expo-system-ui';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -68,8 +69,20 @@ const SHEET_ROUTE = {
   contentStyle: { backgroundColor: 'transparent' },
 } as const;
 
+/**
+ * The native root view under everything React draws has a single fixed colour, the light launch background from the
+ * splash plugin. A gesture that moves the whole stack (the interactive pop on iOS) uncovers it, so in dark mode a
+ * light strip showed. This keeps it in step with the theme, on both platforms.
+ */
+function useNativeBackground(color: string) {
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(color);
+  }, [color]);
+}
+
 function RootStack() {
   const { tokens, scheme } = useTheme();
+  useNativeBackground(tokens.background);
   return (
     <>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
@@ -103,6 +116,7 @@ function StartupError({ error }: { error: Error }) {
 
 function Blank() {
   const { tokens } = useTheme();
+  useNativeBackground(tokens.background);
   return <View style={[styles.root, { backgroundColor: tokens.background }]} />;
 }
 
