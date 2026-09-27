@@ -224,6 +224,22 @@ const ICONS = {
       path('M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2'),
     ],
   },
+  /** "Show QR code": the invite's round button (Group settings) and the share menu (GroupShareMenu) · 20. */
+  qr: {
+    stroke: 2,
+    join: 'round',
+    shapes: [
+      rect(3.5, 3.5, 6.5, 6.5, 1.5),
+      rect(14, 3.5, 6.5, 6.5, 1.5),
+      rect(3.5, 14, 6.5, 6.5, 1.5),
+      path('M14 14h3v3'),
+      path('M20.5 14v.01'),
+      path('M14 20.5h.01'),
+      path('M17.5 20.5h3v-3'),
+    ],
+  },
+  /** "Report this group" (Group settings) · 20. */
+  flag: { stroke: 2, join: 'round', shapes: [path('M5 21V4'), path('M5 4h11l-2 4 2 4H5')] },
 } as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof ICONS;
