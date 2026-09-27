@@ -902,7 +902,9 @@ checksum, and canonicalises the server URL.
   group with an invite card at the top ("Share link", "Copy code", the
   one-sentence warning); the buttons are disabled with "Preparing your
   invite…" until the first push is acknowledged, and the card collapses into
-  the settings gear once another member has joined. The create flow writes,
+  the settings gear once another member has joined. If the creator adds
+  expenses before anyone joins, the card is pinned above the normal header
+  and settle list rather than replacing them (board GroupNewWithExpenses). The create flow writes,
   in this order, the creator's `member.added` (with `by` = their new member
   id), their `member.claimed`, then `group.created`, each with its `ts` from
   `nextTs`, so the log reads "Maya joined", "Maya created the group" in order
