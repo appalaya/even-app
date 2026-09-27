@@ -34,6 +34,9 @@ android/app/release/
 !android/app/debug.keystore
 even-upload-secrets.txt
 
+# Wrangler's local state, from previewing web/ (web/README.md)
+.wrangler/
+
 # Environment
 .env
 .env.local

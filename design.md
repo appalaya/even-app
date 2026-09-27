@@ -912,7 +912,8 @@ checksum, and canonicalises the server URL.
 
 ## Landing page (`web/`)
 
-Static, deployed to Cloudflare Pages at `even.appalaya.com`.
+Static, deployed to Cloudflare as a Worker with static assets (no Worker script) at
+`even.appalaya.com`, by `.github/workflows/web.yml`; `web/README.md` has the details.
 
 - `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`
   for universal links and App Links, covering paths `/i` and `/i/`. A

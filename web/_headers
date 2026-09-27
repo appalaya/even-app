@@ -1,4 +1,5 @@
-# Cloudflare Pages response headers for even.appalaya.com. See README.md.
+# Response headers for even.appalaya.com, applied by Cloudflare's static asset server (same _headers format as
+# Cloudflare Pages). See README.md.
 #
 # Rules apply in file order and a request collects the headers of every rule it matches; a "! Name" line removes a
 # header set by an earlier rule. So /* comes first, and the /i rules replace its CSP instead of adding a second one

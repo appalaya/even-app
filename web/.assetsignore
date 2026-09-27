@@ -1,0 +1,7 @@
+# Files in web/ that are not part of the site and are never uploaded (same syntax as .gitignore).
+# Wrangler also never uploads _headers, _redirects or this file.
+/wrangler.jsonc
+/README.md
+/scripts/
+/.wrangler/
+.DS_Store

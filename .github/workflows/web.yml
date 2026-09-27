@@ -1,0 +1,76 @@
+# Landing site: deploy web/ to Cloudflare as a Worker with static assets (free plan), served at
+# https://even.appalaya.com. This workflow is the only place the site is deployed from.
+# Secrets, the one-time Custom Domain step and what to check after the first deploy: web/README.md, "Deploying".
+#
+#   push to main that touches web/** or this file -> check the site, then deploy
+#   workflow_dispatch on main                       -> the same
+#   workflow_dispatch on any other ref              -> check the site and a dry run; nothing is deployed
+#
+# There is no pull_request trigger: fork pull requests get no secrets, and ci.yml already runs the site check on
+# every pull request.
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  # A newer push waits for the running deploy instead of stopping it part-way.
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Run with npx, so nothing is installed into the repository. The newest 4.x on each run.
+  WRANGLER: wrangler@4
+  WRANGLER_SEND_METRICS: 'false'
+  SITE_URL: https://even.appalaya.com
+
+# Both wrangler commands pass --no-bundle: web/wrangler.jsonc has no Worker script ("main"), so there is nothing to
+# build, and bundling Wrangler's built-in placeholder would make esbuild read the app's tsconfig.json and warn that
+# its Expo base is not installed in this job.
+jobs:
+  deploy:
+    name: Check and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check the site
+        run: node web/scripts/check.mjs
+
+      - name: Dry run (only main deploys)
+        if: github.ref != 'refs/heads/main'
+        run: |
+          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc --no-bundle --dry-run
+          echo "Dry run of ${GITHUB_SHA::7} from $GITHUB_REF_NAME; only main deploys to $SITE_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy
+        if: github.ref == 'refs/heads/main'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::The CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets are not set (web/README.md, Deploying)."
+            exit 1
+          fi
+          npx --yes "$WRANGLER" deploy --config web/wrangler.jsonc --no-bundle --message "Commit $GITHUB_SHA"
+          echo "Deployed ${GITHUB_SHA::7} to $SITE_URL" >> "$GITHUB_STEP_SUMMARY"

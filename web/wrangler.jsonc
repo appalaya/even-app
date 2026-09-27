@@ -1,0 +1,20 @@
+// The landing site as a Cloudflare Worker with static assets and no Worker script: Cloudflare's asset server
+// answers every request, applying _headers, so every request is a free static-asset request.
+// Deployed only by .github/workflows/web.yml. See README.md, "Deploying".
+{
+  "name": "even-web",
+  "compatibility_date": "2026-09-27",
+  "assets": {
+    // This folder. .assetsignore keeps the tooling (this file, README.md, scripts/) out of the upload.
+    "directory": ".",
+    // i.html answers /i with 200; /i/ and /i.html redirect to /i.
+    "html_handling": "auto-trailing-slash",
+    // Any path without a file gets 404.html with status 404.
+    "not_found_handling": "404-page"
+  },
+  // The one public hostname is the Custom Domain even.appalaya.com, attached once in the dashboard. There are no
+  // routes here, so a deploy never adds or removes a domain, a route or a DNS record, and no workers.dev or
+  // Preview URL serves a second copy of the site.
+  "workers_dev": false,
+  "preview_urls": false
+}

@@ -34,7 +34,7 @@ the group's secret, which lives only in the invite and in each member's
 keychain; decrypted content stays in memory. A sync server stores and
 hands back encrypted events in arrival order and knows nothing else. If the
 server copy disappears, the next member to sync rebuilds it. See `design.md` for the details and
-[`even-server/PROTOCOL.md`](../even-server/PROTOCOL.md) for the contract.
+[`even-server/PROTOCOL.md`](https://github.com/appalaya/even-server/blob/main/PROTOCOL.md) for the contract.
 
 ## Tech Stack
 
@@ -79,7 +79,7 @@ assets/               — icon and splash (placeholders until the brand mark lan
 scope.md              — what's in and out for v1
 design.md             — architecture, data model, event schema, sync, screens
 working-principles.md — how we work
-web/                  — landing page (even.appalaya.com, Cloudflare Pages): association files, invite page, privacy, terms, abuse; see web/README.md
+web/                  — landing page (even.appalaya.com, a Cloudflare Worker with static assets): association files, invite page, privacy, terms, abuse; see web/README.md
 ```
 
 ## Store listing
@@ -101,6 +101,12 @@ the closed track `family-and-friends`. Each change adds to `CHANGELOG.md` and
 the same text. `RELEASE.md` and `RELEASE-android.md` cover the secrets, the
 one-time console setup, build numbers, and the prebuild rule; `ci.yml` checks
 every pull request.
+
+The landing site deploys the same way. `.github/workflows/web.yml` checks
+`web/` and deploys it to Cloudflare, as a Worker with static assets on the
+free plan, on every push to main that changes it; nothing is deployed from a
+local machine. `web/README.md` ("Deploying") covers the two secrets, the token
+permissions, and the one-time step that puts the site on `even.appalaya.com`.
 
 ## License
 
