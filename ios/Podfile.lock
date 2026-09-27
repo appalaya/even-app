@@ -39,6 +39,12 @@ PODS:
   - ExpoBackgroundTask (58.0.7):
     - ExpoModulesCore
     - ExpoTaskManager
+  - ExpoBrightness (58.0.0):
+    - ExpoModulesCore
+  - ExpoCamera (58.0.3):
+    - ExpoModulesCore
+  - ExpoCameraBarcodeScanning (58.0.3):
+    - ExpoCamera
   - ExpoClipboard (58.0.1):
     - ExpoModulesCore
   - ExpoCrypto (58.0.2):
@@ -115,6 +121,8 @@ PODS:
   - ExpoTaskManager (58.0.8):
     - ExpoModulesCore
     - UMAppLoader
+  - ExpoWebBrowser (58.0.2):
+    - ExpoModulesCore
   - fast_float (8.0.0):
     - ReactNativeDependencies
   - FBLazyVector (0.88.0-rc.1):
@@ -2259,6 +2267,9 @@ DEPENDENCIES:
   - ExpoApplication (from `../node_modules/expo-application/ios`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoBackgroundTask (from `../node_modules/expo-background-task/ios`)
+  - ExpoBrightness (from `../node_modules/expo-brightness/ios`)
+  - ExpoCamera (from `../node_modules/expo-camera/ios/ExpoCamera.podspec`)
+  - ExpoCameraBarcodeScanning (from `../node_modules/expo-camera/ios/ExpoCameraBarcodeScanning.podspec`)
   - ExpoClipboard (from `../node_modules/expo-clipboard/ios`)
   - ExpoCrypto (from `../node_modules/expo-crypto/ios`)
   - ExpoDocumentPicker (from `../node_modules/expo-document-picker/ios`)
@@ -2282,6 +2293,7 @@ DEPENDENCIES:
   - ExpoSQLite (from `../node_modules/expo-sqlite/ios`)
   - ExpoSystemUI (from `../node_modules/expo-system-ui/ios`)
   - ExpoTaskManager (from `../node_modules/expo-task-manager/ios`)
+  - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
   - fast_float (from `build/rndeps-facades/fast_float`)
   - FBLazyVector (from `build/rncore-facades/FBLazyVector`)
   - fmt (from `build/rndeps-facades/fmt`)
@@ -2391,6 +2403,12 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-asset/ios"
   ExpoBackgroundTask:
     :path: "../node_modules/expo-background-task/ios"
+  ExpoBrightness:
+    :path: "../node_modules/expo-brightness/ios"
+  ExpoCamera:
+    :podspec: "../node_modules/expo-camera/ios/ExpoCamera.podspec"
+  ExpoCameraBarcodeScanning:
+    :podspec: "../node_modules/expo-camera/ios/ExpoCameraBarcodeScanning.podspec"
   ExpoClipboard:
     :path: "../node_modules/expo-clipboard/ios"
   ExpoCrypto:
@@ -2437,6 +2455,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-system-ui/ios"
   ExpoTaskManager:
     :path: "../node_modules/expo-task-manager/ios"
+  ExpoWebBrowser:
+    :path: "../node_modules/expo-web-browser/ios"
   fast_float:
     :path: build/rndeps-facades/fast_float
   FBLazyVector:
@@ -2631,6 +2651,9 @@ SPEC CHECKSUMS:
   ExpoApplication: d2634e14dd0f9ab9b3bfae4426182f411e067b38
   ExpoAsset: 6c4756962439195cae25e63d3ff5d2f4c8b4329f
   ExpoBackgroundTask: d69c5c88d3a58d9c4d033eda1e0750432e3b400c
+  ExpoBrightness: f59bcef8e66043a463c154f4944356aaecec9284
+  ExpoCamera: 8eb6015301b421b6ae1fb21bc5a3c42d11c371c9
+  ExpoCameraBarcodeScanning: 27ac703de6ffdfbcfe3b8738df1cd5d10ba91e1f
   ExpoClipboard: 023a2feb330190bffc38e3c537ea2acf3f6ada6d
   ExpoCrypto: 985714101640b8324d7514a86b069743c9c17c89
   ExpoDocumentPicker: 7fdf312bcefe797326445b32a29321267eed87d8
@@ -2654,6 +2677,7 @@ SPEC CHECKSUMS:
   ExpoSQLite: de1231d66297cbc39dbb9ef029efd5c56c3978b5
   ExpoSystemUI: 1d3aacad80f2c2155bd042b7658fb8e7d539776a
   ExpoTaskManager: 53a6c999b103b7d8eacb0b65e614ac16e17d40f6
+  ExpoWebBrowser: cabd0ae603ba8b7f9a08dfcebf3473a8786d9901
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: c70429ca8ce61cad7c477bdbe6ba8b30996bff6f
   fmt: ba0886e864ebb21d14c98b2e12e164b8002f5b93
