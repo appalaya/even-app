@@ -25,6 +25,7 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.appalaya\.even$/,
   /^https:\/\/github\.com\/appalaya\/even-server$/,
   /^mailto:abuse@appalaya\.com$/,
+  /^mailto:support@appalaya\.com$/,
 ];
 
 /** Attributes that take a URL. */
