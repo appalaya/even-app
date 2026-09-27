@@ -21,6 +21,9 @@ describe('group card', () => {
     expect(netLabel(-5200, 'CAD')).toEqual({ kind: 'owe', caption: 'you owe', amount: 5200 });
     expect(netLabel(4400, 'CAD')).toEqual({ kind: 'owed', caption: "you're owed", amount: 4400 });
     expect(netLabel(0, 'CAD')).toEqual({ kind: 'settled', caption: 'settled' });
+    // A just-created group: zero net, but nothing to settle yet, so no label at all.
+    expect(netLabel(0, 'CAD', false)).toBeNull();
+    expect(netLabel(0, 'CAD', true)).toEqual({ kind: 'settled', caption: 'settled' });
     expect(netLabel(null, 'CAD')).toBeNull();
     expect(netLabel(100, null)).toBeNull();
   });

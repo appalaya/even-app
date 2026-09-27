@@ -66,7 +66,13 @@ export function ArchivedSection({
                     {name}
                   </AppText>
                   <AppText variant="footnote" color="textMuted" numberOfLines={1}>
-                    {archivedLabel(row.memberCount, row.myNet, row.currency) ?? ''}
+                    {archivedLabel(
+                      row.memberCount,
+                      row.myNet,
+                      row.currency,
+                      undefined,
+                      row.hasActivity,
+                    ) ?? ''}
                   </AppText>
                 </Pressable>
                 <Button

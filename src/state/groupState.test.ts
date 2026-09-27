@@ -109,6 +109,8 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
     await settle();
     expect(b.services.groupState.peek(localId).derived?.state?.expenses.size).toBe(0);
     expect(b.services.groupState.peekList().rows.map((r) => r.myNet)).toEqual([0]);
+    // Nothing to settle yet: the card must not say "settled".
+    expect(b.services.groupState.peekList().rows.map((r) => r.hasActivity)).toEqual([false]);
 
     await a.services.groups.addExpense(localId, dinner(maya, [maya, nathan]));
     expectSynced(await sync(a, localId));
@@ -131,6 +133,7 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
       name: 'Banff 2026',
       currency: 'CAD',
       myNet: -4_500,
+      hasActivity: true,
       // Everything a Groups card shows rides on the row: two people, nothing unsent on B.
       memberCount: 2,
       outbox: 0,
@@ -387,6 +390,7 @@ describe('sortGroupRows', () => {
     myNet: 0,
     memberCount: 2,
     outbox: 0,
+    hasActivity: true,
     balancesUnavailable: false,
     lifecycle: 'active',
     archived,

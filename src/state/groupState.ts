@@ -146,6 +146,8 @@ export interface GroupListRow {
   memberCount: number | null;
   /** This phone's events no server has acknowledged yet (the card's "waiting to sync"). */
   outbox: number;
+  /** At least one live expense or payment: only then does a zero net mean "settled" on the card. */
+  hasActivity: boolean;
   balancesUnavailable: boolean;
   lifecycle: GroupLifecycle;
   /** `group.archived`: sits in the collapsed Archived section. */
@@ -650,6 +652,9 @@ export class GroupStateStore {
         myNet: derived.myNet,
         memberCount,
         outbox: derived.counts.outbox,
+        hasActivity:
+          derived.state !== null &&
+          (derived.state.expenses.size > 0 || derived.state.payments.size > 0),
         balancesUnavailable: derived.balancesUnavailable,
         lifecycle: derived.row.state,
         archived: derived.state?.archived ?? false,

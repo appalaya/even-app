@@ -1,7 +1,8 @@
 /**
  * One group on Groups (Main board): a 76 pt `surface` card, radius 18, padding 14 18; the name 17/22 semibold with
  * the 7 pt sync dot 8 after it, "4 people" 14/19 `textSecondary` 3 below; at the trailing edge "you owe" 13/18
- * `textSecondary` over the amount 17/22 semibold tabular (1 apart), or "settled" 15/20 `textMuted`.
+ * `textSecondary` over the amount 17/22 semibold tabular (1 apart), or "settled" 15/20 `textMuted`. A group with no
+ * expense or payment yet shows no net: there is nothing to settle (design.md, "Groups").
  *
  * Everything it shows comes from the list row (`useGroups()`), so the list renders from one subscription.
  */
@@ -25,7 +26,9 @@ export function GroupCard({ row, onPress }: { row: GroupListRow; onPress: () => 
   const people = peopleLabel(row.memberCount, waiting);
   const currency = row.currency;
   const net =
-    currency === null ? null : netLabel(row.balancesUnavailable ? null : row.myNet, currency);
+    currency === null
+      ? null
+      : netLabel(row.balancesUnavailable ? null : row.myNet, currency, row.hasActivity);
   const name = cardName(row);
 
   const spoken = [

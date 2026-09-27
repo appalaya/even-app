@@ -21,9 +21,10 @@ export function archivedLabel(
   myNet: number | null,
   currency: string | null,
   locale?: string,
+  hasActivity: boolean = true,
 ): string | null {
   const people = peopleLabel(count, false);
-  const net = netLabel(myNet, currency);
+  const net = netLabel(myNet, currency, hasActivity);
   if (net === null || currency === null) return people;
   const words =
     net.kind === 'settled'
@@ -37,9 +38,17 @@ export type NetLabel =
   | { kind: 'settled'; caption: 'settled' }
   | null;
 
-/** The trailing column: nothing while the net is unknown. `amount` is the magnitude in minor units. */
-export function netLabel(myNet: number | null, currency: string | null): NetLabel {
-  if (myNet === null || currency === null) return null;
+/**
+ * The trailing column: nothing while the net is unknown, and nothing while the group has no expense or payment yet
+ * (a just-created group has nothing to settle; the list board draws no net for it). `amount` is the magnitude in
+ * minor units.
+ */
+export function netLabel(
+  myNet: number | null,
+  currency: string | null,
+  hasActivity: boolean = true,
+): NetLabel {
+  if (myNet === null || currency === null || !hasActivity) return null;
   if (myNet === 0) return { kind: 'settled', caption: 'settled' };
   return myNet < 0
     ? { kind: 'owe', caption: 'you owe', amount: -myNet }

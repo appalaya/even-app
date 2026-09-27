@@ -980,7 +980,9 @@ Deviating from the canvas in implementation is a no-go.
   Built with Reanimated, no Lottie dependency. Because the circles use avatar
   tokens they follow themes with no change.
 - **Groups**: cards with name, your net ("you're owed 44.00" / "you owe 12.00"
-  / "settled"), sync dot. Create, Join with code, and Import group file live
+  / "settled"), sync dot. A group with no expense or payment yet shows no net
+  at all: nothing is settled when nothing has happened (the list board does
+  not draw this state; the just-created Group board says "No expenses yet"). Create, Join with code, and Import group file live
   here. Empty state: the mark and its circles, Create and Join, and the
   tagline; no explanatory sentence (as drawn). Archived groups sit in a
   collapsed Archived section at the bottom; opened, they are greyed outline
