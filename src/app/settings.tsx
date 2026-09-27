@@ -1,7 +1,8 @@
 /**
  * App settings (AppSettings, AppSettingsDark), pushed from the gear on Groups: "‹ Groups", the large title
  * "Settings", then You (avatar and Name), Appearance (System · Light · Dark), Notifications with its sentence,
- * Groups → Import group file, and About (Privacy, Terms, Source code, Version). No background-sync switch exists.
+ * Groups → Import group file, Help → Help and feedback (the contact page in the in-app browser, with nothing about
+ * any group), and About (Privacy, Terms, Source code, Version). No background-sync switch exists.
  *
  * Spacing as drawn: section headers 16 above and 6 below, inset 20; the Appearance and Notifications cards 20 below
  * what precedes them; footnotes 6 under their card; every card inset 16, radius 16.
@@ -24,6 +25,7 @@ import { ImportRefusedSheet } from '@/features/groups/ImportRefusedSheet';
 import { hrefs } from '@/features/groups/routes';
 import { useImportGroupFile } from '@/features/groups/useImportGroupFile';
 import { LINKS, versionLabel } from '@/features/settings/about';
+import { useInAppBrowser } from '@/features/report/inAppBrowser';
 import { NotificationsRow } from '@/features/settings/NotificationsRow';
 import { YouCard } from '@/features/settings/YouCard';
 import { usePrefs, type Appearance } from '@/state';
@@ -44,12 +46,21 @@ export default function SettingsScreen() {
   const { tokens } = useTheme();
   const { prefs, setAppearance } = usePrefs();
   const { importGroupFile, busy, refused, openAnyway, dismissRefused } = useImportGroupFile();
-  const { picker } = useLocalSearchParams<{ picker?: string }>();
+  const openPage = useInAppBrowser();
+  // Development builds only (the dev seed's screenshots): `y` scrolls the content by that many points.
+  const { picker, y } = useLocalSearchParams<{ picker?: string; y?: string }>();
+  const scrollY = __DEV__ && y !== undefined && Number.isFinite(Number(y)) ? Number(y) : undefined;
 
   const back = () => (router.canGoBack() ? router.back() : router.replace(hrefs.groups));
 
   return (
-    <Screen back={{ label: 'Groups', onPress: back }} largeTitle="Settings">
+    <Screen
+      back={{ label: 'Groups', onPress: back }}
+      largeTitle="Settings"
+      contentContainerStyle={
+        scrollY === undefined ? undefined : { transform: [{ translateY: -scrollY }] }
+      }
+    >
       <SectionHeader variant="settings" spacingTop={16}>
         You
       </SectionHeader>
@@ -89,6 +100,20 @@ export default function SettingsScreen() {
         />
       </Card>
       <Footnote>Restores a group from a .even file, even one this phone has never had.</Footnote>
+
+      <SectionHeader variant="settings" spacingTop={16}>
+        Help
+      </SectionHeader>
+      <Card radius="group" style={styles.section}>
+        <ListRow
+          title="Help and feedback"
+          chevron
+          minHeight={48}
+          onPress={() => void openPage(LINKS.contact)}
+          accessibilityLabel="Help and feedback"
+        />
+      </Card>
+      <Footnote>Opens our contact page. Nothing about your groups is sent.</Footnote>
 
       <SectionHeader variant="settings" spacingTop={16}>
         About

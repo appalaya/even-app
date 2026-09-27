@@ -6,6 +6,8 @@ export const LINKS = {
   terms: 'https://even.appalaya.com/terms',
   /** The docs name no source repository yet; the landing page stands in. */
   source: 'https://even.appalaya.com',
+  /** Help and feedback, and "Report this group" (with the group in its fragment: features/report/contact.ts). */
+  contact: 'https://even.appalaya.com/contact',
 } as const;
 
 /** "1.0.0" and "1" → "1.0 (1)": a zero patch is dropped, as the board writes it. */

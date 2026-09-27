@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, Icon, ProgressRing } from '@/components';
 import { layout, radii, useTheme } from '@/theme';
@@ -12,15 +12,17 @@ export interface InviteCardProps {
   ready: boolean;
   onCopyCode: () => void;
   onShareLink: () => void;
+  /** "Show QR code": the invite as a code another phone's camera reads (InviteQR). */
+  onShowQr: () => void;
 }
 
 /**
  * Group settings → Invite (GroupSettings board): the link in a mono box, the one-sentence warning after a key, and
- * "Copy code" (soft) beside "Share link" (primary), 44 tall. Until the invite may be shared (Group settings, extra
- * states: "Invite still preparing") the link box is a 44 pt `fill` row with the progress ring and "Preparing your
- * invite…", and both buttons are disabled.
+ * "Copy code" (soft) beside "Share link" (primary), 44 tall, then the round 44 pt "Show QR code" button (soft, the QR
+ * glyph). Until the invite may be shared (Group settings, extra states: "Invite still preparing") the link box is a
+ * 44 pt `fill` row with the progress ring and "Preparing your invite…", and all three buttons are disabled.
  */
-export function InviteCard({ link, ready, onCopyCode, onShareLink }: InviteCardProps) {
+export function InviteCard({ link, ready, onCopyCode, onShareLink, onShowQr }: InviteCardProps) {
   const { tokens } = useTheme();
   const enabled = ready && link !== null;
   return (
@@ -74,8 +76,33 @@ export function InviteCard({ link, ready, onCopyCode, onShareLink }: InviteCardP
           onPress={onShareLink}
           style={styles.flex}
         />
+        <QrButton disabled={!enabled} onPress={onShowQr} />
       </View>
     </Card>
+  );
+}
+
+/**
+ * 44 × 44, fully round: the QR glyph (20) in the accent on the soft accent; `disabledFill` and `onDisabledFill`
+ * while the invite is preparing, as the other two buttons are.
+ */
+function QrButton({ disabled, onPress }: { disabled: boolean; onPress: () => void }) {
+  const { tokens } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Show QR code"
+      accessibilityState={{ disabled }}
+      style={({ pressed }) => [
+        styles.qr,
+        { backgroundColor: disabled ? tokens.disabledFill : tokens.accentSoft },
+        pressed && styles.pressed,
+      ]}
+    >
+      <Icon name="qr" size={20} color={disabled ? tokens.onDisabledFill : tokens.accent} />
+    </Pressable>
   );
 }
 
@@ -94,4 +121,14 @@ const styles = StyleSheet.create({
   warningIcon: { paddingTop: 2 },
   buttons: { flexDirection: 'row', gap: layout.stackGap },
   flex: { flex: 1 },
+  qr: {
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    borderRadius: radii.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /** The kit's soft buttons keep a 0.7 opacity while pressed (Button). */
+  pressed: { opacity: 0.7 },
 });

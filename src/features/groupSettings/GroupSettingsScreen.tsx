@@ -1,13 +1,14 @@
 /**
- * Group settings (GroupSettings, GroupSettingsStates, RegenerateInvite and States boards; design.md "Screens" → Group
- * settings, "Identity model", "Rotation, moving, closing", "Sync engine" → usage meter, "Group file", "Key patterns"
- * → CSV).
+ * Group settings (GroupSettings, GroupSettingsStates, RegenerateInvite, ReportGroup, ReportGroupOther and States
+ * boards; design.md "Screens" → Group settings, "Identity model", "Rotation, moving, closing", "Sync engine" → usage
+ * meter, "Group file", "Key patterns" → CSV).
  *
- * Name (→ Rename group), Invite, Members (with the edit rules; Add member), Server (host, operator, limits,
- * retention, usage with its 80 % warning, Move server with Check, and the old copy's delete after a move), Export
- * (CSV, group file), Access (regenerate the invite), Archive group, Leave group (unsent entries, the server-copy
- * checkbox). Everything reads from the state hooks and acts through GroupService. A member's rename uses the Rename
- * sheet's layout; the old copy's delete is confirmed by a system alert (no board draws it).
+ * Name (→ Rename group), Invite (with Show QR code), Members (with the edit rules; Add member), Server (host,
+ * operator, limits, retention, usage with its 80 % warning, Move server with Check, and the old copy's delete after a
+ * move), Export (CSV, group file), Access (regenerate the invite), Archive group, Leave group (unsent entries, the
+ * server-copy checkbox), Report this group. Everything reads from the state hooks and acts through GroupService. A
+ * member's rename uses the Rename sheet's layout; the old copy's delete is confirmed by a system alert (no board
+ * draws it).
  */
 import type { MemberState } from '@even/core';
 import { router } from 'expo-router';
@@ -19,8 +20,10 @@ import { LIMITS } from '@even/core';
 
 import { AppText, Card, Footnote, Icon, ListRow, Screen, SectionHeader } from '@/components';
 import { layout, radii, useTheme } from '@/theme';
-import { useApp, useGroup } from '../../state';
+import { useApp, useGroup, type ReportInfo } from '../../state';
 import { EmojiPickerSheet } from '../emoji/EmojiPickerSheet';
+import { InviteQrSheet } from '../invite/InviteQrSheet';
+import { ReportGroupSheet } from '../report/ReportGroupSheet';
 
 import { AddMemberSheet } from './AddMemberSheet';
 import { InviteCard } from './InviteCard';
@@ -39,7 +42,16 @@ import { useInvite, useServerReport } from './useSettingsData';
 export interface GroupSettingsDev {
   /** Content offset in points, as if scrolled. */
   scrollY?: number;
-  open?: 'regenerate' | 'rename' | 'rename-group' | 'add' | 'move' | 'leave' | 'avatar';
+  open?:
+    | 'regenerate'
+    | 'rename'
+    | 'rename-group'
+    | 'add'
+    | 'move'
+    | 'leave'
+    | 'avatar'
+    | 'qr'
+    | 'report';
   /** Show the old copy's delete, as after a move from this server (`https://…`). */
   movedFrom?: string;
   /** The member a sheet is about (by name): Rename, Avatar, or the one to remove when regenerating. */
@@ -78,6 +90,10 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
   const [promptBusy, setPromptBusy] = useState(false);
   const [leaveFor, setLeaveFor] = useState<{ unsent: number } | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  // Read when "Report this group" is tapped; stays set while the sheet slides away.
+  const [reported, setReported] = useState<ReportInfo | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const name = derived?.name ?? '';
   const state = derived?.state ?? null;
@@ -283,6 +299,19 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
     setLeaveFor({ unsent: await groups.unsentCount(localId).catch(() => 0) });
   };
 
+  // ----- report -----
+
+  /** The group's id on its server, read first: the sheet shows it and the contact page is given it. */
+  const openReport = () => {
+    groups.reportInfo(localId).then(
+      (value) => {
+        setReported(value);
+        setReportOpen(true);
+      },
+      (e) => fail(e),
+    );
+  };
+
   // ----- development: open a sheet or scroll for a screenshot -----
 
   const devDone = useRef(false);
@@ -312,6 +341,13 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
         setAddOpen(true);
       } else if (open === 'move') {
         setMoveOpen(true);
+      } else if (open === 'qr') {
+        setQrOpen(true);
+      } else if (open === 'report') {
+        void groups.reportInfo(localId).then((value) => {
+          setReported(value);
+          setReportOpen(true);
+        });
       }
     }, 0);
   }, [dev, state, groups, localId]);
@@ -348,6 +384,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
             ready={invite?.ready === true}
             onCopyCode={copyCode}
             onShareLink={shareLink}
+            onShowQr={() => setQrOpen(true)}
           />
 
           {state !== null && (
@@ -432,6 +469,26 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
             />
           </Card>
           <Footnote>Removes {name} from this phone. The others keep it.</Footnote>
+
+          {/* Nothing to report without the key: the group's id on its server is derived from it. */}
+          {readOnly !== 'no_secret' && (
+            <>
+              <Card radius="group" style={[styles.card, styles.spaced]}>
+                <ActionRow
+                  icon="flag"
+                  label="Report this group"
+                  tone="text"
+                  iconTone="textSecondary"
+                  chevron
+                  onPress={openReport}
+                />
+              </Card>
+              <Footnote>
+                For content that breaks our terms. We get the group&apos;s id and server, never
+                what&apos;s in it.
+              </Footnote>
+            </>
+          )}
         </>
       )}
 
@@ -500,6 +557,18 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
           onDismiss={() => setLeaveFor(null)}
         />
       )}
+      <InviteQrSheet
+        visible={qrOpen}
+        onClose={() => setQrOpen(false)}
+        invite={invite}
+        groupName={name}
+      />
+      <ReportGroupSheet
+        visible={reportOpen}
+        groupName={name}
+        report={reported}
+        onDismiss={() => setReportOpen(false)}
+      />
       <EmojiPickerSheet
         visible={avatarOpen}
         value={avatarFor?.emoji ?? null}
@@ -544,28 +613,37 @@ function NameRow({ name, onPress }: { name: string; onPress: (() => void) | unde
   );
 }
 
-/** A settings row led by a 20 pt glyph: "Regenerate invite link" (accent), "Archive group", "Leave group". */
+/**
+ * A settings row led by a 20 pt glyph: "Regenerate invite link" (accent), "Archive group", "Leave group", and
+ * "Report this group" (its flag in `textSecondary`, a chevron at the end).
+ */
 function ActionRow({
   icon,
   label,
   tone,
+  iconTone = tone,
   weight = 'medium',
+  chevron = false,
   onPress,
 }: {
-  icon: 'regenerate' | 'archive' | 'leave';
+  icon: 'regenerate' | 'archive' | 'leave' | 'flag';
   label: string;
   tone: 'accent' | 'text';
+  iconTone?: 'accent' | 'text' | 'textSecondary';
   weight?: 'medium' | 'semibold';
+  chevron?: boolean;
   onPress: () => void;
 }) {
   const { tokens } = useTheme();
   return (
     <ListRow
-      leading={<Icon name={icon} size={20} color={tokens[tone]} />}
+      leading={<Icon name={icon} size={20} color={tokens[iconTone]} />}
       title={label}
       titleColor={tone}
       titleWeight={weight}
+      chevron={chevron}
       onPress={onPress}
+      accessibilityLabel={label}
     />
   );
 }

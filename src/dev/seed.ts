@@ -77,6 +77,7 @@ export const SEED_STATES = [
   'join-move',
   'app-settings',
   'app-settings-emoji',
+  'app-settings-help',
   // Group
   'group',
   'balances',
@@ -138,6 +139,8 @@ export const SEED_STATES = [
   'settings-archived-member',
   'settings-regenerate',
   'settings-avatar',
+  'settings-report',
+  'settings-report-other',
   // Background refresh and notifications (stay on the seed screen and log)
   'task',
   'notify',
@@ -154,7 +157,7 @@ export interface SeedOptions {
   emoji?: string | null;
   /** Hold the empty-state motion at this time (ms). */
   motionAt?: number;
-  /** Group settings: a content offset, as if scrolled. */
+  /** Group settings and App settings: a content offset, as if scrolled. */
   y?: number;
 }
 
@@ -1457,6 +1460,13 @@ export const HOME_SERVER_INFO: ServerInfo = {
   terms: undefined,
 };
 
+/** home.example.net as ReportGroupOther reads it: it sends an operator ("Self-hosted") and its terms. */
+export const HOME_SERVER_INFO_WITH_TERMS: ServerInfo = {
+  ...HOME_SERVER_INFO,
+  operator: 'Self-hosted',
+  terms: 'https://home.example.net/terms',
+};
+
 export type SeedVariant =
   /** As drawn: every event acknowledged, so the invite may be shared. */
   | 'board'
@@ -1862,6 +1872,9 @@ export async function seed(
       return { steps: [push('/settings')] };
     case 'app-settings-emoji':
       return { steps: [push('/settings?picker=emoji')] };
+    case 'app-settings-help':
+      // Scrolled so Groups, Help and About show, as the bottom of the AppSettings board.
+      return { steps: [push(`/settings?y=${options.y ?? 206}`)] };
 
     // ----- Group, Expense detail -----
     case 'expense-flagged':
@@ -1905,7 +1918,9 @@ export async function seed(
     case 'settings-usage':
     case 'settings-archived-member':
     case 'settings-regenerate':
-    case 'settings-avatar': {
+    case 'settings-avatar':
+    case 'settings-report':
+    case 'settings-report-other': {
       const variant: SeedVariant =
         state === 'settings-preparing'
           ? 'preparing'
@@ -1915,10 +1930,13 @@ export async function seed(
               ? 'archived-member'
               : state === 'settings-usage'
                 ? 'usage'
-                : state === 'settings-moved'
+                : state === 'settings-moved' || state === 'settings-report-other'
                   ? 'moved'
                   : 'board';
       const seeded = await seedGroupSettings(s, variant);
+      if (state === 'settings-report-other') {
+        await s.infoCache.refresh(HOME_SERVER, infoOnly(HOME_SERVER_INFO_WITH_TERMS));
+      }
       const params = new URLSearchParams();
       // The boards draw these scrolled: Server (after a move, usage) or Members (archived member) under the nav bar.
       const drawnY =
@@ -1950,6 +1968,10 @@ export async function seed(
       if (state === 'settings-avatar') {
         params.set('open', 'avatar');
         params.set('member', 'Sam');
+      }
+      // ReportGroup, ReportGroupOther: the sheet over the top of Group settings.
+      if (state === 'settings-report' || state === 'settings-report-other') {
+        params.set('open', 'report');
       }
       if (state === 'settings-moved') params.set('movedFrom', PROTOCOL.defaultServer);
       const query = params.toString();
