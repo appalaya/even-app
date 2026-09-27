@@ -78,7 +78,6 @@ npx wrangler pages dev web --port 4173   # Cloudflare's own asset server: applie
 
 | What | Where | How |
 |---|---|---|
-| App Store id | `index.html`, `i.html` (`idPLACEHOLDER`) | App Store Connect → the app → App Information → Apple ID. The link becomes `https://apps.apple.com/app/id<number>`. |
 | Store badge artwork | `index.html`, `i.html` | The badges are text stand-ins. Download Apple's "Download on the App Store" and Google's "Get it on Google Play" artwork, save it in this folder (for example `badges/`), and use `<img src="/badges/…" alt="…">`. Local images are allowed by every CSP here (`img-src 'self'`); a remote one is not. |
 | Play App Signing SHA-256 | `.well-known/assetlinks.json` | Play Console → the app → Test and release → App integrity → App signing → **App signing key certificate** → SHA-256 fingerprint (uppercase, colon-separated). Use the app signing key, not the upload key. To also verify builds you sign yourself with the upload key, add its fingerprint as a second entry. |
 | Abuse and support mailboxes | `abuse.html`, `privacy.html`, `index.html` | Done: `abuse@appalaya.com` and `support@appalaya.com` are Zoho distribution lists that accept mail from anyone. |
