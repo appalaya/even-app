@@ -992,8 +992,10 @@ Deviating from the canvas in implementation is a no-go.
   by category with the trip total in the header and each row showing amount
   and percent of total, bars proportional to the total), Activity. Pull to refresh. A subtle line: "Synced 2 min
   ago" or the error. Under the header, "N of M done adding" (M counts
-  non-archived members who have joined on a device) with an "I'm done" pill
-  that toggles your own mark; when `allDone` it reads "Everyone's done".
+  non-archived members who have joined on a device; the row is hidden until
+  at least two members have joined, so a fresh group and a pre-added name
+  nobody claims never show or block it) with an "I'm done" pill that toggles
+  your own mark; when `allDone` it reads "Everyone's done".
   Even state: at a zero net the big number reads "You're even"; with an empty
   settle list it reads "Everyone's settled" and offers to archive the group.
   On Balances a settled member reads "Nathan is settled" (no amount, last).
