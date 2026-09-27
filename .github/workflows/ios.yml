@@ -21,6 +21,8 @@ on:
       - 'android/**'
       - '.github/workflows/android.yml'
       - '.github/workflows/ci.yml'
+      - '.github/actionlint.yaml'
+      - 'scripts/**'
       - '**/*.md'
   workflow_dispatch:
 

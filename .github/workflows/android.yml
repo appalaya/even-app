@@ -22,6 +22,8 @@ on:
       - '**/*.md'
       - '.github/workflows/ios.yml'
       - '.github/workflows/ci.yml'
+      - '.github/actionlint.yaml'
+      - 'scripts/**'
   workflow_dispatch:
 
 concurrency:
