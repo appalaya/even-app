@@ -55,7 +55,7 @@
         }
       ],
       "expo-sqlite",
-      "expo-secure-store",
+      ["expo-secure-store", { "faceIDPermission": false }],
       "expo-notifications",
       "expo-background-task",
       "expo-font",
