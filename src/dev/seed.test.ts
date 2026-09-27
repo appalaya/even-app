@@ -19,6 +19,7 @@ import {
   doneSummary,
   inviteLayout,
   myTransfers,
+  showsDoneRow,
   sortedExpenses,
 } from '../features/group/model';
 import {
@@ -194,7 +195,7 @@ describe('seed scenarios', () => {
     ]);
   });
 
-  it("Group, new with expenses: the invite card pinned over you're owed $903.00, $301.00 each; 0 of 4 done", () => {
+  it("Group, new with expenses: the invite card pinned over you're owed $903.00, $301.00 each; no done row", () => {
     const { spec, group, balances, transfers, me } = load('newWithExpenses');
     expect(inviteLayout(group, me)).toBe('pinned');
     expect(balances.get(me)).toBe(90300);
@@ -203,14 +204,9 @@ describe('seed scenarios', () => {
       ['Jordan', 30100],
       ['Nathan', 30100],
     ]);
-    const done = doneSummary(group, me, { everyone: true });
-    expect([done.doneCount, done.total, done.allDone]).toEqual([0, 4, false]);
-    expect(done.people.map((p) => [p.member.name, p.done])).toEqual([
-      ['Sam', false],
-      ['Maya', false],
-      ['Jordan', false],
-      ['Nathan', false],
-    ]);
+    // Only you have joined: no done-adding row, and the pre-added names never count.
+    const done = doneSummary(group, me);
+    expect([done.doneCount, done.total, showsDoneRow(done)]).toEqual([0, 1, false]);
     expect(
       sortedExpenses(group).map((e) => [e.title, e.amount, e.date, e.paidBy === me, e.category]),
     ).toEqual([
@@ -237,7 +233,12 @@ describe('seed scenarios', () => {
     };
     const joined = reduce([...spec.entries, claimed], { format: money });
     expect(inviteLayout(joined, me)).toBe('none');
-    expect(doneSummary(joined, me).total).toBe(2);
+    const joinedDone = doneSummary(joined, me);
+    expect([joinedDone.doneCount, joinedDone.total, showsDoneRow(joinedDone)]).toEqual([
+      0,
+      2,
+      true,
+    ]);
     const fresh = load('group-new');
     expect(inviteLayout(fresh.group, fresh.me)).toBe('alone');
     const main = load('group');

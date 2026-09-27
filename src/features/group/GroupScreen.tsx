@@ -44,6 +44,7 @@ import {
   inviteLayout,
   myTransfers,
   peopleOf,
+  showsDoneRow,
   sortedExpenses,
 } from './model';
 import { groupHrefs } from './routes';
@@ -173,13 +174,13 @@ export function GroupScreen({
   const view = useMemo(() => {
     if (derived === null || state === null) return null;
     return {
-      done: doneSummary(state, myId, { everyone: card === 'pinned' }),
+      done: doneSummary(state, myId),
       mine: myTransfers(derived.transfers, myId),
       balances: derived.nets === null ? [] : balanceRows(state, derived.nets, myId),
       categories: categoryRows(state),
       expenses: sortedExpenses(state),
     };
-  }, [derived, state, myId, card]);
+  }, [derived, state, myId]);
   const sections = useMemo(
     () => (state === null ? [] : activitySections(state, myId)),
     [state, myId],
@@ -279,7 +280,7 @@ export function GroupScreen({
           readOnly={readOnly}
         />
         {derived.readOnly === 'closed' && view.mine.length > 0 && <ClosedNote />}
-        {!readOnly && view.done.total > 0 && (
+        {!readOnly && showsDoneRow(view.done) && (
           <View style={view.mine.length === 0 && !showSettledLine ? styles.doneAfterHeader : null}>
             <DoneRow summary={view.done} onOpen={() => setDoneOpen(true)} onToggle={toggleDone} />
           </View>

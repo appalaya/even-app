@@ -35,19 +35,10 @@ export interface DoneSummary {
   meDone: boolean;
 }
 
-/**
- * `everyone`: while the invite card is pinned over the normal header nobody else has joined yet, so M counts every
- * non-archived person, joined or not (Group, new with expenses: S, M, J, N and "0 of 4 done adding"); "Everyone's
- * done" then waits for all of them.
- */
-export function doneSummary(
-  state: GroupState,
-  myId: string | null,
-  { everyone = false }: { everyone?: boolean } = {},
-): DoneSummary {
+export function doneSummary(state: GroupState, myId: string | null): DoneSummary {
   const done = new Set(state.doneMembers);
   const eligible = [...state.members.values()].filter(
-    (m) => !m.archived && !m.unknown && (everyone || m.devices.length > 0),
+    (m) => !m.archived && !m.unknown && m.devices.length > 0,
   );
   const me = eligible.find((m) => m.id === myId);
   const others = eligible.filter((m) => m.id !== myId);
@@ -68,9 +59,17 @@ export function doneSummary(
     people: [...stillAdding, ...finished].map(person),
     doneCount: finished.length,
     total: eligible.length,
-    allDone: state.allDone && (!everyone || finished.length === eligible.length),
+    allDone: state.allDone,
     meDone: me !== undefined && done.has(me.id),
   };
+}
+
+/**
+ * The done-adding row shows once a second member has joined on a device: alone in the group there is nobody to wait
+ * for (Group, new with expenses has no row). Pre-added names that nobody has claimed never count.
+ */
+export function showsDoneRow(summary: DoneSummary): boolean {
+  return summary.total >= 2;
 }
 
 // ---------- Invite state ----------
