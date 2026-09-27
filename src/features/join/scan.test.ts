@@ -23,20 +23,20 @@ function recode(fields: Record<string, unknown>): string {
 }
 
 describe('readScan', () => {
-  it('accepts the invite link and hands it over as scanned', () => {
-    expect(readScan(link)).toEqual({ kind: 'invite', text: link });
-    expect(readScan(`  ${link}\n`)).toEqual({ kind: 'invite', text: link });
+  it('accepts the invite link and hands over its code', () => {
+    expect(readScan(link)).toEqual({ kind: 'invite', code });
+    expect(readScan(`  ${link}\n`)).toEqual({ kind: 'invite', code });
   });
 
   it('accepts the /i/# form and an upper-case host', () => {
     const slash = `https://even.appalaya.com/i/#${code}`;
-    expect(readScan(slash)).toEqual({ kind: 'invite', text: slash });
+    expect(readScan(slash)).toEqual({ kind: 'invite', code });
     const upper = `HTTPS://EVEN.APPALAYA.COM/i#${code}`;
-    expect(readScan(upper)).toEqual({ kind: 'invite', text: upper });
+    expect(readScan(upper)).toEqual({ kind: 'invite', code });
   });
 
   it('accepts the bare code', () => {
-    expect(readScan(code)).toEqual({ kind: 'invite', text: code });
+    expect(readScan(code)).toEqual({ kind: 'invite', code });
   });
 
   it('refuses a link on another host or path, and the even:// scheme', () => {
@@ -57,9 +57,9 @@ describe('readScan', () => {
 
   it('hands over an invite that is shaped right but cannot be used, so Join with code names the problem', () => {
     const newer = recode({ v: 2, s: 'https://sync.even.appalaya.com', k: 'x', h: 'y' });
-    expect(readScan(newer)).toEqual({ kind: 'invite', text: newer });
+    expect(readScan(newer)).toEqual({ kind: 'invite', code: newer });
     const payload = JSON.parse(utf8Decode(b64urlDecode(code))) as Record<string, unknown>;
     const damaged = recode({ ...payload, h: 'AAAAAA' });
-    expect(readScan(damaged)).toEqual({ kind: 'invite', text: damaged });
+    expect(readScan(damaged)).toEqual({ kind: 'invite', code: damaged });
   });
 });

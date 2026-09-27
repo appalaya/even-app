@@ -9,8 +9,8 @@
  * A code that is not an Even invite (`readScan`) keeps the camera reading and puts the 16 pt warning with "That QR
  * code isn't an Even invite." 16/22 semibold and "Keep scanning, or cancel and paste the code." under it. An invite
  * turns the brackets to the accent with a 56 pt accent check in their middle (a 4 pt `onViewfinder` ring), and
- * "Invite found" · "Opening it in Join with code…" under it; `FOUND_MS` later the text goes to Join with code, which
- * previews it exactly as a pasted one.
+ * "Invite found" · "Opening it in Join with code…" under it; `FOUND_MS` later its code goes to Join with code, which
+ * previews it exactly as a pasted one (JoinCodePreview).
  *
  * Camera access off: the viewfinder becomes a `fill` panel with the 32 pt camera-off glyph, "Camera access is off",
  * "To scan an invite, allow Even to use the camera in Settings. You can still paste the code.", Open Settings (the
@@ -31,7 +31,7 @@ import { readScan } from './scan';
 /** How long "Invite found" shows before Join with code takes the code. */
 export const FOUND_MS = 900;
 
-type Phase = { kind: 'scanning' } | { kind: 'notInvite' } | { kind: 'found'; text: string };
+type Phase = { kind: 'scanning' } | { kind: 'notInvite' } | { kind: 'found'; code: string };
 
 export interface ScanSheetProps {
   visible: boolean;
@@ -39,8 +39,8 @@ export interface ScanSheetProps {
   onCancel: () => void;
   /** "Paste instead" on the camera-off panel: back to Join with code. */
   onPasteInstead: () => void;
-  /** An invite was read: its text (the link or the bare code), for the code field. */
-  onFound: (text: string) => void;
+  /** An invite was read: its bare code, for the code field. */
+  onFound: (code: string) => void;
 }
 
 export function ScanSheet({ visible, onCancel, onPasteInstead, onFound }: ScanSheetProps) {
@@ -66,12 +66,12 @@ export function ScanSheet({ visible, onCancel, onPasteInstead, onFound }: ScanSh
   }, [visible, getPermission]);
 
   // Hand the found code over after the found state has shown.
-  const foundText = phase.kind === 'found' ? phase.text : null;
+  const foundCode = phase.kind === 'found' ? phase.code : null;
   useEffect(() => {
-    if (foundText === null) return;
-    const timer = setTimeout(() => onFound(foundText), FOUND_MS);
+    if (foundCode === null) return;
+    const timer = setTimeout(() => onFound(foundCode), FOUND_MS);
     return () => clearTimeout(timer);
-  }, [foundText, onFound]);
+  }, [foundCode, onFound]);
 
   const onScanned = ({ data }: BarcodeScanningResult) => {
     if (found.current) return;
@@ -79,7 +79,7 @@ export function ScanSheet({ visible, onCancel, onPasteInstead, onFound }: ScanSh
     if (verdict.kind === 'invite') {
       found.current = true;
       setTorch(false);
-      setPhase({ kind: 'found', text: verdict.text });
+      setPhase({ kind: 'found', code: verdict.code });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else if (phase.kind !== 'notInvite') {
       setPhase({ kind: 'notInvite' });

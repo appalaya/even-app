@@ -12,8 +12,11 @@
 import { decodeInvite, InviteError, isB64url, PROTOCOL } from '@even/core';
 
 export type ScanVerdict =
-  /** `text`: what goes into the code field, as if pasted (the link or the bare code, trimmed). */
-  { kind: 'invite'; text: string } | { kind: 'notInvite' };
+  /**
+   * `code`: the bare code, for the code field (JoinScanFound leads to JoinCodePreview, which shows the code, not the
+   * link); `previewInvite` then reads it as it reads a pasted one.
+   */
+  { kind: 'invite'; code: string } | { kind: 'notInvite' };
 
 const NOT_INVITE: ScanVerdict = { kind: 'notInvite' };
 
@@ -39,5 +42,5 @@ export function readScan(raw: string): ScanVerdict {
     if (!(error instanceof InviteError)) return NOT_INVITE;
     if (error.code === 'malformed' || error.code === 'secret') return NOT_INVITE;
   }
-  return { kind: 'invite', text };
+  return { kind: 'invite', code };
 }

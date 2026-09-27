@@ -97,7 +97,7 @@ export function JoinFlow({
     });
   }, [text, groups]);
 
-  // A scanned invite goes into the field as if pasted, and the code sheet comes back to preview it.
+  // A scanned invite's code goes into the field as if pasted, and the code sheet comes back to preview it.
   const onScanned = useCallback(
     (scanned: string) => {
       setText(scanned);
