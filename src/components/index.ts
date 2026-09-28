@@ -27,6 +27,7 @@ export {
 export { CategoryGrid, gridLabel, type CategoryGridProps } from './CategoryGrid';
 export {
   CategoryChip,
+  CHIP_SWAP_MS,
   MemberChip,
   SelectPill,
   type CategoryChipProps,

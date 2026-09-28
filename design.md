@@ -335,14 +335,18 @@ overwriting a choice the user has made:
   padding 12 instead of 14. There is no timer and no word; the chip's
   accessibility label says "suggested". It goes when the user taps the chip
   and picks a category, even the one the model picked (`source = user`): it
-  fades out over 250 ms, at once under Reduce Motion. A keystroke puts the
-  keyword guess back (`source = keyword`), which drops it at once; a model
-  reply for the new title brings it back. A model reply that agrees with the
-  keyword guess makes the chip the model's pick too, so it carries the
-  sparkle, with no swap. A keyword-inferred chip carries nothing, and a
-  user-chosen chip never carries it. When the model changes the chip, the
-  swap animates (a 260 ms fade and scale in from 0.9). With no title yet
-  (and nothing chosen) the chip is the dashed "Category" placeholder.
+  fades out over 250 ms. A keystroke puts the keyword guess back
+  (`source = keyword`), which drops it at once; a model reply for the new
+  title brings it back. A model reply that agrees with the keyword guess
+  makes the chip the model's pick too, so it carries the sparkle, with no
+  swap. A keyword-inferred chip carries nothing, and a user-chosen chip never
+  carries it. When the model changes the chip, the swap animates (a 260 ms
+  fade and scale in from 0.9). The chip's width never jumps for the sparkle:
+  its 18 pt of room closes over the same 250 ms as the fade (or as a
+  keystroke drops it), and opens over 260 ms as it fades in, in step with the
+  swap when a swap brings it. Under Reduce Motion none of this animates. With
+  no title yet (and nothing chosen) the chip is the dashed "Category"
+  placeholder.
 
 Replies and taps are both handled on the JavaScript thread in arrival order,
 so there is no window in which a user tap can be lost.
