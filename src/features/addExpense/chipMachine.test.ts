@@ -1,5 +1,7 @@
-import type { Category } from '@even/core';
+import { CATEGORIES, type Category } from '@even/core';
 import { describe, expect, it } from 'vitest';
+
+import { carriesSparkle } from '@/state/categories';
 
 import {
   ChipController,
@@ -7,7 +9,7 @@ import {
   initialChipState,
   MODEL_PAUSE_MS,
   shouldAskModel,
-  SUGGESTED_TAG_MS,
+  type ChipEvent,
   type ChipState,
 } from './chipMachine';
 
@@ -87,7 +89,7 @@ describe('chipReducer', () => {
     expect(s).toMatchObject({ category: 'transit', source: 'keyword' });
   });
 
-  it('never tags a keyword-inferred chip; tags a model change until untagged', () => {
+  it("a keyword-inferred chip carries no sparkle; the model's pick carries it", () => {
     let s = chipReducer(initialChipState(''), { type: 'title', title: 'Lake Louise shuttle' });
     expect(s).toMatchObject({ category: 'transit', source: 'keyword', tagged: false });
     s = chipReducer(s, {
@@ -97,12 +99,9 @@ describe('chipReducer', () => {
       category: 'activities',
     });
     expect(s).toMatchObject({ category: 'activities', source: 'model', swaps: 1, tagged: true });
-    // An untag for an older change leaves a newer tag alone; the current one clears it.
-    expect(chipReducer(s, { type: 'untag', swap: 0 })).toBe(s);
-    expect(chipReducer(s, { type: 'untag', swap: 1 })).toMatchObject({ tagged: false });
   });
 
-  it('a model reply that agrees with the chip does not tag it', () => {
+  it("a model reply that agrees with the chip makes it the model's pick: the sparkle, no swap", () => {
     const s = chipReducer(initialChipState(''), { type: 'title', title: 'Taxi' });
     const next = chipReducer(s, {
       type: 'reply',
@@ -110,22 +109,98 @@ describe('chipReducer', () => {
       currentTitle: 'Taxi',
       category: 'transit',
     });
-    expect(next).toMatchObject({ category: 'transit', source: 'model', swaps: 0, tagged: false });
+    expect(next).toMatchObject({ category: 'transit', source: 'model', swaps: 0, tagged: true });
   });
 
-  it('a keystroke or a tap takes the tag away; a chip you chose is never tagged', () => {
-    const tagged = chipReducer(initialChipState('Grizzly House'), {
+  it('a tap takes the sparkle away, even on the category the model picked; a chip you chose never has it', () => {
+    const picked = chipReducer(initialChipState('Grizzly House'), {
       type: 'reply',
       askedTitle: 'Grizzly House',
       currentTitle: 'Grizzly House',
       category: 'lodging',
     });
-    expect(tagged.tagged).toBe(true);
-    expect(chipReducer(tagged, { type: 'title', title: 'Grizzly House B' }).tagged).toBe(false);
-    expect(chipReducer(tagged, { type: 'tap', category: 'lodging' })).toMatchObject({
+    expect(picked.tagged).toBe(true);
+    expect(chipReducer(picked, { type: 'tap', category: 'lodging' })).toMatchObject({
+      category: 'lodging',
       source: 'user',
       tagged: false,
     });
+    expect(chipReducer(picked, { type: 'tap', category: 'food' })).toMatchObject({
+      category: 'food',
+      source: 'user',
+      tagged: false,
+    });
+    expect(initialChipState('Grizzly House', 'food').tagged).toBe(false);
+  });
+
+  it('a keystroke puts the keyword guess back, and it carries no sparkle', () => {
+    const picked = chipReducer(initialChipState('Grizzly House'), {
+      type: 'reply',
+      askedTitle: 'Grizzly House',
+      currentTitle: 'Grizzly House',
+      category: 'lodging',
+    });
+    expect(chipReducer(picked, { type: 'title', title: 'Grizzly House B' })).toMatchObject({
+      category: 'other',
+      source: 'keyword',
+      tagged: false,
+    });
+  });
+
+  it('Save keeps what shows: a frozen model pick keeps its sparkle', () => {
+    const picked = chipReducer(initialChipState('Grizzly House'), {
+      type: 'reply',
+      askedTitle: 'Grizzly House',
+      currentTitle: 'Grizzly House',
+      category: 'lodging',
+    });
+    const saved = chipReducer(picked, { type: 'freeze' });
+    expect(saved).toMatchObject({
+      category: 'lodging',
+      source: 'model',
+      frozen: true,
+      tagged: true,
+    });
+  });
+
+  it('the sparkle is derived from the source on every path, never set on its own', () => {
+    // Every sequence of three events from a mixed set, from a fresh sheet and from an edited expense.
+    const events: ChipEvent[] = [
+      { type: 'title', title: 'Grizzly House' },
+      { type: 'title', title: 'Taxi' },
+      {
+        type: 'reply',
+        askedTitle: 'Grizzly House',
+        currentTitle: 'Grizzly House',
+        category: 'lodging',
+      },
+      { type: 'reply', askedTitle: 'Taxi', currentTitle: 'Taxi', category: 'transit' },
+      { type: 'reply', askedTitle: 'Taxi', currentTitle: 'Taxi', category: null },
+      { type: 'tap', category: CATEGORIES[0] },
+      { type: 'tap', category: 'lodging' },
+      { type: 'freeze' },
+    ];
+    const starts = [
+      initialChipState(''),
+      initialChipState('Taxi'),
+      initialChipState('Hotel', 'gifts'),
+    ];
+    let checked = 0;
+    for (const start of starts) {
+      for (const a of events) {
+        for (const b of events) {
+          for (const c of events) {
+            let s = start;
+            for (const event of [a, b, c]) {
+              s = chipReducer(s, event);
+              expect(s.tagged).toBe(carriesSparkle(s));
+              checked += 1;
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBe(starts.length * events.length ** 3 * 3);
   });
 
   it('never re-infers once the user has tapped', () => {
@@ -221,31 +296,29 @@ describe('ChipController', () => {
     expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', swaps: 1 });
   });
 
-  it('shows the suggested tag for about 1.5 s after the model changes the chip', async () => {
+  it("the model's pick keeps its sparkle with no timer, until you pick a category", async () => {
     const { chip, clock, model } = controller();
     chip.setTitle('Grizzly House');
     clock.advance(MODEL_PAUSE_MS);
     await model.reply(0, 'lodging');
-    expect(chip.getState()).toMatchObject({ category: 'lodging', tagged: true });
-    clock.advance(SUGGESTED_TAG_MS - 1);
-    expect(chip.getState().tagged).toBe(true);
-    clock.advance(1);
-    expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', tagged: false });
+    expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', tagged: true });
+    clock.advance(60 * 60 * 1000); // an hour later: nothing takes it away on its own
+    expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'model', tagged: true });
+    chip.tap('lodging');
+    expect(chip.getState()).toMatchObject({ category: 'lodging', source: 'user', tagged: false });
   });
 
-  it('a second model change restarts the tag time', async () => {
+  it('a second model change counts a second swap and keeps the sparkle', async () => {
     const { chip, clock, model } = controller();
     chip.setTitle('Sunshine');
     clock.advance(MODEL_PAUSE_MS);
     await model.reply(0, 'groceries');
-    clock.advance(1000);
+    expect(chip.getState()).toMatchObject({ category: 'groceries', swaps: 1, tagged: true });
     chip.setTitle('Sunshine Village lift');
+    expect(chip.getState()).toMatchObject({ source: 'keyword', tagged: false });
     clock.advance(MODEL_PAUSE_MS);
     await model.reply(1, 'activities');
-    clock.advance(SUGGESTED_TAG_MS - 1);
-    expect(chip.getState()).toMatchObject({ category: 'activities', tagged: true });
-    clock.advance(1);
-    expect(chip.getState().tagged).toBe(false);
+    expect(chip.getState()).toMatchObject({ category: 'activities', swaps: 2, tagged: true });
   });
 
   it('race: a model reply arriving after a user tap is dropped', async () => {
@@ -301,7 +374,16 @@ describe('ChipController', () => {
     clock.advance(MODEL_PAUSE_MS);
     expect(chip.freeze()).toBe('other');
     await model.reply(0, 'food');
-    expect(chip.getState()).toMatchObject({ category: 'other', frozen: true });
+    expect(chip.getState()).toMatchObject({ category: 'other', frozen: true, tagged: false });
+  });
+
+  it("Save after the model's pick keeps the sparkle it shows", async () => {
+    const { chip, clock, model } = controller();
+    chip.setTitle('Grizzly House');
+    clock.advance(MODEL_PAUSE_MS);
+    await model.reply(0, 'lodging');
+    expect(chip.freeze()).toBe('lodging');
+    expect(chip.getState()).toMatchObject({ source: 'model', frozen: true, tagged: true });
   });
 
   it('a failing model leaves the keyword guess standing', async () => {

@@ -6,6 +6,7 @@ import { CATEGORIES, inferCategory as coreInfer } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  carriesSparkle,
   chipAfterReply,
   chipAfterTap,
   chipAfterTitle,
@@ -145,6 +146,28 @@ describe('categories', () => {
 
   it('an edited expense starts from its saved category as a user choice', () => {
     expect(initialChip('Uber', 'food')).toEqual({ category: 'food', source: 'user' });
+  });
+
+  it("the sparkle marks the model's pick until a tap or a keystroke, and nothing else", () => {
+    const keyword = chipAfterTitle(initialChip(''), 'Taxi');
+    expect(carriesSparkle(keyword)).toBe(false);
+    const model = chipAfterReply(
+      chipAfterTitle(initialChip(''), "Surly's brewing"),
+      "Surly's brewing",
+      {
+        askedTitle: "Surly's brewing",
+        category: 'drinks',
+      },
+    );
+    expect(carriesSparkle(model)).toBe(true);
+    // The model agreeing with the table makes it the model's pick too.
+    expect(
+      carriesSparkle(chipAfterReply(keyword, 'Taxi', { askedTitle: 'Taxi', category: 'transit' })),
+    ).toBe(true);
+    // A tap, even on the model's own pick, and a keystroke both take it away.
+    expect(carriesSparkle(chipAfterTap(model, 'drinks'))).toBe(false);
+    expect(carriesSparkle(chipAfterTitle(model, "Surly's brewing co"))).toBe(false);
+    expect(carriesSparkle(initialChip('Uber', 'food'))).toBe(false);
   });
 });
 

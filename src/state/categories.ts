@@ -14,10 +14,12 @@
  * - A reply is applied only if that title still matches the field and `source` is not `user`; otherwise it is
  *   discarded (`chipAfterReply`). An applied reply sets `source = model`, so a model result can be refined by a
  *   later model result but never overwrite a tap. The swap animates (UI).
- * - A keyword-inferred chip carries no tag. When the model changes the chip, the swap animates and the chip wears
- *   the "suggested" tag for about 1.5 s, so a change the user did not make is never invisible; a chip the user
- *   chose never wears it (UI: `features/addExpense/chipMachine.ts`).
- * - Tapping Save freezes the chip: the event carries whatever it shows, never a later guess (UI).
+ * - While `source` is `model` the chip carries the sparkle, with no timer (`carriesSparkle`), so a choice the user
+ *   did not make is never invisible. A keyword-inferred chip and a chip the user chose never carry it: a tap takes
+ *   it away (the UI fades it out) and a keystroke's keyword guess drops it. When the model changes the chip, the
+ *   swap animates (UI: `features/addExpense/chipMachine.ts`).
+ * - Tapping Save freezes the chip: the event carries whatever it shows, never a later guess, and the chip keeps
+ *   what it shows, the sparkle included (UI).
  * Replies and taps are both handled on the JavaScript thread in arrival order, so a tap is never lost.
  *
  * Only the on-device model is ever used; a title never leaves the phone (design.md "Model refinement").
@@ -119,6 +121,14 @@ export function initialChip(title: string, saved?: Category): CategoryChip {
   return saved === undefined
     ? { category: inferCategory(title), source: 'keyword' }
     : { category: saved, source: 'user' };
+}
+
+/**
+ * The sparkle: the chip carries it exactly while it shows the model's pick and the user has not tapped it. It is
+ * derived from `source`, never timed; a keystroke (back to `keyword`) or a tap (`user`) takes it away.
+ */
+export function carriesSparkle(chip: CategoryChip): boolean {
+  return chip.source === 'model';
 }
 
 /** A keystroke: unless the user chose, keyword inference runs and its guess replaces a keyword or model chip. */

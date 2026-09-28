@@ -45,6 +45,7 @@ export { isStateError, StateError, type InviteProblem, type StateErrorCode } fro
 export { deviceSeat } from './seat';
 export type { Appearance, NotificationStatus, Prefs } from './prefs';
 export {
+  carriesSparkle,
   chipAfterReply,
   chipAfterTap,
   chipAfterTitle,
