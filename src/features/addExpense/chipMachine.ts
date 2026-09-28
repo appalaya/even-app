@@ -6,8 +6,9 @@
  * The chip holds `{ category, source }` with `source ∈ keyword | model | user`:
  * - A user tap sets `source = user`, cancels any in-flight model request and drops any reply that arrives
  *   afterwards. Later title edits do not re-infer. `user` is sticky until the sheet is dismissed.
- * - While `source` is `keyword` or `model`, every keystroke runs keyword inference (applied immediately, `source`
- *   becomes `keyword`) and, after a 500 ms pause, the controller issues a fresh model request.
+ * - While `source` is `keyword` or `model`, every keystroke runs instant inference (history first, then the keyword
+ *   table; applied immediately, `source` becomes `keyword`) and, after a 500 ms pause, the controller issues a fresh
+ *   model request if neither knows the title (`shouldAskModel`).
  * - Each model request carries the exact title it was asked about. A reply is applied only if that title still
  *   matches the field and `source` is not `user`; otherwise it is discarded. A model result can be refined by a
  *   later model result, but never overwrite a tap.
