@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { CATEGORIES, type Category } from './types.js';
 import { CATEGORY_EMOJI, CATEGORY_KEYWORDS, CATEGORY_LABEL, inferCategory, isCategory } from './categories.js';
+import { LIMITS } from './constants.js';
 
 const codePoints = (s: string): string => [...s].map((c) => c.codePointAt(0)?.toString(16)).join(' ');
 
@@ -230,5 +232,34 @@ describe('inferCategory', () => {
       }
     }
     expect(inferCategory('Hôtel Le Germain')).toBe('lodging');
+  });
+});
+
+describe('categories.eval.json (the on-device model\'s labelled titles)', () => {
+  const set = JSON.parse(readFileSync(new URL('./categories.eval.json', import.meta.url), 'utf8')) as {
+    about: unknown;
+    cases: { title: unknown; category: unknown }[];
+  };
+
+  it('holds 60 to 100 labelled titles, each a valid title with one of the sixteen categories', () => {
+    expect(typeof set.about).toBe('string');
+    expect(set.cases.length).toBeGreaterThanOrEqual(60);
+    expect(set.cases.length).toBeLessThanOrEqual(100);
+    for (const c of set.cases) {
+      expect(Object.keys(c).sort()).toEqual(['category', 'title']);
+      expect(typeof c.title).toBe('string');
+      const title = c.title as string;
+      expect(title.trim()).toBe(title);
+      expect(title.length).toBeGreaterThan(0);
+      expect(title.length).toBeLessThanOrEqual(LIMITS.titleMax);
+      expect([title, isCategory(c.category)]).toEqual([title, true]);
+    }
+  });
+
+  it('covers every category and repeats no title', () => {
+    const covered = new Set(set.cases.map((c) => c.category));
+    for (const c of CATEGORIES) expect([c, covered.has(c)]).toEqual([c, true]);
+    const titles = set.cases.map((c) => (c.title as string).toLowerCase());
+    expect(new Set(titles).size).toBe(titles.length);
   });
 });

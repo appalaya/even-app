@@ -1,17 +1,23 @@
 /**
  * The device wiring: expo-sqlite store, expo-secure-store secrets, `HttpTransport` per server origin, expo file
- * sharing, and expo-notifications' permission. One instance per process (the background task, a later step, reuses
- * it). Never imported by Node tests.
+ * sharing, expo-notifications' permission, and the category chip's on-device model. One instance per process (the
+ * background task, a later step, reuses it). Never imported by Node tests.
  */
 import * as Notifications from 'expo-notifications';
 
+import EvenClassifier from '../../modules/even-classifier';
 import { expoFileIO } from '../services/groupFile/expoFileIO';
 import { secrets } from '../services/secrets/secureStore';
 import { openStore } from '../services/storage/openStore';
 import { HttpTransport } from '../services/sync/httpTransport';
 import { createInfoCache } from '../services/sync/info';
+import { setOnDeviceModel } from './categories';
 import type { NotificationPermission, NotificationStatus } from './prefs';
 import { createAppServices, type AppServices } from './services';
+
+// The on-device model behind the category chip (design.md "Model refinement"); null in a build without the native
+// module, and then the chip keeps its keyword guess. Nothing is asked of it until a title pauses.
+setOnDeviceModel(EvenClassifier);
 
 function toStatus(response: { granted: boolean; status: string }): NotificationStatus {
   if (response.granted) return 'granted';

@@ -21,3 +21,5 @@ becomes the "What's New" notes.
 - Report a group, or ask for help and send feedback, from inside the app
 - After a reinstall, a group you were in gets your name back on its own; a
   phone that never picked a name is asked
+- Even names the category for you as you type the title, on your phone, with
+  nothing sent anywhere (iPhones with Apple Intelligence turned on)

@@ -292,6 +292,25 @@ model handles the long tail the table cannot ("Sunshine Village lift",
 The model's accuracy is checked with Apple's Evaluations framework against a
 labelled title set kept in the repo; the table with a unit test.
 
+*As built:* the local Expo module `modules/even-classifier` exposes
+`classifyExpense(title)`, `availability()` and `prewarm()`. On iOS it uses
+`SystemLanguageModel.default` only, one fresh `LanguageModelSession` per title
+whose instructions give each category's meaning, and guided generation into a
+`@Generable` enum of the sixteen ids (a test keeps the enum equal to
+`CATEGORIES` and fails if the native code names any other model). A reply
+comes within 2.5 s or not at all; a refusal, a guardrail hit or any error is
+no answer, and `refineCategory` drops anything that is not a category id.
+Availability (`available`, or unavailable with the framework's reason:
+`deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`) is asked
+once per launch, so a model that becomes ready is used from the next launch.
+Add expense calls `prewarm` when it opens, so the first title is not a cold
+start. Android reports unavailable (`notBuilt`): ML Kit's Prompt API needs
+minSdk 26 (the app is on 24), brings ML Kit's usage logging, and is still
+beta. The labelled set is `packages/core/src/categories.eval.json` (96
+titles); `npm run eval:categories` scores it with a plain Swift script, not
+yet the Evaluations framework: 91% on macOS 27's model, against 68% for the
+keyword table alone.
+
 **Chip state machine.** The category chip holds `{ category, source }` with
 `source ∈ keyword | model | user`, and these rules prevent the model from
 overwriting a choice the user has made:

@@ -1,12 +1,13 @@
 NEW IN THIS BUILD
-• Invites by QR: on the invite card and in Group settings, "Show QR code" opens a code the other phone's camera can read. In Join with code, "Scan" reads one.
+• Invites by QR: "Show QR code" on the invite card and in Group settings opens a code the other phone can scan with "Scan" in Join with code.
 • Group settings has "Report this group", and App settings has "Help and feedback". Both open our contact page.
-• After a reinstall, opening a group you were in gets your name back on its own. A phone that never picked a name is asked "Which name is yours?" and shows "Pick your name" until it does.
+• After a reinstall, a group you were in gets your name back on its own. A phone that never picked a name is asked "Which name is yours?"
 • A group with no expenses no longer reads "settled", and the dark theme covers the area behind a screen you swipe away.
 
 TRY
 • Create a group on one phone and join it from another by scanning the QR code, then by pasting the code.
 • Add expenses from both phones, one of them offline, and check both phones agree once back online.
 • Settle up and check "Everyone's settled" appears only after real expenses.
+• With Apple Intelligence on, type a few titles Even may not know, like "Surly's brewing", and check the category it picks.
 
 Report anything odd, and the time it happened.

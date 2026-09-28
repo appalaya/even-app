@@ -30,6 +30,9 @@ android/.gradle/
 android/local.properties
 android/.kotlin/
 android/app/release/
+# Local Expo modules (modules/): Gradle's output when the app builds
+modules/*/android/build/
+modules/*/android/.cxx/
 *.keystore
 !android/app/debug.keystore
 even-upload-secrets.txt

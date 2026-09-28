@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["EvenClassifierModule"]
+  },
+  "android": {
+    "modules": ["com.appalaya.even.classifier.EvenClassifierModule"]
+  }
+}

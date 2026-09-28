@@ -1,15 +1,58 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { CATEGORIES, inferCategory as coreInfer } from '@even/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   chipAfterReply,
   chipAfterTap,
   chipAfterTitle,
+  createCategoryRefiner,
   inferCategory,
   initialChip,
+  prepareCategoryModel,
   refineCategory,
+  setOnDeviceModel,
   shouldRefine,
+  type OnDeviceModel,
 } from './categories';
+
+/** A stub on-device model that records what it was asked. */
+function stubModel(
+  answer: (title: string) => Promise<string | null>,
+  availability: OnDeviceModel['availability'] = async () => ({ status: 'available' }),
+) {
+  const asked: string[] = [];
+  let availabilityCalls = 0;
+  let prewarms = 0;
+  const model: OnDeviceModel = {
+    availability: () => {
+      availabilityCalls += 1;
+      return availability();
+    },
+    classifyExpense: (title) => {
+      asked.push(title);
+      return answer(title);
+    },
+    prewarm: async () => {
+      prewarms += 1;
+    },
+  };
+  return {
+    model,
+    asked,
+    availabilityCalls: () => availabilityCalls,
+    prewarms: () => prewarms,
+  };
+}
+
+const nativeDir = fileURLToPath(new URL('../../modules/even-classifier/', import.meta.url));
+const sources = (dir: string, extension: string): string[] =>
+  readdirSync(join(nativeDir, dir), { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith(extension))
+    .map((name) => readFileSync(join(nativeDir, dir, name), 'utf8'));
 
 describe('categories', () => {
   it('inferCategory is core keyword inference, unchanged', () => {
@@ -17,10 +60,6 @@ describe('categories', () => {
       expect(inferCategory(title)).toBe(coreInfer(title));
     }
     expect(CATEGORIES).toContain(inferCategory('Gas'));
-  });
-
-  it('refineCategory is a stub that has no answer until the on-device model module lands', async () => {
-    await expect(refineCategory('Fairmont')).resolves.toBeNull();
   });
 
   it('keystrokes re-infer until the user taps', () => {
@@ -106,5 +145,173 @@ describe('categories', () => {
 
   it('an edited expense starts from its saved category as a user choice', () => {
     expect(initialChip('Uber', 'food')).toEqual({ category: 'food', source: 'user' });
+  });
+});
+
+describe('refineCategory (the on-device model)', () => {
+  afterEach(() => setOnDeviceModel(null));
+
+  it('has no answer while no model is installed', async () => {
+    await expect(refineCategory("Surly's brewing")).resolves.toBeNull();
+  });
+
+  it("returns the installed model's answer when it is one of the sixteen categories", async () => {
+    const stub = stubModel(async (title) => (title === "Surly's brewing" ? 'drinks' : 'lodging'));
+    setOnDeviceModel(stub.model);
+    await expect(refineCategory("Surly's brewing")).resolves.toBe('drinks');
+    await expect(refineCategory('Fairmont Banff Springs')).resolves.toBe('lodging');
+    expect(stub.asked).toEqual(["Surly's brewing", 'Fairmont Banff Springs']);
+  });
+
+  it('maps anything that is not a category id to null', async () => {
+    for (const answer of [
+      'Drinks',
+      ' drinks',
+      'brewing',
+      '',
+      'toString',
+      '__proto__',
+      null,
+      42,
+      { id: 'food' },
+    ]) {
+      const { refine } = createCategoryRefiner(
+        stubModel(async () => answer as string | null).model,
+      );
+      await expect(refine("Surly's brewing")).resolves.toBeNull();
+    }
+  });
+
+  it('treats a rejection or a throw as no answer', async () => {
+    const { refine: rejects } = createCategoryRefiner(
+      stubModel(() => Promise.reject(new Error('guardrail'))).model,
+    );
+    await expect(rejects("Surly's brewing")).resolves.toBeNull();
+    const { refine: throws } = createCategoryRefiner(
+      stubModel(() => {
+        throw new Error('native module gone');
+      }).model,
+    );
+    await expect(throws("Surly's brewing")).resolves.toBeNull();
+  });
+
+  it('does not ask about a blank title', async () => {
+    const stub = stubModel(async () => 'food');
+    const { refine } = createCategoryRefiner(stub.model);
+    await expect(refine('   ')).resolves.toBeNull();
+    expect(stub.asked).toEqual([]);
+    expect(stub.availabilityCalls()).toBe(0);
+  });
+
+  it('asks for availability once per session and keeps the answer', async () => {
+    const stub = stubModel(async () => 'activities');
+    const { refine } = createCategoryRefiner(stub.model);
+    await Promise.all([
+      refine('Sunshine'),
+      refine('Sunshine Village'),
+      refine('Sunshine Village lift'),
+    ]);
+    await refine('Norquay');
+    expect(stub.availabilityCalls()).toBe(1);
+    expect(stub.asked).toHaveLength(4);
+  });
+
+  it('never asks an unavailable model, for the rest of the session', async () => {
+    const stub = stubModel(
+      async () => 'food',
+      async () => ({ status: 'unavailable', reason: 'appleIntelligenceNotEnabled' }),
+    );
+    const { refine } = createCategoryRefiner(stub.model);
+    await expect(refine('Nourish Bistro')).resolves.toBeNull();
+    await expect(refine('Nourish Bistro dinner')).resolves.toBeNull();
+    expect(stub.availabilityCalls()).toBe(1);
+    expect(stub.asked).toEqual([]);
+  });
+
+  it('treats a failed availability check as unavailable, without retrying', async () => {
+    const stub = stubModel(
+      async () => 'food',
+      () => Promise.reject(new Error('no native module')),
+    );
+    const { refine } = createCategoryRefiner(stub.model);
+    await expect(refine('Nourish')).resolves.toBeNull();
+    await expect(refine('Nourish Bistro')).resolves.toBeNull();
+    expect(stub.availabilityCalls()).toBe(1);
+    expect(stub.asked).toEqual([]);
+  });
+
+  it('starts a fresh session when a model is installed again', async () => {
+    const unavailable = stubModel(
+      async () => 'food',
+      async () => ({ status: 'unavailable', reason: 'modelNotReady' }),
+    );
+    setOnDeviceModel(unavailable.model);
+    await expect(refineCategory('Nourish')).resolves.toBeNull();
+    const ready = stubModel(async () => 'food');
+    setOnDeviceModel(ready.model);
+    await expect(refineCategory('Nourish')).resolves.toBe('food');
+  });
+});
+
+describe('prepareCategoryModel (Add expense opened)', () => {
+  afterEach(() => setOnDeviceModel(null));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('prewarms an available model, sharing the one availability check with refineCategory', async () => {
+    const stub = stubModel(async () => 'drinks');
+    setOnDeviceModel(stub.model);
+    prepareCategoryModel();
+    await settle();
+    expect(stub.prewarms()).toBe(1);
+    await expect(refineCategory("Surly's brewing")).resolves.toBe('drinks');
+    expect(stub.availabilityCalls()).toBe(1);
+  });
+
+  it('does not prewarm an unavailable model, and nothing throws without a model or a prewarm', async () => {
+    const stub = stubModel(
+      async () => 'food',
+      async () => ({ status: 'unavailable', reason: 'deviceNotEligible' }),
+    );
+    setOnDeviceModel(stub.model);
+    prepareCategoryModel();
+    await settle();
+    expect(stub.prewarms()).toBe(0);
+
+    setOnDeviceModel(null);
+    expect(() => prepareCategoryModel()).not.toThrow();
+
+    const { prewarm: _, ...noPrewarm } = stubModel(async () => 'food').model;
+    setOnDeviceModel(noPrewarm);
+    expect(() => prepareCategoryModel()).not.toThrow();
+
+    const failing = stubModel(async () => 'food').model;
+    setOnDeviceModel({ ...failing, prewarm: () => Promise.reject(new Error('no model')) });
+    prepareCategoryModel();
+    await settle();
+    await expect(refineCategory('Nourish')).resolves.toBe('food');
+  });
+});
+
+describe('the native module (modules/even-classifier)', () => {
+  it('constrains the iOS model to exactly the sixteen category ids, in order', () => {
+    const swift = sources('ios', '.swift').join('\n');
+    const generable = /@Generable\s+enum ExpenseCategory: String, CaseIterable \{([^}]*)\}/.exec(
+      swift,
+    );
+    expect(generable).not.toBeNull();
+    const cases = [...(generable?.[1] ?? '').matchAll(/^\s*case (\w+)\s*$/gm)].map((m) => m[1]);
+    expect(cases).toEqual([...CATEGORIES]);
+  });
+
+  it('only ever uses the on-device model: no Private Cloud Compute, no other model, no network', () => {
+    const native = [...sources('ios', '.swift'), ...sources('android', '.kt')].join('\n');
+    expect(native).toContain('SystemLanguageModel.default');
+    for (const forbidden of [
+      /PrivateCloudCompute/,
+      /LanguageModelSession\((?!model: SystemLanguageModel\.default,)/,
+      /URLSession|URLRequest|HttpURLConnection|OkHttp/,
+    ]) {
+      expect(native).not.toMatch(forbidden);
+    }
   });
 });

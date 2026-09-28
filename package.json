@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit && tsc -p web/worker",
     "test": "npm test -w @even/core && npm run test:app",
     "test:app": "vitest run",
+    "eval:categories": "xcrun swiftc -parse-as-library -O modules/even-classifier/ios/ExpenseClassifier.swift scripts/eval-categories.swift -o \"${TMPDIR:-/tmp}/eval-categories\" && \"${TMPDIR:-/tmp}/eval-categories\"",
     "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {

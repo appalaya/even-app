@@ -25,7 +25,7 @@ import {
   type KeypadKey,
 } from '@/components';
 import { draftFromResolved, draftToSpec, equalDraft, summarize } from '@/features/split/draft';
-import { refineCategory, useApp, useGroup, useMe } from '@/state';
+import { prepareCategoryModel, refineCategory, useApp, useGroup, useMe } from '@/state';
 import { useTheme } from '@/theme';
 
 import { applyKey, entryToMinor, minorToEntry } from './amountEntry';
@@ -234,6 +234,10 @@ function ExpenseForm({
       }),
   );
   useEffect(() => () => controller.dispose(), [controller]);
+  // The amount comes first (keypad-first), so the on-device model has loaded by the time the title pauses.
+  useEffect(() => {
+    if (controller.getState().source !== 'user') prepareCategoryModel();
+  }, [controller]);
   const chip = useSyncExternalStore(controller.subscribe, controller.getState);
   const [pickerOpen, setPickerOpen] = useState(draft.pickerOpen);
   const [typing, setTyping] = useState(false);

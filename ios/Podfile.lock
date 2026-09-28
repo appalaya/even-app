@@ -3,6 +3,8 @@ PODS:
     - ReactNativeDependencies
   - DoubleConversion (1.1.6):
     - ReactNativeDependencies
+  - EvenClassifier (1.0.0):
+    - ExpoModulesCore
   - EXConstants (58.0.7):
     - ExpoModulesCore
   - Expo (58.0.0-preview.7):
@@ -2262,6 +2264,7 @@ PODS:
 DEPENDENCIES:
   - boost (from `build/rndeps-facades/boost`)
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
+  - EvenClassifier (from `../modules/even-classifier/ios`)
   - EXConstants (from `../node_modules/expo-constants/ios`)
   - Expo (from `../node_modules/expo`)
   - ExpoApplication (from `../node_modules/expo-application/ios`)
@@ -2393,6 +2396,8 @@ EXTERNAL SOURCES:
     :path: build/rndeps-facades/boost
   DoubleConversion:
     :path: build/rndeps-facades/DoubleConversion
+  EvenClassifier:
+    :path: "../modules/even-classifier/ios"
   EXConstants:
     :path: "../node_modules/expo-constants/ios"
   Expo:
@@ -2646,6 +2651,7 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   boost: 8502bfdc46e2804408af2e163049ece181009af4
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
+  EvenClassifier: e19132c3216d35b3a7c6895a686498aba2a7736e
   EXConstants: 84edda25eda935be08c85c3cd7e27413c0552c71
   Expo: 76c7638e8f240757cf0442c0a250faa116fba83e
   ExpoApplication: d2634e14dd0f9ab9b3bfae4426182f411e067b38

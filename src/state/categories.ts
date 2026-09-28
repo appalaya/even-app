@@ -22,7 +22,9 @@
  *
  * Only the on-device model is ever used; a title never leaves the phone (design.md "Model refinement").
  */
-import { inferCategory as inferFromKeywords, type Category } from '@even/core';
+import { inferCategory as inferFromKeywords, isCategory, type Category } from '@even/core';
+
+import type { ClassifierAvailability } from '../../modules/even-classifier/src/EvenClassifier.types';
 
 /** Keyword inference: deterministic, offline, identical on every phone; `other` when nothing matches. */
 export function inferCategory(title: string): Category {
@@ -30,15 +32,79 @@ export function inferCategory(title: string): Category {
 }
 
 /**
- * The on-device model's answer for `title`, or null when no model is available or it has no answer.
- *
- * A stub until the native module lands: iOS `SystemLanguageModel` (Foundation Models) behind a one-function Expo
- * module `classifyExpense(title) → Category | null`, gated on availability; Android Gemini Nano via ML Kit GenAI.
- * Never Private Cloud Compute, never a cloud provider.
+ * The phone's on-device model, as `refineCategory` uses it: the `even-classifier` native module in the app
+ * (installed by `openAppServices.ts`), a stub in tests. iOS answers with Foundation Models' on-device system model
+ * (never Private Cloud Compute, never a cloud provider); Android reports unavailable for now.
  */
-export async function refineCategory(title: string): Promise<Category | null> {
-  void title;
-  return null;
+export interface OnDeviceModel {
+  availability(): Promise<ClassifierAvailability>;
+  /** A category id, or null; resolves within the native timeout (2.5 s on iOS). */
+  classifyExpense(title: string): Promise<string | null>;
+  /** Loads the model ahead of the first title. */
+  prewarm?(): Promise<void>;
+}
+
+export interface CategoryRefiner {
+  /** Add expense opened: check availability now and, if the model is there, load it before the first title. */
+  prepare(): void;
+  /** The model's category for `title`, or null. */
+  refine(title: string): Promise<Category | null>;
+}
+
+/**
+ * The model's two uses, bound to `model` (null: no model). Availability is asked once and kept for the session:
+ * unavailable, or an availability call that fails, means null for every title without asking the model. An answer
+ * that is not one of the sixteen category ids, a rejection, or a throw is null too, so the keyword guess stands. A
+ * model that becomes ready later (Apple Intelligence just turned on) is used from the next launch.
+ */
+export function createCategoryRefiner(model: OnDeviceModel | null): CategoryRefiner {
+  let usable: Promise<boolean> | null = null;
+  const isUsable = (): Promise<boolean> => {
+    if (model === null) return Promise.resolve(false);
+    usable ??= Promise.resolve()
+      .then(() => model.availability())
+      .then(
+        (availability) => availability.status === 'available',
+        () => false,
+      );
+    return usable;
+  };
+  return {
+    prepare() {
+      void isUsable()
+        .then((yes) => (yes ? model?.prewarm?.() : undefined))
+        .catch(() => undefined);
+    },
+    async refine(title) {
+      if (model === null || title.trim() === '' || !(await isUsable())) return null;
+      try {
+        const answer: unknown = await model.classifyExpense(title);
+        return isCategory(answer) ? answer : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+let refiner = createCategoryRefiner(null);
+
+/** Installs the on-device model (the app, once per process) or a stub (tests); null removes it. */
+export function setOnDeviceModel(model: OnDeviceModel | null): void {
+  refiner = createCategoryRefiner(model);
+}
+
+/** Add expense opened with a chip the model may refine: get the model ready before the first title. */
+export function prepareCategoryModel(): void {
+  refiner.prepare();
+}
+
+/**
+ * The on-device model's answer for `title`, or null when there is no model, it is unavailable, or it has no valid
+ * answer. The chip controller calls this after the 500 ms pause (`features/addExpense/chipMachine.ts`).
+ */
+export function refineCategory(title: string): Promise<Category | null> {
+  return refiner.refine(title);
 }
 
 export type ChipSource = 'keyword' | 'model' | 'user';

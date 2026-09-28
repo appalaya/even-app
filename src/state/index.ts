@@ -50,6 +50,7 @@ export {
   chipAfterTitle,
   inferCategory,
   initialChip,
+  prepareCategoryModel,
   refineCategory,
   shouldRefine,
   type CategoryChip,
