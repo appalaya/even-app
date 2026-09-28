@@ -325,13 +325,24 @@ overwriting a choice the user has made:
   applied only if that title still matches the field and `source` is not
   `user`; otherwise it is discarded. So a model result can be refined by a
   later model result, but never overwrite a tap.
-- Tapping Save freezes the chip; the event carries whatever it shows.
-- A keyword-inferred chip carries no tag (as drawn on the AddExpense board).
-  When the model changes the chip, the swap animates and the chip shows a
-  "suggested" tag briefly (about 1.5 s; a keystroke or a tap takes it away
-  sooner), so a change the user did not make is never invisible. A
-  user-chosen chip never shows the tag. With no title yet (and nothing
-  chosen) the chip is the dashed "Category" placeholder.
+- Tapping Save freezes the chip; the event carries whatever it shows, and
+  the chip keeps what it shows, the sparkle included.
+- The sparkle (AddExpenseStates, "Category chip"; AddExpense and
+  CategoryPicker draw it): while `source` is `model` (the model's pick, not
+  yet touched) the chip carries a small muted sparkle after its label,
+  Apple's mark for a model suggestion: SF Symbols' "sparkle" as a filled
+  14 pt glyph in `textSecondary`, 6 pt after the label, the chip's right
+  padding 12 instead of 14. There is no timer and no word; the chip's
+  accessibility label says "suggested". It goes when the user taps the chip
+  and picks a category, even the one the model picked (`source = user`): it
+  fades out over 250 ms, at once under Reduce Motion. A keystroke puts the
+  keyword guess back (`source = keyword`), which drops it at once; a model
+  reply for the new title brings it back. A model reply that agrees with the
+  keyword guess makes the chip the model's pick too, so it carries the
+  sparkle, with no swap. A keyword-inferred chip carries nothing, and a
+  user-chosen chip never carries it. When the model changes the chip, the
+  swap animates (a 260 ms fade and scale in from 0.9). With no title yet
+  (and nothing chosen) the chip is the dashed "Category" placeholder.
 
 Replies and taps are both handled on the JavaScript thread in arrival order,
 so there is no window in which a user tap can be lost.

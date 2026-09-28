@@ -17,7 +17,7 @@ interface Glyph {
   stroke: number;
   /** `stroke-linejoin` as drawn: `round` on most glyphs; the boards leave it at the default (miter) on a few. */
   join: 'round' | 'miter';
-  /** A filled glyph with no stroke (the share sheet's "More"). */
+  /** A filled glyph with no stroke (the share sheet's "More", the chip's sparkle). */
   filled?: boolean;
   shapes: readonly Shape[];
 }
@@ -280,6 +280,20 @@ const ICONS = {
   },
   /** "Report this group" (Group settings) · 20. */
   flag: { stroke: 2, join: 'round', shapes: [path('M5 21V4'), path('M5 4h11l-2 4 2 4H5')] },
+  /**
+   * The model's pick on the category chip, SF Symbols' "sparkle" as a filled path (AddExpense, CategoryPicker,
+   * AddExpenseStates "Category chip") · 14.
+   */
+  sparkle: {
+    stroke: 0,
+    join: 'round',
+    filled: true,
+    shapes: [
+      path(
+        'M12 1C12.9 7.6 16.4 11.1 23 12C16.4 12.9 12.9 16.4 12 23C11.1 16.4 7.6 12.9 1 12C7.6 11.1 11.1 7.6 12 1Z',
+      ),
+    ],
+  },
 } as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof ICONS;

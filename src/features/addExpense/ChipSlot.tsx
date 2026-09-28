@@ -14,9 +14,11 @@ const SWAP = new Keyframe({
 /**
  * The category chip beside the title (Add expense, extra states: "Category chip"):
  * - no title yet and nothing chosen: the dashed "Category" placeholder;
- * - inferred from the title (keyword or model), at rest: no tag;
- * - the model just changed it: the swap animates and the "suggested" tag shows for about 1.5 s (`chip.tagged`);
- * - chosen by you: looks the same as an inferred chip, never re-inferred.
+ * - a keyword match: no mark;
+ * - the model's pick, not yet touched (`chip.tagged`): the sparkle after the label, with no timer; when the model
+ *   changes the chip the swap animates;
+ * - chosen by you: looks the same as a keyword chip, never re-inferred; choosing over the model's pick fades the
+ *   sparkle out (250 ms, `CategoryChip`).
  * While the picker is open the chip carries the 2 pt accent ring (Category picker open).
  */
 export function ChipSlot({

@@ -1,4 +1,13 @@
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { layout, strokes, useTheme } from '@/theme';
 
@@ -14,9 +23,11 @@ export interface CategoryChipProps {
   /**
    * As the Add expense boards draw the chip (Add expense, extra states: "Category chip"):
    * - `placeholder`: no title yet: a dashed `outlineStrong` outline and "Category" in `textSecondary` (first open);
-   * - `inferred`: from the title (keyword or model), at rest: soft accent, no tag;
-   * - `suggested`: the model just changed it: the same chip with the "suggested" tag, shown for about 1.5 s;
-   * - `chosen`: picked by you: looks the same as `inferred`, and is never re-inferred.
+   * - `inferred`: a keyword match: soft accent, no mark;
+   * - `suggested`: the model's pick, not yet touched: the same chip with the sparkle after the label, no timer;
+   * - `chosen`: picked by you: looks the same as `inferred`, and is never re-inferred. Going from `suggested` to
+   *   `chosen` fades the sparkle out over 250 ms (at once under Reduce Motion); any other way it goes, it goes at
+   *   once.
    */
   state: 'placeholder' | 'inferred' | 'suggested' | 'chosen';
   /** The category picker is open under it: a 2 pt accent ring around the chip (Category picker open). */
@@ -24,9 +35,13 @@ export interface CategoryChipProps {
   onPress?: () => void;
 }
 
+/** The sparkle's fade when you choose a category over the model's pick (AddExpenseStates, "Category chip"). */
+const SPARKLE_FADE_MS = 250;
+
 /**
- * The category chip inside the title field: 40 tall, fully round, soft accent, emoji 18/22, label 15/20
- * semibold and "suggested" 13/18 medium, all in the accent; the placeholder is outlined instead.
+ * The category chip inside the title field: 40 tall, fully round, soft accent, emoji 18/22 and label 15/20
+ * semibold in the accent; the model's pick adds a 14 pt sparkle in `textSecondary` after the label (padding
+ * 10 / 6 / 6 / 12 around emoji, label, sparkle; 14 on the right without it). The placeholder is outlined instead.
  */
 export function CategoryChip({
   emoji,
@@ -36,6 +51,18 @@ export function CategoryChip({
   onPress,
 }: CategoryChipProps) {
   const { tokens } = useTheme();
+  const reduceMotion = useReducedMotion();
+  const tagged = state === 'suggested';
+  // The model's pick just became your choice: the sparkle stays in place and fades out. A keystroke's keyword
+  // guess (or anything else) takes it away at once, as does Reduce Motion.
+  const [wasTagged, setWasTagged] = useState(tagged);
+  const [fading, setFading] = useState(false);
+  if (tagged !== wasTagged) {
+    setWasTagged(tagged);
+    setFading(!tagged && state === 'chosen' && !reduceMotion);
+  }
+  const faded = useCallback(() => setFading(false), []);
+  const sparkle = tagged || fading;
   const ring = choosing ? `0 0 0 ${strokes.ring}px ${tokens.accent}` : undefined;
   if (state === 'placeholder') {
     return (
@@ -57,7 +84,6 @@ export function CategoryChip({
       </Pressable>
     );
   }
-  const tagged = state === 'suggested';
   const name = label ?? '';
   const spoken =
     state === 'chosen'
@@ -74,7 +100,7 @@ export function CategoryChip({
       accessibilityState={{ expanded: choosing }}
       style={[
         styles.category,
-        { backgroundColor: tokens.accentSoft, paddingRight: tagged ? 12 : 14, boxShadow: ring },
+        { backgroundColor: tokens.accentSoft, paddingRight: sparkle ? 12 : 14, boxShadow: ring },
       ]}
     >
       <AppText style={styles.emoji} maxFontSizeMultiplier={1.2}>
@@ -83,12 +109,32 @@ export function CategoryChip({
       <AppText variant="subhead" weight="semibold" color="accent">
         {name}
       </AppText>
-      {tagged && (
-        <AppText variant="caption" weight="medium" color="accent">
-          suggested
-        </AppText>
-      )}
+      {sparkle && <Sparkle fading={fading} onFaded={faded} />}
     </Pressable>
+  );
+}
+
+/** The model's-pick sparkle, 14 pt in `textSecondary`, hidden from assistive tech (the chip's label says it). */
+function Sparkle({ fading, onFaded }: { fading: boolean; onFaded: () => void }) {
+  const { tokens } = useTheme();
+  const opacity = useSharedValue(1);
+  useEffect(() => {
+    if (!fading) {
+      cancelAnimation(opacity);
+      opacity.set(1);
+      return;
+    }
+    opacity.set(
+      withTiming(0, { duration: SPARKLE_FADE_MS }, (finished) => {
+        if (finished === true) scheduleOnRN(onFaded);
+      }),
+    );
+  }, [fading, onFaded, opacity]);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.get() }));
+  return (
+    <Animated.View style={style}>
+      <Icon name="sparkle" size={14} color={tokens.textSecondary} />
+    </Animated.View>
   );
 }
 

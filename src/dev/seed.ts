@@ -1367,7 +1367,7 @@ function draftFor(b: BanffC, init: Partial<Omit<SheetDraft, 'id' | 'groupId'>>):
   }).id;
 }
 
-/** The model just changed the chip: the "suggested" tag shows (for a still screenshot, until the sheet closes). */
+/** The model's pick, not yet touched: the chip carries the sparkle, with no timer. */
 function suggested(category: ChipState['category']): ChipState {
   return { category, source: 'model', frozen: false, swaps: 1, tagged: true };
 }
@@ -1394,8 +1394,10 @@ export function planFor(b: BanffC, state: SheetState): SheetPlan {
       // Add expense, extra states: first open.
       return expense(null);
     case 'add-expense':
-      // AddExpense: the keyword table puts "shuttle" in Transit.
-      return expense(draftFor(b, shuttle));
+      // AddExpense: the keyword table does not know "Surly's brewing"; the model's pick is Drinks, with its sparkle.
+      return expense(
+        draftFor(b, { title: "Surly's brewing", amountText: '36', chip: suggested('drinks') }),
+      );
     case 'add-typing':
       // Typing the title: the keypad hides, the amount shrinks, Save sits above the keyboard.
       return expense(draftFor(b, shuttle), 'focus=title');
@@ -1407,7 +1409,7 @@ export function planFor(b: BanffC, state: SheetState): SheetPlan {
     case 'add-date':
       return expense(draftFor(b, shuttle), 'sheet=date');
     case 'add-picker':
-      // CategoryPicker: the model suggested Lodging for "Grizzly House"; the picker is open.
+      // CategoryPicker: the model picked Lodging for "Grizzly House" (the sparkle); the picker is open.
       return expense(
         draftFor(b, {
           title: 'Grizzly House',
@@ -1417,7 +1419,7 @@ export function planFor(b: BanffC, state: SheetState): SheetPlan {
         }),
       );
     case 'add-suggested':
-      // The model just changed the chip (extra states: "about 1.5 s").
+      // The model's pick, not yet touched: the sparkle, no timer (AddExpenseStates, "Category chip").
       return expense(
         draftFor(b, { title: 'Grizzly House', amountText: '148', chip: suggested('lodging') }),
       );

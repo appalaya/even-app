@@ -1015,6 +1015,7 @@ function ControlSection() {
   const [look, setLook] = useState<AppearancePreference>('system');
   const [notify, setNotify] = useState(true);
   const [nathan, setNathan] = useState(true);
+  const [drinks, setDrinks] = useState<'suggested' | 'chosen'>('suggested');
   return (
     <>
       <Title>Segmented controls</Title>
@@ -1068,7 +1069,7 @@ function ControlSection() {
       </Gutter>
       <Title>Chips</Title>
       <Gutter>
-        <Note>Category: no title yet · inferred · just changed by the model · chosen by you</Note>
+        <Note>Category: no title yet · keyword match · the model&apos;s pick · chosen by you</Note>
         <Row gap={8}>
           <CategoryChip state="placeholder" />
           <CategoryChip emoji="🚆" label="Transit" state="inferred" />
@@ -1077,10 +1078,21 @@ function ControlSection() {
           <CategoryChip emoji="🏨" label="Lodging" state="suggested" />
           <CategoryChip emoji="🍽️" label="Food" state="chosen" />
         </Row>
-        <Note>Choosing (the picker is open): suggested · chosen</Note>
+        <Note>Choosing (the picker is open): the model&apos;s pick · chosen</Note>
         <Row gap={12}>
           <CategoryChip emoji="🏨" label="Lodging" state="suggested" choosing />
           <CategoryChip emoji="🍽️" label="Food" state="chosen" choosing />
+        </Row>
+        <Note>
+          Tap: choosing over the model&apos;s pick fades the sparkle (250 ms); tap again to reset
+        </Note>
+        <Row gap={8}>
+          <CategoryChip
+            emoji="🍻"
+            label="Drinks"
+            state={drinks}
+            onPress={() => setDrinks(drinks === 'suggested' ? 'chosen' : 'suggested')}
+          />
         </Row>
         <Note>Members: removable · toggle off / on</Note>
         <Row gap={8}>
@@ -1326,8 +1338,8 @@ function SheetSection({ startOpen }: { startOpen: boolean }) {
           <TextField
             variant="title"
             accessibilityLabel="Title"
-            defaultValue="Lake Louise shuttle"
-            trailing={<CategoryChip emoji="🚆" label="Transit" state="suggested" />}
+            defaultValue="Surly's brewing"
+            trailing={<CategoryChip emoji="🍻" label="Drinks" state="suggested" />}
           />
           <Button label="Save" haptic="success" onPress={() => setOpen(false)} />
           <Keypad onKey={() => {}} />
