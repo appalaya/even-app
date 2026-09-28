@@ -1,14 +1,14 @@
 /**
  * Category helpers for the add-expense sheet (design.md "Categories", "Model refinement", "Chip state machine").
  *
- * The UI owns the category chip. This module gives it the two inference sources and the transition rules as pure
- * functions, so the contract is written once and tested:
+ * The UI owns the category chip. This module gives it the inference sources (history, the keyword table, the
+ * on-device model) and the transition rules as pure functions, so the contract is written once and tested:
  *
  * The chip holds `{ category, source }` with `source ∈ keyword | model | user`:
  * - A user tap sets `source = user`, cancels any in-flight model request, and drops any reply that arrives
  *   afterwards. Later title edits do not re-infer (`chipAfterTap`). `user` is sticky until the sheet is dismissed.
- * - While `source` is `keyword` or `model`, every keystroke runs keyword inference, applied immediately with
- *   `source = keyword` (`chipAfterTitle`).
+ * - While `source` is `keyword` or `model`, every keystroke runs instant inference (history first, then the keyword
+ *   table: `inferCategory`), applied immediately with `source = keyword` (`chipAfterTitle`).
  * - When the user pauses typing (500 ms), and while `source` is not `user`, the UI asks the model (`refineCategory`)
  *   and remembers the exact title it asked about (`shouldRefine`).
  * - A reply is applied only if that title still matches the field and `source` is not `user`; otherwise it is
@@ -24,13 +24,81 @@
  *
  * Only the on-device model is ever used; a title never leaves the phone (design.md "Model refinement").
  */
-import { inferCategory as inferFromKeywords, isCategory, type Category } from '@even/core';
+import {
+  inferCategory as inferFromKeywords,
+  isCategory,
+  recallCategory,
+  rememberCategories,
+  type Category,
+  type CategoryMemory,
+  type GroupState,
+} from '@even/core';
 
 import type { ClassifierAvailability } from '../../modules/even-classifier/src/EvenClassifier.types';
 
-/** Keyword inference: deterministic, offline, identical on every phone; `other` when nothing matches. */
+// ---------- History first ----------
+
+/**
+ * Where the chip's history comes from: the reduced states of the groups this process holds in memory, the open
+ * group's first (`GroupStateStore.peekStates`, installed by `openAppServices.ts`). History is the expenses already in
+ * each group's decrypted log, so it needs no storage of its own: nothing is read from disk and nothing is written.
+ * The index over each state lives in memory, keyed by the state object, and goes when the state is replaced.
+ */
+export type CategoryHistorySource = (openGroup: string | null) => readonly GroupState[];
+
+let historySource: CategoryHistorySource | null = null;
+let openGroup: string | null = null;
+const memories = new WeakMap<GroupState, CategoryMemory>();
+
+function memoryOf(state: GroupState): CategoryMemory {
+  let memory = memories.get(state);
+  if (memory === undefined) {
+    const past = [...state.expenses.values()].map((e) => ({
+      title: e.title,
+      category: e.category,
+      at: e.updatedAt,
+    }));
+    memory = rememberCategories(past);
+    memories.set(state, memory);
+  }
+  return memory;
+}
+
+/** Installs the history source (the app, once services are open) or a stub (tests); null removes it. */
+export function setCategoryHistory(source: CategoryHistorySource | null): void {
+  historySource = source;
+}
+
+/** The category saved with the same or a similar title earlier (`recallCategory`), or null. Never throws. */
+function recall(title: string): Category | null {
+  if (historySource === null) return null;
+  try {
+    return recallCategory(title, historySource(openGroup).map(memoryOf))?.category ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the chip's instant guess came from: `history`, the keyword `table`, or `none` (the table found nothing). */
+export type GuessSource = 'history' | 'table' | 'none';
+
+/**
+ * The chip's instant guess for `title`, on every keystroke: the category saved with the same or a similar title
+ * earlier (this group first, then any group on this phone), else the keyword table's, else `other`.
+ */
+export function guessCategory(title: string): { category: Category; from: GuessSource } {
+  const recalled = recall(title);
+  if (recalled !== null) return { category: recalled, from: 'history' };
+  const category = inferFromKeywords(title);
+  return { category, from: category === 'other' ? 'none' : 'table' };
+}
+
+/**
+ * Instant inference: history first, then the keyword table (deterministic, offline, identical on every phone);
+ * `other` when neither knows the title. With no history installed it is the table alone.
+ */
 export function inferCategory(title: string): Category {
-  return inferFromKeywords(title);
+  return guessCategory(title).category;
 }
 
 /**
@@ -96,8 +164,12 @@ export function setOnDeviceModel(model: OnDeviceModel | null): void {
   refiner = createCategoryRefiner(model);
 }
 
-/** Add expense opened with a chip the model may refine: get the model ready before the first title. */
-export function prepareCategoryModel(): void {
+/**
+ * Add expense opened with a chip that may still be inferred: get the model ready before the first title, and look up
+ * history in `groupId` (the open group) before the others.
+ */
+export function prepareCategoryModel(groupId: string | null = null): void {
+  openGroup = groupId;
   refiner.prepare();
 }
 

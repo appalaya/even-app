@@ -1,7 +1,7 @@
 /**
  * The device wiring: expo-sqlite store, expo-secure-store secrets, `HttpTransport` per server origin, expo file
- * sharing, expo-notifications' permission, and the category chip's on-device model. One instance per process (the
- * background task, a later step, reuses it). Never imported by Node tests.
+ * sharing, expo-notifications' permission, and the category chip's on-device model and history. One instance per
+ * process (the background task, a later step, reuses it). Never imported by Node tests.
  */
 import * as Notifications from 'expo-notifications';
 
@@ -11,7 +11,7 @@ import { secrets } from '../services/secrets/secureStore';
 import { openStore } from '../services/storage/openStore';
 import { HttpTransport } from '../services/sync/httpTransport';
 import { createInfoCache } from '../services/sync/info';
-import { setOnDeviceModel } from './categories';
+import { setCategoryHistory, setOnDeviceModel } from './categories';
 import type { NotificationPermission, NotificationStatus } from './prefs';
 import { createAppServices, type AppServices } from './services';
 
@@ -57,9 +57,14 @@ export function openAppServices(): Promise<AppServices> {
         notifications,
       }),
     );
-    run.catch(() => {
-      opened = null;
-    });
+    // History first on the category chip: the expenses already in the groups this process has decrypted, read in
+    // memory and never stored again (design.md "Model refinement").
+    run.then(
+      (services) => setCategoryHistory((openGroup) => services.groupState.peekStates(openGroup)),
+      () => {
+        opened = null;
+      },
+    );
     opened = run;
   }
   return opened;

@@ -235,31 +235,38 @@ describe('inferCategory', () => {
   });
 });
 
-describe('categories.eval.json (the on-device model\'s labelled titles)', () => {
+describe('categories.eval.json (labelled titles for the keyword table, history and the on-device model)', () => {
   const set = JSON.parse(readFileSync(new URL('./categories.eval.json', import.meta.url), 'utf8')) as {
     about: unknown;
-    cases: { title: unknown; category: unknown }[];
+    cases: { title: unknown; category: unknown; split: unknown }[];
   };
 
-  it('holds 60 to 100 labelled titles, each a valid title with one of the sixteen categories', () => {
+  it('holds 180 to 260 labelled titles, each a valid title with one of the sixteen categories and a split', () => {
     expect(typeof set.about).toBe('string');
-    expect(set.cases.length).toBeGreaterThanOrEqual(60);
-    expect(set.cases.length).toBeLessThanOrEqual(100);
+    expect(set.cases.length).toBeGreaterThanOrEqual(180);
+    expect(set.cases.length).toBeLessThanOrEqual(260);
     for (const c of set.cases) {
-      expect(Object.keys(c).sort()).toEqual(['category', 'title']);
+      expect(Object.keys(c).sort()).toEqual(['category', 'split', 'title']);
       expect(typeof c.title).toBe('string');
       const title = c.title as string;
       expect(title.trim()).toBe(title);
       expect(title.length).toBeGreaterThan(0);
       expect(title.length).toBeLessThanOrEqual(LIMITS.titleMax);
       expect([title, isCategory(c.category)]).toEqual([title, true]);
+      expect([title, c.split]).toEqual([title, expect.stringMatching(/^(train|heldout)$/)]);
     }
   });
 
-  it('covers every category and repeats no title', () => {
-    const covered = new Set(set.cases.map((c) => c.category));
-    for (const c of CATEGORIES) expect([c, covered.has(c)]).toEqual([c, true]);
+  it('covers every category in both splits and repeats no title', () => {
+    for (const split of ['train', 'heldout']) {
+      const covered = new Set(set.cases.filter((c) => c.split === split).map((c) => c.category));
+      for (const c of CATEGORIES) expect([split, c, covered.has(c)]).toEqual([split, c, true]);
+    }
     const titles = set.cases.map((c) => (c.title as string).toLowerCase());
     expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  it('keeps a held-out split of at least 60 titles that prompts and rules are never tuned on', () => {
+    expect(set.cases.filter((c) => c.split === 'heldout').length).toBeGreaterThanOrEqual(60);
   });
 });

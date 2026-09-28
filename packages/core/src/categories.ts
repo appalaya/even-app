@@ -172,6 +172,17 @@ function normalize(text: string): string {
     .trim();
 }
 
+/**
+ * A title's words as keyword inference sees them (`normalize`, split on spaces): "Tim Horton's, Canmore" →
+ * ["tim", "hortons", "canmore"]. Empty for a title with no letters or digits. The history lookup
+ * (categoryHistory.ts) matches on these.
+ */
+export function titleWords(title: string): string[] {
+  if (typeof title !== 'string') return [];
+  const norm = normalize(title);
+  return norm === '' ? [] : norm.split(' ');
+}
+
 interface PreparedKeyword {
   readonly needle: string; // " keyword ", so indexOf on " title " matches whole words only
   readonly length: number;

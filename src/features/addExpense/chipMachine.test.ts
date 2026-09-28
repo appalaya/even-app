@@ -1,7 +1,7 @@
-import { CATEGORIES, type Category } from '@even/core';
-import { describe, expect, it } from 'vitest';
+import { CATEGORIES, type Category, type GroupState } from '@even/core';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { carriesSparkle } from '@/state/categories';
+import { carriesSparkle, setCategoryHistory } from '@/state/categories';
 
 import {
   ChipController,
@@ -408,5 +408,39 @@ describe('ChipController', () => {
     chip.setTitle('Taxi '); // same inference
     chip.tap('transit');
     expect(calls).toBe(2);
+  });
+});
+
+describe('history first on the chip', () => {
+  afterEach(() => setCategoryHistory(null));
+  const saved = (...expenses: [string, Category][]) =>
+    ({
+      expenses: new Map(
+        expenses.map(([title, category], i) => [`e${i}`, { title, category, updatedAt: i }]),
+      ),
+    }) as unknown as GroupState;
+
+  it('shows a recalled category at once, as a keyword chip, and never asks the model about it', async () => {
+    setCategoryHistory(() => [saved(['Nourish Bistro', 'food'], ['Dry cleaning', 'other'])]);
+    const { chip, clock, model } = controller();
+    chip.setTitle('Nourish');
+    expect(chip.getState()).toMatchObject({ category: 'food', source: 'keyword', tagged: false });
+    expect(shouldAskModel(chip.getState(), 'Nourish')).toBe(false);
+    clock.advance(MODEL_PAUSE_MS);
+    chip.setTitle('Dry cleaning');
+    clock.advance(MODEL_PAUSE_MS);
+    expect(model.asked).toEqual([]);
+    expect(chip.freeze()).toBe('other');
+  });
+
+  it('asks the model again once the title is one history does not know', async () => {
+    setCategoryHistory(() => [saved(['Nourish Bistro', 'food'])]);
+    const { chip, clock, model } = controller();
+    chip.setTitle('Nourish');
+    clock.advance(MODEL_PAUSE_MS);
+    chip.setTitle('Nourish Bistro and Bar');
+    expect(chip.getState()).toMatchObject({ category: 'drinks', source: 'keyword' });
+    clock.advance(MODEL_PAUSE_MS);
+    expect(model.asked.map((a) => a.title)).toEqual(['Nourish Bistro and Bar']);
   });
 });

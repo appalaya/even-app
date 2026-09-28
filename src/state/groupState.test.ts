@@ -382,6 +382,48 @@ describe('balances', () => {
   }, 60_000);
 });
 
+describe("peekStates (the category chip's history)", () => {
+  it('returns the states derived so far, the open group first, and forgets a left group', async () => {
+    const w = await setup('fake');
+    const a = await w.device('A');
+    const create = (name: string) =>
+      a.services.groups.createGroup({
+        name,
+        currency: 'CAD',
+        myName: 'Maya',
+        people: [],
+        serverUrl: SERVER,
+      });
+    const banff = await create('Banff');
+    const home = await create('Home');
+    const spend = (localId: string, memberId: string, title: string) =>
+      a.services.groups.addExpense(localId, {
+        title,
+        amount: 1_000,
+        paidBy: memberId,
+        date: '2026-02-01',
+        category: 'food',
+        split: { mode: 'equal', members: [memberId] },
+      });
+    await spend(banff.localId, banff.memberId, 'Nourish');
+    await spend(home.localId, home.memberId, 'Safeway');
+    await a.services.groupState.get(banff.localId);
+    await a.services.groupState.get(home.localId);
+    const titles = (states: GroupState[]) =>
+      states.map((s) => [...s.expenses.values()].map((e) => e.title));
+    expect(titles(a.services.groupState.peekStates(home.localId))).toEqual([
+      ['Safeway'],
+      ['Nourish'],
+    ]);
+    expect(titles(a.services.groupState.peekStates(banff.localId))).toEqual([
+      ['Nourish'],
+      ['Safeway'],
+    ]);
+    await a.services.groups.leaveGroup(home.localId);
+    expect(titles(a.services.groupState.peekStates(home.localId))).toEqual([['Nourish']]);
+  });
+});
+
 describe('sortGroupRows', () => {
   const row = (localId: string, lastActivityAt: number, archived = false): GroupListRow => ({
     localId,

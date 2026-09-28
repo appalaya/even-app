@@ -310,6 +310,22 @@ export class GroupStateStore {
     return this.listSnapshot;
   }
 
+  /**
+   * The reduced states of the groups derived so far, `first`'s before the others: the category chip's history
+   * (design.md "Model refinement"). Synchronous and in memory only: it never derives, decrypts or reads the store, so
+   * a group not opened yet this launch is simply not in it. A left group is gone (`evict`).
+   */
+  peekStates(first: string | null = null): GroupState[] {
+    const states: GroupState[] = [];
+    for (const [localId, snapshot] of this.snapshots) {
+      const state = snapshot.derived?.state;
+      if (state == null) continue;
+      if (localId === first) states.unshift(state);
+      else states.push(state);
+    }
+    return states;
+  }
+
   subscribeList(listener: () => void): () => void {
     this.listListeners.add(listener);
     if (this.listSnapshot === LOADING_LIST || this.listInflight === null) this.refreshList();

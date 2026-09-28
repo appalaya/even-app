@@ -234,10 +234,11 @@ function ExpenseForm({
       }),
   );
   useEffect(() => () => controller.dispose(), [controller]);
-  // The amount comes first (keypad-first), so the on-device model has loaded by the time the title pauses.
+  // The amount comes first (keypad-first), so the on-device model has loaded by the time the title pauses. History is
+  // looked up in this group first.
   useEffect(() => {
-    if (controller.getState().source !== 'user') prepareCategoryModel();
-  }, [controller]);
+    if (controller.getState().source !== 'user') prepareCategoryModel(groupId);
+  }, [controller, groupId]);
   const chip = useSyncExternalStore(controller.subscribe, controller.getState);
   const [pickerOpen, setPickerOpen] = useState(draft.pickerOpen);
   const [typing, setTyping] = useState(false);

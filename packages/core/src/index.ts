@@ -8,6 +8,7 @@ export * from './envelope.js';
 export * from './invite.js';
 export * from './money.js';
 export * from './categories.js';
+export * from './categoryHistory.js';
 export * from './schema.js';
 export * from './reduce.js';
 export * from './balances.js';

@@ -24,7 +24,7 @@
  */
 import type { Category } from '@even/core';
 
-import { inferCategory } from '@/state/categories';
+import { guessCategory, inferCategory } from '@/state/categories';
 
 export type ChipSource = 'keyword' | 'model' | 'user';
 
@@ -91,9 +91,13 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
   }
 }
 
-/** Whether a pause in typing on `title` should ask the model. */
+/**
+ * Whether a pause in typing on `title` should ask the model: not once Save or a tap has settled the chip, not for a
+ * blank title, and not when history recalled the title (the person's own earlier choice stands).
+ */
 export function shouldAskModel(state: ChipState, title: string): boolean {
-  return !state.frozen && state.source !== 'user' && title.trim() !== '';
+  if (state.frozen || state.source === 'user' || title.trim() === '') return false;
+  return guessCategory(title).from !== 'history';
 }
 
 /** The pause after the last keystroke before the model is asked (design.md "Model refinement"). */

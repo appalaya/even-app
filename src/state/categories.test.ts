@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CATEGORIES, inferCategory as coreInfer } from '@even/core';
+import { CATEGORIES, inferCategory as coreInfer, type Category, type GroupState } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -11,10 +11,12 @@ import {
   chipAfterTap,
   chipAfterTitle,
   createCategoryRefiner,
+  guessCategory,
   inferCategory,
   initialChip,
   prepareCategoryModel,
   refineCategory,
+  setCategoryHistory,
   setOnDeviceModel,
   shouldRefine,
   type OnDeviceModel,
@@ -168,6 +170,88 @@ describe('categories', () => {
     expect(carriesSparkle(chipAfterTap(model, 'drinks'))).toBe(false);
     expect(carriesSparkle(chipAfterTitle(model, "Surly's brewing co"))).toBe(false);
     expect(carriesSparkle(initialChip('Uber', 'food'))).toBe(false);
+  });
+});
+
+/** A group's reduced state with just the expenses history reads (title, category, when last changed). */
+function groupWith(...expenses: [title: string, category: Category, at?: number][]): GroupState {
+  const map = new Map(
+    expenses.map(([title, category, at = 1], i) => [
+      `e${i}`,
+      { id: `e${i}`, title, category, addedAt: at, updatedAt: at },
+    ]),
+  );
+  return { expenses: map } as unknown as GroupState;
+}
+
+describe('history first (the category saved with the same or a similar title earlier)', () => {
+  afterEach(() => {
+    setCategoryHistory(null);
+    prepareCategoryModel(null);
+  });
+
+  it('recalls a saved title before the keyword table, and says where each guess came from', () => {
+    setCategoryHistory(() => [groupWith(['Nourish Bistro', 'food'], ['Uber', 'food'])]);
+    expect(guessCategory('Nourish')).toEqual({ category: 'food', from: 'history' });
+    expect(guessCategory('uber')).toEqual({ category: 'food', from: 'history' }); // a saved choice beats the table
+    expect(guessCategory('Uber Eats')).toEqual({ category: 'food', from: 'table' });
+    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table' });
+    expect(guessCategory('Rundle')).toEqual({ category: 'other', from: 'none' });
+    expect(inferCategory('Nourish Bistro')).toBe('food');
+    expect(chipAfterTitle(initialChip(''), 'Nourish')).toEqual({
+      category: 'food',
+      source: 'keyword',
+    });
+  });
+
+  it('looks in the open group first (set when Add expense opens), then every other group', () => {
+    const banff = groupWith(['Rundle', 'drinks']);
+    const home = groupWith(['Rundle', 'activities'], ['Nesters', 'groceries']);
+    const asked: (string | null)[] = [];
+    setCategoryHistory((open) => {
+      asked.push(open);
+      return open === 'banff' ? [banff, home] : [home, banff];
+    });
+    prepareCategoryModel('banff');
+    expect(inferCategory('Rundle')).toBe('drinks');
+    expect(inferCategory('Nesters')).toBe('groceries'); // not in the open group: any group on this phone
+    prepareCategoryModel('home');
+    expect(inferCategory('Rundle')).toBe('activities');
+    expect(asked).toEqual(['banff', 'banff', 'home']);
+  });
+
+  it('learns from a tap once it is saved: the replaced state is indexed afresh', () => {
+    let state = groupWith(['Dry cleaning', 'rental', 1]);
+    setCategoryHistory(() => [state]);
+    expect(inferCategory('Dry cleaning')).toBe('rental');
+    // The person tapped Other and saved an expense titled the same: the group state is replaced.
+    state = groupWith(['Dry cleaning', 'rental', 1], ['dry cleaning', 'other', 2]);
+    expect(inferCategory('Dry cleaning')).toBe('other');
+  });
+
+  it('indexes each state once, however many keystrokes ask', () => {
+    let reads = 0;
+    const state = groupWith(['Nourish Bistro', 'food']);
+    const expenses = state.expenses;
+    Object.defineProperty(state, 'expenses', {
+      get: () => {
+        reads += 1;
+        return expenses;
+      },
+    });
+    setCategoryHistory(() => [state]);
+    for (const title of ['N', 'No', 'Nou', 'Nourish', 'Nourish B']) inferCategory(title);
+    expect(reads).toBe(1);
+  });
+
+  it('falls back to the keyword table when there is no history or the source fails', () => {
+    expect(guessCategory('Nourish')).toEqual({ category: 'other', from: 'none' });
+    setCategoryHistory(() => {
+      throw new Error('not open yet');
+    });
+    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table' });
+    setCategoryHistory(() => []);
+    expect(inferCategory('Parkade')).toBe(coreInfer('Parkade'));
   });
 });
 
