@@ -277,20 +277,48 @@ on every keystroke and fills the category chip; one tap changes it. It is
 deterministic, offline, and identical on every phone. Splitwise does the same
 thing with a bigger taxonomy.
 
-**Model refinement.** When the user pauses typing (500 ms) and the device has
-an on-device language model, the title is sent to it with guided generation
-constrained to the `Category` enum, and the answer replaces the keyword guess
-on the chip. On iOS 27 this is `SystemLanguageModel` from the Foundation
-Models framework behind a one-function Expo module,
-`classifyExpense(title) → Category | null`, gated on
-`SystemLanguageModel.availability`. On Android it is Gemini Nano through the
-ML Kit GenAI prompt API where the device has it. **Only the on-device model,
-ever**: the same API can route to Private Cloud Compute or to a cloud provider
-through the provider protocol, and a title must never leave the phone. The
-model handles the long tail the table cannot ("Sunshine Village lift",
-"Fairmont", "Nourish"); the table remains the instant, universal baseline.
-The model's accuracy is checked with Apple's Evaluations framework against a
-labelled title set kept in the repo; the table with a unit test.
+**Model refinement.** The chip's guess comes from three sources in order, and
+only the last is a model:
+
+1. **History.** The category saved with the same or a similar title earlier,
+   in the open group first and then in any group on this phone
+   (`recallCategory`, `core/categoryHistory.ts`). *Same* is equal after the
+   keyword table's normalisation with a trailing "s" folded ("Tim Horton's" =
+   "tim hortons"). *Similar* is one title plus trailing words the table cannot
+   read ("Safeway run", "Shell Canmore"), so "Costco" never recalls "Costco
+   gas" and "Uber" never recalls "Uber Eats". Every same match beats every
+   similar one, and the latest save wins among equal titles. History is the
+   expenses already in each group's decrypted state
+   (`GroupStateStore.peekStates`, memory only; the index is kept per state
+   object and nothing is written), so a tap that gets saved teaches the phone
+   with no new storage. A recalled title shows at once, carries no sparkle, and
+   is never sent to the model.
+2. **The keyword table** (above), on every keystroke. A keyword hit stands.
+3. **The on-device model**, only for a title neither knows (the chip shows
+   Other). When the user pauses typing (500 ms) and the device has an
+   on-device language model, the title is sent to it with guided generation
+   constrained to the `Category` enum, and a valid answer replaces Other and
+   carries the sparkle (Chip state machine). On iOS 27 this is
+   `SystemLanguageModel` from the Foundation Models framework behind a small
+   Expo module, gated on `SystemLanguageModel.availability`. On Android it
+   would be Gemini Nano through the ML Kit GenAI prompt API.
+
+**Only the on-device model, ever**: the same API can route to Private Cloud
+Compute or to a cloud provider through the provider protocol, and a title must
+never leave the phone.
+
+A keyword hit stands because, measured, the model overturned a right keyword
+chip about as often as it fixed a wrong one (10 against 11 over 214 titles
+with the tuned prompt), and an overturned right chip is the swap a person
+sees. Giving the model the table's guess as a hint, gating on a
+self-reported confidence, voting over three samples, and naming the merchant's
+kind first all did no better (table below). Foundation Models exposes no
+log-probabilities or top-k alternatives, so there is no real confidence
+signal to gate on; the self-reported one came back `high` on wrong answers
+("Resort fee" → lodging, "The Keg" → drinks) and `medium` on right fixes
+("Hotel bar" → drinks). The cost: a title the table misreads ("Hotel bar",
+"Gas station snacks", "Subway footlong") keeps its keyword guess until a tap,
+and history then remembers the tap.
 
 *As built:* the local Expo module `modules/even-classifier` exposes
 `classifyExpense(title)`, `availability()` and `prewarm()`. On iOS it uses
@@ -299,17 +327,55 @@ whose instructions give each category's meaning, and guided generation into a
 `@Generable` enum of the sixteen ids (a test keeps the enum equal to
 `CATEGORIES` and fails if the native code names any other model). A reply
 comes within 2.5 s or not at all; a refusal, a guardrail hit or any error is
-no answer, and `refineCategory` drops anything that is not a category id.
-Availability (`available`, or unavailable with the framework's reason:
-`deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`) is asked
-once per launch, so a model that becomes ready is used from the next launch.
-Add expense calls `prewarm` when it opens, so the first title is not a cold
-start. Android reports unavailable (`notBuilt`): ML Kit's Prompt API needs
-minSdk 26 (the app is on 24), brings ML Kit's usage logging, and is still
-beta. The labelled set is `packages/core/src/categories.eval.json` (96
-titles); `npm run eval:categories` scores it with a plain Swift script, not
-yet the Evaluations framework: 91% on macOS 27's model, against 68% for the
-keyword table alone.
+no answer, and `refineCategory` drops anything that is not a category id. The
+chip controller asks only when `shouldAskModel` holds (`guessCategory(title)`
+is `none`). Availability (`available`, or unavailable with the framework's
+reason: `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`)
+is asked once per launch, so a model that becomes ready is used from the next
+launch. Add expense calls `prepareCategoryModel(groupId)` when it opens: it
+prewarms the model, so the first title is not a cold start, and points history
+at that group first. Android reports unavailable (`notBuilt`): ML Kit's Prompt
+API needs minSdk 26 (the app is on 24), brings ML Kit's usage logging, and is
+still beta. Custom adapters are not an option: `SystemLanguageModel.Adapter`
+is obsoleted in the iOS 27 SDK (deprecated since 26.4).
+
+*Measurements.* `packages/core/src/categories.eval.json` holds 214 labelled
+titles: 133 `train` (the first 96 plus 37 long-tail ones) that prompts and
+rules may be tuned on, and 81 `heldout` that never are. `npm run
+eval:categories` adds each title's keyword guess and leave-one-out history
+recall from `packages/core`, then scores strategies with a plain Swift script
+compiled together with the module's classifier (`--strategy all`; `+g` puts
+history first; `shipped` is exactly the app's path). On macOS 27's model
+("AFM 3 Core Advanced"), with *undone* counting right chips swapped away after
+the pause, and latency per model request, prewarmed:
+
+| Strategy | Train | Held-out | Undone | Sent to the model | p50 |
+|---|---|---|---|---|---|
+| Keyword table only | 55% | 14% | – | 0 of 214 | – |
+| Model always (the first version) | 86% | 72% | 14 | 214 | 251 ms |
+| Model when the table finds nothing | 87% | 67% | 5 | 129 | 248 ms |
+| Table's guess as a hint | 89% | 67% | 5 | 214 | 249 ms |
+| Override a hit only at high confidence | 87% | 69% | 10 | 214 | 371 ms |
+| Short reason, then confidence | 89% | 73% | 8 | 214 | 743 ms |
+| Three samples, override only at 3/3 | 87% | 70% | 13 | 214 | 754 ms |
+| Merchant kind first, mapped | 80% | 72% | 16 | 214 | 246 ms |
+| Few-shot examples, always | 85% | 67% | 13 | 214 | 325 ms |
+| Tuned prompt, always | 89% | 78% | 10 | 214 | 275 ms |
+| Tuned prompt with the hint | 92% | 72% | 1 | 214 | 258 ms |
+| **Shipped: history, table, tuned model** | **91%** | **73%** | **0** | **121** | **272 ms** |
+
+The prompt was tuned once, on train misses only: rental now means a vehicle to
+drive and other names household services, which stopped dry cleaning, key
+cutting and storage units coming back as rental. The held-out split is the
+long tail on purpose (the table places 13 of its 81 titles, 7 of them wrongly,
+several of them the ambiguous titles above), so it rewards overriding the
+table more than everyday titles ("Dinner", "Gas", "Groceries") would. With
+the shipped path, 102 of 214 chips change after the pause, all from Other.
+History's hit rate depends on how often a group repeats a title; on the set's
+own 12 near-repeats it recalled all 12 with the right label, 7 of them titles
+the table does not know, and each hit also saves a model request and a swap.
+A phone may run a smaller variant ("AFM 3 Core"); its accuracy is checked on
+the phone.
 
 **Chip state machine.** The category chip holds `{ category, source }` with
 `source ∈ keyword | model | user`, and these rules prevent the model from
