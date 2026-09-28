@@ -92,12 +92,14 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
 }
 
 /**
- * Whether a pause in typing on `title` should ask the model: not once Save or a tap has settled the chip, not for a
- * blank title, and not when history recalled the title (the person's own earlier choice stands).
+ * Whether a pause in typing on `title` should ask the model: only while neither history nor the keyword table knows
+ * the title (`guessCategory(title).from === 'none'`, the chip showing Other), and never once Save or a tap has
+ * settled the chip. A history hit is the person's own earlier choice, and a keyword hit stands because the model
+ * overturns a right one about as often as it fixes a wrong one (design.md "Model refinement").
  */
 export function shouldAskModel(state: ChipState, title: string): boolean {
   if (state.frozen || state.source === 'user' || title.trim() === '') return false;
-  return guessCategory(title).from !== 'history';
+  return guessCategory(title).from === 'none';
 }
 
 /** The pause after the last keystroke before the model is asked (design.md "Model refinement"). */

@@ -77,7 +77,8 @@ describe('categories', () => {
 
   it('a model reply applies only for the exact title asked about, and never over a tap', () => {
     const chip = chipAfterTitle(initialChip(''), 'Fairmont Banff');
-    expect(shouldRefine(chip, 'Fairmont Banff')).toBe(true);
+    expect(shouldRefine(chip, 'Fairmont Banff')).toBe(false); // the table knows it: the keyword hit stands
+    expect(shouldRefine(chip, 'Rimrock Banff')).toBe(true); // neither history nor the table does
     expect(shouldRefine(chip, '   ')).toBe(false);
     const applied = chipAfterReply(chip, 'Fairmont Banff', {
       askedTitle: 'Fairmont Banff',

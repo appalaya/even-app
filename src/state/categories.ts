@@ -217,9 +217,12 @@ export function chipAfterTap(chip: CategoryChip, category: Category): CategoryCh
   return chip.source === 'user' && chip.category === category ? chip : { category, source: 'user' };
 }
 
-/** Whether a pause in typing should ask the model about `title`: yes unless the user chose. */
+/**
+ * Whether a pause in typing should ask the model about `title`: unless the user chose, and only when neither history
+ * nor the keyword table knows the title (`guessCategory`).
+ */
 export function shouldRefine(chip: CategoryChip, title: string): boolean {
-  return chip.source !== 'user' && title.trim() !== '';
+  return chip.source !== 'user' && title.trim() !== '' && guessCategory(title).from === 'none';
 }
 
 /**

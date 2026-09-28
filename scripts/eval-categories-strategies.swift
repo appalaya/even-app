@@ -160,6 +160,31 @@ let fewShotInstructions = """
   Gym membership: other
   """
 
+/// The prompt that shipped first (strategies a to e score it): each category's meaning, before tuning.
+let originalInstructions = """
+  You label shared trip and household expenses with one category. Answer with the category only.
+
+  A title is often just a business or place name: label what was most likely paid for there.
+
+  Categories:
+  food: restaurants, meals, takeout and food delivery
+  groceries: supermarkets, grocery stores and food bought to cook
+  drinks: bars, pubs, breweries, alcohol and liquor stores
+  coffee: coffee shops, coffee and tea drinks
+  lodging: hotels, motels, hostels, vacation rentals, cabins and campsites
+  flights: airlines, airfare and anything bought from an airline
+  transit: taxis, ride-hailing, buses, trains, shuttles and ferries
+  fuel: gas stations, fuel and EV charging
+  parking: parking lots, garages, meters and valet
+  rental: rented cars, vans, RVs and campervans
+  activities: tickets, tours, lift passes, attractions, hot springs, spas and shows
+  shopping: clothes, outdoor gear, souvenirs and other store purchases
+  fees: bank and ATM fees, tolls, tips, taxes, insurance, visas and service charges
+  health: pharmacies, medicine, doctors, clinics and first aid
+  gifts: presents, flowers and donations
+  other: only when no category above fits, such as household bills
+  """
+
 @available(macOS 26.0, iOS 26.0, *)
 func session(_ instructions: String, tagging: Bool = false) -> LanguageModelSession {
   let model = tagging ? SystemLanguageModel(useCase: .contentTagging) : SystemLanguageModel.default
@@ -212,14 +237,14 @@ func twoStep(_ title: String) async -> Answer? {
   }
   if let kind, let mapped = kindToCategory[kind] { return Answer(category: mapped, kind: kind) }
   // service, other, or no answer: the direct answer decides.
-  let fallback = await direct(ExpenseClassifier.instructions, "Expense title: \(title)")
+  let fallback = await direct(originalInstructions, "Expense title: \(title)")
   return Answer(category: fallback?.category, kind: kind ?? "none")
 }
 
 @available(macOS 26.0, iOS 26.0, *)
 func kindFirst(_ title: String) async -> Answer? {
   await withTimeout(ExpenseClassifier.timeout) {
-    guard let r = try? await session(ExpenseClassifier.instructions)
+    guard let r = try? await session(originalInstructions)
       .respond(to: "Expense title: \(title)", generating: KindThenCategory.self, options: greedy)
     else { return Answer(category: nil) }
     return Answer(category: r.content.category.rawValue, kind: r.content.kind.rawValue)
@@ -262,7 +287,7 @@ func allAskers() -> [Asker] {
   ]
   #if canImport(FoundationModels)
   if #available(macOS 26.0, iOS 26.0, *) {
-    let base = ExpenseClassifier.instructions
+    let base = originalInstructions
     askers += [
       Asker(name: "base", summary: "the original prompt, no hint", usesHint: false) { title, _ in
         await direct(base, "Expense title: \(title)")
@@ -286,6 +311,12 @@ func allAskers() -> [Asker] {
       Asker(name: "vote", summary: "the original prompt, three samples, majority and agreement", usesHint: false) {
         title, _ in await vote(base, "Expense title: \(title)")
       },
+      Asker(name: "tuned", summary: "the shipped prompt (tuned on train), no hint", usesHint: false) { title, _ in
+        await direct(ExpenseClassifier.instructions, "Expense title: \(title)")
+      },
+      Asker(name: "tuned+hint", summary: "the shipped prompt with the table's guess as a hint", usesHint: true) {
+        title, hint in await direct(ExpenseClassifier.instructions, hintPrompt(title, hint))
+      },
       Asker(name: "fewshot", summary: "the few-shot prompt, no hint", usesHint: false) { title, _ in
         await direct(fewShotInstructions, "Expense title: \(title)")
       },
@@ -307,9 +338,10 @@ func prewarm(asker: String) {
   if #available(macOS 26.0, iOS 26.0, *) {
     switch asker {
     case "shipped": ExpenseClassifier.prewarm()
-    case "twostep": prewarm(kindInstructions); prewarm(ExpenseClassifier.instructions)
+    case "twostep": prewarm(kindInstructions); prewarm(originalInstructions)
     case let name where name.hasPrefix("fewshot"): prewarm(fewShotInstructions)
-    default: prewarm(ExpenseClassifier.instructions)
+    case let name where name.hasPrefix("tuned"): prewarm(ExpenseClassifier.instructions)
+    default: prewarm(originalInstructions)
     }
   }
   #endif

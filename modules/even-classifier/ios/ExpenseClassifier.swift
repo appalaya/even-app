@@ -26,11 +26,15 @@ public enum ExpenseClassifier {
   static let maxTitleLength = 80
 
   /// The guide for each category is its meaning in the app (design.md "Categories"), not a copy of the keyword
-  /// table. Tuned with scripts/eval-categories.swift: without it the model answered "food" for bars and coffee shops.
+  /// table. Tuned with scripts/eval-categories.swift on the eval set's train split only: without the guides the model
+  /// answered "food" for bars and coffee shops, and household services (dry cleaning, key cutting, storage) came back
+  /// as "rental" until rental said "to drive" and other named them. The model is asked only about titles neither
+  /// history nor the keyword table knows (src/features/addExpense/chipMachine.ts, `shouldAskModel`).
   public static let instructions = """
     You label shared trip and household expenses with one category. Answer with the category only.
 
-    A title is often just a business or place name: label what was most likely paid for there.
+    A title is often just a business or place name: label what was most likely paid for there. A refund or deposit \
+    belongs to what it was for.
 
     Categories:
     food: restaurants, meals, takeout and food delivery
@@ -42,13 +46,14 @@ public enum ExpenseClassifier {
     transit: taxis, ride-hailing, buses, trains, shuttles and ferries
     fuel: gas stations, fuel and EV charging
     parking: parking lots, garages, meters and valet
-    rental: rented cars, vans, RVs and campervans
-    activities: tickets, tours, lift passes, attractions, hot springs, spas and shows
+    rental: renting a car, van, truck, RV or campervan to drive
+    activities: tickets, tours, lift passes, gear rentals, attractions, hot springs, spas and shows
     shopping: clothes, outdoor gear, souvenirs and other store purchases
-    fees: bank and ATM fees, tolls, tips, taxes, insurance, visas and service charges
+    fees: bank and ATM fees, tolls, tips, taxes, fines, insurance, visas and service charges
     health: pharmacies, medicine, doctors, clinics and first aid
-    gifts: presents, flowers and donations
-    other: only when no category above fits, such as household bills
+    gifts: presents, flowers, registries and donations
+    other: only when no category above fits, such as household bills, subscriptions, laundry, repairs, postage and \
+    storage
     """
 
   public static func availability() -> ExpenseClassifierAvailability {

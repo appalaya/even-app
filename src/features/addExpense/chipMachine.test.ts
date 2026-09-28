@@ -272,11 +272,12 @@ describe('chipReducer', () => {
     expect(initialChipState('Hotel', 'gifts')).toMatchObject({ category: 'gifts', source: 'user' });
   });
 
-  it('asks the model only for a non-empty title while the source is not user', () => {
+  it('asks the model only for a non-empty title the table does not know, while the source is not user', () => {
     const s = initialChipState('');
     expect(shouldAskModel(s, '  ')).toBe(false);
-    expect(shouldAskModel(s, 'Fairmont')).toBe(true);
-    expect(shouldAskModel(chipReducer(s, { type: 'tap', category: 'food' }), 'Fairmont')).toBe(
+    expect(shouldAskModel(s, 'Rimrock')).toBe(true);
+    expect(shouldAskModel(s, 'Fairmont')).toBe(false); // a keyword hit stands
+    expect(shouldAskModel(chipReducer(s, { type: 'tap', category: 'food' }), 'Rimrock')).toBe(
       false,
     );
   });
@@ -351,13 +352,13 @@ describe('ChipController', () => {
 
   it('a pending pause is cancelled by the next keystroke, so only the last title is asked', () => {
     const { chip, clock, model } = controller();
-    chip.setTitle('Fair');
+    chip.setTitle('Rim');
     clock.advance(300);
-    chip.setTitle('Fairmont');
+    chip.setTitle('Rimrock');
     clock.advance(300);
     expect(model.asked).toHaveLength(0);
     clock.advance(200);
-    expect(model.asked.map((a) => a.title)).toEqual(['Fairmont']);
+    expect(model.asked.map((a) => a.title)).toEqual(['Rimrock']);
   });
 
   it('a tap cancels the pending pause as well', () => {
@@ -433,14 +434,32 @@ describe('history first on the chip', () => {
     expect(chip.freeze()).toBe('other');
   });
 
-  it('asks the model again once the title is one history does not know', async () => {
+  it('asks the model again once the title is one neither history nor the table knows', async () => {
     setCategoryHistory(() => [saved(['Nourish Bistro', 'food'])]);
     const { chip, clock, model } = controller();
     chip.setTitle('Nourish');
     clock.advance(MODEL_PAUSE_MS);
-    chip.setTitle('Nourish Bistro and Bar');
-    expect(chip.getState()).toMatchObject({ category: 'drinks', source: 'keyword' });
+    chip.setTitle('Nourishing Bowls');
+    expect(chip.getState()).toMatchObject({ category: 'other', source: 'keyword' });
     clock.advance(MODEL_PAUSE_MS);
-    expect(model.asked.map((a) => a.title)).toEqual(['Nourish Bistro and Bar']);
+    expect(model.asked.map((a) => a.title)).toEqual(['Nourishing Bowls']);
+  });
+});
+
+describe('which titles reach the model', () => {
+  it('only titles neither history nor the keyword table knows: a keyword hit stands and is never swapped', async () => {
+    const { chip, clock, model } = controller();
+    chip.setTitle('Banff parkade');
+    clock.advance(MODEL_PAUSE_MS);
+    chip.setTitle('Resort fee');
+    clock.advance(MODEL_PAUSE_MS);
+    expect(model.asked).toEqual([]);
+    expect(chip.getState()).toMatchObject({ category: 'fees', source: 'keyword', swaps: 0 });
+    chip.setTitle('Surly’s brewing');
+    expect(chip.getState()).toMatchObject({ category: 'other', source: 'keyword' });
+    clock.advance(MODEL_PAUSE_MS);
+    expect(model.asked.map((a) => a.title)).toEqual(['Surly’s brewing']);
+    await model.reply(0, 'drinks');
+    expect(chip.getState()).toMatchObject({ category: 'drinks', source: 'model', swaps: 1 });
   });
 });

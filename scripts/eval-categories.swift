@@ -7,7 +7,8 @@
 // and timeout the app ships; scripts/eval-categories-strategies.swift holds the experimental askers. From the repo
 // root, on a Mac with Apple Intelligence turned on (macOS 27):
 //
-//   npm run eval:categories                          # the shipped strategy (default)
+//   npm run eval:categories                          # the shipped strategy (default): history first, then
+//                                                    # the keyword table, then the model for titles neither knows
 //   npm run eval:categories -- --strategy all        # every strategy
 //   npm run eval:categories -- --strategy b-fallback,c-hint --misses all
 //
@@ -19,6 +20,8 @@
 //   --strategy <names>    comma-separated strategy names, or `all`; `--list` prints them. A name ending in `+g`
 //                         puts history first: a title recalled from earlier ones (leave one out) takes that
 //                         category at once and the model is not asked
+//   --split train|heldout|all
+//                         score only that split (tune prompts with `--split train`, so held-out stays unseen)
 //   --misses train|heldout|all|none
 //                         whose misses to list (default train: look at held-out misses only for the final report)
 //
@@ -70,7 +73,8 @@ struct Strategy {
 
 let strategies: [Strategy] = [
   Strategy(name: "table", summary: "keyword table only", asker: nil, gate: .fallback),
-  Strategy(name: "shipped", summary: "what the app ships now", asker: "shipped", gate: .always),
+  Strategy(name: "shipped", summary: "what the app ships: history, then the table, then the model for the rest",
+           asker: "shipped", gate: .fallback, history: true),
   Strategy(name: "a-model", summary: "(a) model always, original prompt", asker: "base", gate: .always),
   Strategy(name: "b-fallback", summary: "(b) model only when the table finds nothing", asker: "base", gate: .fallback),
   Strategy(name: "c-hint", summary: "(c) table's guess as a hint, model decides", asker: "base+hint", gate: .hint),
@@ -86,6 +90,12 @@ let strategies: [Strategy] = [
   Strategy(name: "e-twostep-fallback", summary: "(e) two-step, only when the table finds nothing", asker: "twostep",
            gate: .fallback),
   Strategy(name: "tagging", summary: "content-tagging model, always", asker: "tagging", gate: .always),
+  Strategy(name: "f-tuned", summary: "(f) the shipped prompt (tuned on train), always", asker: "tuned",
+           gate: .always),
+  Strategy(name: "f-tuned-fallback", summary: "(f) the shipped prompt, only when the table finds nothing",
+           asker: "tuned", gate: .fallback),
+  Strategy(name: "f-tuned-hint", summary: "(f)+(c) the shipped prompt with the table's hint", asker: "tuned+hint",
+           gate: .hint),
   Strategy(name: "f-fewshot", summary: "(f) few-shot prompt, always", asker: "fewshot", gate: .always),
   Strategy(name: "f-fewshot-fallback", summary: "(f) few-shot, only when the table finds nothing", asker: "fewshot",
            gate: .fallback),
@@ -100,26 +110,28 @@ struct Record {
   let ms: Double
 }
 
-func parseArguments() -> (cases: String, strategies: [String], misses: String) {
+func parseArguments() -> (cases: String, strategies: [String], misses: String, split: String) {
   var cases = "packages/core/src/categories.eval.json"
   var names = ["shipped"]
   var misses = "train"
+  var split = "all"
   var args = CommandLine.arguments.dropFirst().makeIterator()
   while let arg = args.next() {
     switch arg {
     case "--cases": cases = args.next() ?? cases
     case "--strategy", "--strategies": names = (args.next() ?? "shipped").split(separator: ",").map(String.init)
     case "--misses": misses = args.next() ?? misses
+    case "--split": split = args.next() ?? split
     case "--list":
       for s in strategies { print("\(s.name.padding(toLength: 22, withPad: " ", startingAt: 0)) \(s.summary)") }
       exit(0)
     default:
-      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --misses train|heldout|all|none --list")
+      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --split train|heldout|all --misses train|heldout|all|none --list")
       exit(2)
     }
   }
   if names == ["all"] { names = strategies.map(\.name) }
-  return (cases, names, misses)
+  return (cases, names, misses, split)
 }
 
 func milliseconds(_ d: Duration) -> Double {
@@ -142,9 +154,10 @@ func pad(_ s: String, _ n: Int) -> String { s.padding(toLength: max(n, s.count),
 struct EvalCategories {
   static func main() async {
     let options = parseArguments()
-    let file: CasesFile
+    var file: CasesFile
     do {
       file = try JSONDecoder().decode(CasesFile.self, from: Data(contentsOf: URL(fileURLWithPath: options.cases)))
+      if options.split != "all" { file = CasesFile(cases: file.cases.filter { $0.split == options.split }) }
     } catch {
       print("Could not read \(options.cases): \(error)")
       print("Run it through `npm run eval:categories`, which adds the keyword guesses first.")
