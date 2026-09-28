@@ -981,6 +981,13 @@ script serves `/api/*` (the contact form); every other path is a static asset.
   with no `style=""` attributes, since hashes cover neither. No analytics, no
   third-party scripts, and Cloudflare's script-injecting features (Rocket
   Loader, Web Analytics, Zaraz) are off for the zone.
+- `/` ends with a tip card after How it works (boards LandingWeb,
+  LandingWebDesktop): the heading "Keep Even free", one sentence, and a "Leave
+  a tip" soft button, in the claim cards' style with `.button-soft`. The button
+  is a plain link to Stripe's Payment Link; nothing from Stripe loads on the
+  site, and the app links to no tip page. Tips go to Appalaya Inc., are not
+  tax-deductible or refundable, and unlock nothing; `/terms` and `/privacy`
+  each have a Tips section.
 - `/terms`, `/privacy`, `/abuse`: plain pages. The privacy page is
   `THREAT-MODEL.md` in human words, including the backup and browser-history
   notes. No page prints a mailbox address; every "contact us" is `/contact`.

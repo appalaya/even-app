@@ -25,7 +25,7 @@
   <h1>Privacy</h1>
   <p class="updated">Last updated 27 September 2026</p>
 
-  <p class="summary">Even encrypts every group on your phone before anything leaves it. Our server stores the result and cannot read it: not an amount, not a name, not the group&rsquo;s name. There are no accounts, so there is nothing about you for us to keep.</p>
+  <p class="summary">Even encrypts every group on your phone before anything leaves it. Our server stores the result and cannot read it: not an amount, not a name, not the group&rsquo;s name. There are no accounts, so using Even gives us nothing about you to keep.</p>
 
   <p>This page is the plain-words version of Even&rsquo;s <a href="https://github.com/appalaya/even-server/blob/main/THREAT-MODEL.md" rel="noreferrer">threat model</a>, the technical document behind the claim &ldquo;we cannot read your data.&rdquo; If that claim ever stops being literally true, the threat model changes first, and this page with it. Even is made by Appalaya Inc. (&ldquo;we&rdquo;).</p>
 
@@ -95,6 +95,20 @@
   <h2>This website</h2>
   <p>This website has no analytics, no cookies, no trackers and no web fonts. Cloudflare serves it and keeps its own access logs, which include your internet address and the pages you ask for, but never the part of an invite link after the <code>#</code>.</p>
   <p>The contact page is the one page that loads something from elsewhere: Cloudflare Turnstile, a check that the form is being sent by a person. It runs in a frame from Cloudflare, which sees your internet address and details of your browser under its own privacy policy. What you send with the form reaches us as an email, delivered by the email service Resend, which handles it under its own privacy policy: your message, your email address if you give one, and for a report the group&rsquo;s id and server. Nothing you send is stored on the website. When you report a group by pasting its invite link, the page works out the group&rsquo;s id in your browser; the link never leaves it.</p>
+
+  <h2>Tips</h2>
+  <p>Even is free, and you can leave a tip if you want to. Tips go to Appalaya Inc. The tip button on our home page is a plain link to a payment page run by Stripe, our payment processor: nothing from Stripe loads on this website, and we tell Stripe nothing about you.</p>
+  <p>Stripe takes the payment on its own page, under its own privacy policy, and checks it for fraud using details of your device and internet address. From each tip, we receive:</p>
+  <ul>
+    <li>The amount.</li>
+    <li>The email address you enter, where Stripe sends your receipt.</li>
+    <li>The name on the card.</li>
+    <li>Your billing country and ZIP or postal code.</li>
+    <li>The card&rsquo;s brand, its last four digits, its expiry month and year, and the country that issued it. Never the full card number.</li>
+    <li>Roughly where the payment came from, worked out from its internet address. Stripe shows us this for fraud checks, for up to six months.</li>
+  </ul>
+  <p>We use these for your receipt and our records, and for nothing else. We do not add your email address to any list. We keep tip records for as long as tax rules require us to keep business records.</p>
+  <p>A tip is separate from the app: the app and our sync server know nothing about it, and a tip changes nothing in Even.</p>
 
   <h2>Contact</h2>
   <p>Questions about this page or the app, feedback, and reports of misuse all go through the <a href="/contact">contact page</a>.</p>

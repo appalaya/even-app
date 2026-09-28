@@ -104,9 +104,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   display: grid;
   gap: 12px;
 }
-.claims li { padding: 18px 20px 20px; background: var(--surface); border-radius: 18px; }
-.claims h2 { margin: 0; font-size: 20px; line-height: 25px; font-weight: 600; }
-.claims p { margin: 6px 0 0; font-size: 15px; line-height: 21px; color: var(--text-2); }
+.claims li, .tip { padding: 18px 20px 20px; background: var(--surface); border-radius: 18px; }
+.claims h2, .tip h2 { margin: 0; font-size: 20px; line-height: 25px; font-weight: 600; }
+.claims p, .tip p { margin: 6px 0 0; font-size: 15px; line-height: 21px; color: var(--text-2); }
 
 /* Home: how it works */
 .how { margin: 64px 0 0; }
@@ -144,6 +144,10 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   text-decoration: none;
 }
 .button-soft:hover { color: var(--accent-pressed); }
+
+/* Home: the tip card, last in <main>. Its button is a plain link to Stripe's page; nothing from Stripe loads here. */
+.tip { margin: 56px 0 0; }
+.tip .button-soft { margin-top: 16px; }
 
 /* Text pages: privacy, terms, abuse, 404 */
 .doc { padding: 40px 0 8px; }

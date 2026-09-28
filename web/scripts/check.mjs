@@ -42,6 +42,7 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/github\.com\/appalaya\/even-server\/blob\/main\/THREAT-MODEL\.md$/,
   /^https:\/\/github\.com\/appalaya\/even-app$/,
   /^https:\/\/appalaya\.com$/,
+  /^https:\/\/buy\.stripe\.com\/6oUcMY7m3enX4Krgb5fjG00$/,
 ];
 
 /** Turnstile's api.js, from the exact URL Cloudflare requires (never proxied or cached). Contact page only. */

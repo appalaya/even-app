@@ -54,8 +54,8 @@ attributes anywhere (hashes cover neither), no second script or style, no extern
 the script that can send, store or inject (`fetch`, `sendBeacon`, `innerHTML`, storage, and so on). The group name is
 inserted with `textContent` only.
 
-`check.mjs` also fails on any external URL in any page other than the two store links and the server repository link
-(and, on `contact.html` only, Turnstile's script); on any mail address or `mailto:` in any published file; on inline
+`check.mjs` also fails on any external URL in any page other than the two store links, the repository and threat-model
+links, appalaya.com, and the Stripe tip link (and, on `contact.html` only, Turnstile's script); on any mail address or `mailto:` in any published file; on inline
 code in any other page; on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
 [Contact page](#contact-page)); on a `_headers` file missing a required header, with the `/i`, `/badges/*` or
 `/contact` rules before `/*`, or with a policy that differs from what `csp-hashes.mjs` generates; and on either
