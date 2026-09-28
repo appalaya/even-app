@@ -1083,9 +1083,7 @@ function ControlSection() {
           <CategoryChip emoji="🏨" label="Lodging" state="suggested" choosing />
           <CategoryChip emoji="🍽️" label="Food" state="chosen" choosing />
         </Row>
-        <Note>
-          Tap: choosing over the model&apos;s pick fades the sparkle (250 ms); tap again to reset
-        </Note>
+        <Note>Tap to choose: the sparkle fades (250 ms). Tap again to reset.</Note>
         <Row gap={8}>
           <CategoryChip
             emoji="🍻"
