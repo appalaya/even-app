@@ -293,19 +293,27 @@ only the last is a model:
    object and nothing is written), so a tap that gets saved teaches the phone
    with no new storage. A recalled title shows at once, carries no sparkle, and
    is never sent to the model.
-2. **The keyword table** (above), on every keystroke. A keyword hit stands.
+2. **The keyword table** (above), on every keystroke. A keyword hit stands,
+   unless the title holds keywords of two categories ("Hotel bar": hotel is
+   lodging, bar is drinks). Then the chip shows the table's guess as you type
+   (the longer keyword) and the model decides after the pause.
 3. **The on-device model**, only for a title neither knows (the chip shows
-   Other). When the user pauses typing (500 ms) and the device has an
-   on-device language model, the title is sent to it with guided generation
-   constrained to the `Category` enum, and a valid answer replaces Other and
-   carries the sparkle (Chip state machine). On iOS 27 this is
-   `SystemLanguageModel` from the Foundation Models framework behind a small
-   Expo module, gated on `SystemLanguageModel.availability`. On Android it
-   would be Gemini Nano through the ML Kit GenAI prompt API.
+   Other) or whose keywords name two categories (`needsModel`, the gate). When
+   the user pauses typing (500 ms) and the device has an on-device language
+   model, the title is sent to it with guided generation constrained to the
+   `Category` enum, and a valid answer replaces the chip and carries the
+   sparkle (Chip state machine). The model's `other` is no answer: the chip
+   keeps its local guess with no sparkle, because a sparkle on Other reads as a
+   suggestion of nothing. On iOS 27 this is `SystemLanguageModel` from the
+   Foundation Models framework behind a small Expo module, gated on
+   `SystemLanguageModel.availability`. On Android it would be Gemini Nano
+   through the ML Kit GenAI prompt API.
 
 **Only the on-device model, ever**: the same API can route to Private Cloud
 Compute or to a cloud provider through the provider protocol, and a title must
-never leave the phone.
+never leave the phone. The content-tagging use case
+(`SystemLanguageModel(useCase: .contentTagging)`) is the same on-device model
+specialised for tagging, and is the only other model the module names.
 
 A keyword hit stands because, measured, the model overturned a right keyword
 chip about as often as it fixed a wrong one (10 against 11 over 214 titles
@@ -316,38 +324,86 @@ kind first all did no better (table below). Foundation Models exposes no
 log-probabilities or top-k alternatives, so there is no real confidence
 signal to gate on; the self-reported one came back `high` on wrong answers
 ("Resort fee" → lodging, "The Keg" → drinks) and `medium` on right fixes
-("Hotel bar" → drinks). The cost: a title the table misreads ("Hotel bar",
-"Gas station snacks", "Subway footlong") keeps its keyword guess until a tap,
-and history then remembers the tap.
+("Hotel bar" → drinks). The cost: a title the table misreads with a keyword
+of one category ("Subway footlong", "Train and Co Drama Theater" as Transit)
+keeps its keyword guess until a tap, and history then remembers the tap.
+
+Keywords of two categories are the one exception, measured with four gates
+(below): asking the model also when a 3+ word title rests on a single keyword
+undid three right chips ("Banff Upper Hot Springs" → health, "Shoppers Drug
+Mart" → groceries, "Hat from the gift shop" → gifts) and gained nothing on the
+original held-out titles; asking it when the table found keywords of two
+categories fixed "Hotel bar", "Gas station snacks", "Hotel valet" and "Rental
+car gas" and undid one ("Tip for the ski guide" → activities).
 
 *As built:* the local Expo module `modules/even-classifier` exposes
-`classifyExpense(title)`, `availability()` and `prewarm()`. On iOS it uses
-`SystemLanguageModel.default` only, one fresh `LanguageModelSession` per title
-whose instructions give each category's meaning, and guided generation into a
-`@Generable` enum of the sixteen ids (a test keeps the enum equal to
-`CATEGORIES` and fails if the native code names any other model). A reply
-comes within 2.5 s or not at all; a refusal, a guardrail hit or any error is
-no answer, and `refineCategory` drops anything that is not a category id. The
-chip controller asks only when `shouldAskModel` holds (`guessCategory(title)`
-is `none`). Availability (`available`, or unavailable with the framework's
+`classifyExpense(title)`, `availability()` and `prewarm()`. On iOS it asks
+`SystemLanguageModel.default` first and, only after a guardrail violation, a
+refusal or another error, the content-tagging model once more
+(`ExpenseClassifier.models`); one fresh `LanguageModelSession` per title and
+model, whose instructions give each category's meaning, and guided generation
+into a `@Generable` enum of the sixteen ids (a test keeps the enum equal to
+`CATEGORIES` and fails if the native code names any model but those two). A
+reply comes within 6 s, the retry included, or not at all: a late reply costs
+nothing, because the chip drops a reply whose title has moved on, and a cold
+first request took 3.8 s here (below). `classifyExpense` resolves to
+`{ category, outcome, ms, model, detail }` with `outcome` one of `answered`,
+`other`, `refused`, `timeout`, `error`, `unavailable`; `refineCategory` checks
+every field and returns a category only for `answered` with an id other than
+`other`. The chip controller asks only when `shouldAskModel` holds
+(`needsModel(guessCategory(title))`: nothing known, or keywords of two
+categories). Availability (`available`, or unavailable with the framework's
 reason: `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`)
 is asked once per launch, so a model that becomes ready is used from the next
 launch. Add expense calls `prepareCategoryModel(groupId)` when it opens: it
-prewarms the model, so the first title is not a cold start, and points history
-at that group first. Android reports unavailable (`notBuilt`): ML Kit's Prompt
-API needs minSdk 26 (the app is on 24), brings ML Kit's usage logging, and is
-still beta. Custom adapters are not an option: `SystemLanguageModel.Adapter`
-is obsoleted in the iOS 27 SDK (deprecated since 26.4).
+prewarms both models, so the first title is not a cold start, and points
+history at that group first. Android reports unavailable (`notBuilt`): ML
+Kit's Prompt API needs minSdk 26 (the app is on 24), brings ML Kit's usage
+logging, and is still beta. Custom adapters are not an option:
+`SystemLanguageModel.Adapter` is obsoleted in the iOS 27 SDK (deprecated since
+26.4).
 
-*Measurements.* `packages/core/src/categories.eval.json` holds 214 labelled
+*Reading the logs.* Nothing on screen says why a chip got no suggestion; the
+device log does, and never with the title. Connect the phone to a Mac, open
+Console.app, pick the phone, press Start, and search for `category model`
+(the simulator: `xcrun simctl spawn booted log stream --predicate
+'subsystem == "com.appalaya.even"'`). Two sources write, one line each:
+
+- Swift, subsystem `com.appalaya.even`, category `category-model`, shown by
+  default: `availability available` or `availability unavailable
+  reason=appleIntelligenceNotEnabled` (once per launch), `prewarm
+  models=general,contentTagging` (each time Add expense opens), and for each
+  request `classify outcome=… category=… model=… ms=… detail=…
+  attempts=general:refused:180,contentTagging:answered:240`, where each
+  attempt is model:outcome:milliseconds.
+- JavaScript, subsystem `com.facebook.react.log`, category `javascript`, at
+  the info level (Console.app: Action › Include Info Messages): `[even]
+  category model availability …` once per launch and `[even] category model
+  outcome=… category=… ms=… model=…` for each reply, with the round trip as
+  the chip saw it.
+
+What a line means for the chip: no `classify` line at all, the model was not
+asked (history or keywords of one category stood, the person tapped, or
+availability said no); `unavailable` with a reason, no model on this phone or
+not yet downloaded; `outcome=other`, the model knew no category and the chip
+kept its guess; `outcome=refused detail=guardrailViolation` (or `refusal`)
+after two attempts, both models declined the title; `outcome=timeout` near
+6000 ms, a cold model that did not answer in time; `outcome=error` with
+`detail` naming the kind (`rateLimited`, `unsupportedLanguageOrLocale`, and
+on the JavaScript side `nativeCallFailed`, `malformedReply`, `notACategory`).
+
+*Measurements.* `packages/core/src/categories.eval.json` holds 221 labelled
 titles: 133 `train` (the first 96 plus 37 long-tail ones) that prompts and
-rules may be tuned on, and 81 `heldout` that never are. `npm run
-eval:categories` adds each title's keyword guess and leave-one-out history
-recall from `packages/core`, then scores strategies with a plain Swift script
-compiled together with the module's classifier (`--strategy all`; `+g` puts
-history first; `shipped` is exactly the app's path). On macOS 27's model
-("AFM 3 Core Advanced"), with *undone* counting right chips swapped away after
-the pause, and latency per model request, prewarmed:
+rules may be tuned on, and 88 `heldout` that never are (the last seven put a
+common keyword inside a longer proper name, added for the gate below).
+`npm run eval:categories` adds each title's keyword guess, the keywords it
+matched (`keywordMatches`) and leave-one-out history recall from
+`packages/core`, then scores strategies with a plain Swift script compiled
+together with the module's classifier (`--strategy all`; `+g` puts history
+first; `shipped` is exactly the app's path). On macOS 27's model ("AFM 3 Core
+Advanced"), with *undone* counting right chips swapped away after the pause,
+and latency per model request, prewarmed. This first table is the first 214
+titles with the 2.5 s timeout of build 119:
 
 | Strategy | Train | Held-out | Undone | Sent to the model | p50 |
 |---|---|---|---|---|---|
@@ -362,7 +418,7 @@ the pause, and latency per model request, prewarmed:
 | Few-shot examples, always | 85% | 67% | 13 | 214 | 325 ms |
 | Tuned prompt, always | 89% | 78% | 10 | 214 | 275 ms |
 | Tuned prompt with the hint | 92% | 72% | 1 | 214 | 258 ms |
-| **Shipped: history, table, tuned model** | **91%** | **73%** | **0** | **121** | **272 ms** |
+| Shipped to build 119: history, table, tuned model | 91% | 73% | 0 | 121 | 272 ms |
 
 The prompt was tuned once, on train misses only: rental now means a vehicle to
 drive and other names household services, which stopped dry cleaning, key
@@ -374,8 +430,65 @@ the shipped path, 102 of 214 chips change after the pause, all from Other.
 History's hit rate depends on how often a group repeats a title; on the set's
 own 12 near-repeats it recalled all 12 with the right label, 7 of them titles
 the table does not know, and each hit also saves a model request and a swap.
-A phone may run a smaller variant ("AFM 3 Core"); its accuracy is checked on
-the phone.
+*The gate.* Which keyword hits the model may overturn, over all 221 titles
+with history first and the model's `other` as no answer (`npm run
+eval:categories -- --strategy gate-a,gate-b,gate-c,gate-d,gate-b1,gate-d1`;
+held-out split into the 81 original titles and the 7 added ones; *agreed*
+counts right keyword chips the model only agreed with, which gain the sparkle
+with no swap):
+
+| Ask the model also when | Train | Held-out (81) | Added (7) | Held-out (88) | Undone | Agreed | Sent |
+|---|---|---|---|---|---|---|---|
+| (a) never: only when nothing is known | 91% | 73% | 1 | 68% | 0 | 0 | 121 |
+| (b) 3+ words and a single keyword | 90% | 73% | 4 | 72% | 3 | 33 | 167 |
+| **(c) keywords of two categories (shipped)** | **92%** | **77%** | **2** | **73%** | **1** | **3** | **133** |
+| (d) (b) or (c) | 92% | 77% | 5 | 76% | 4 | 36 | 179 |
+| (b′) 3+ words and a single one-word keyword | 92% | 74% | 4 | 73% | 0 | 28 | 159 |
+| (d′) (b′) or (c) | 93% | 78% | 5 | 77% | 1 | 31 | 171 |
+
+(b) and (d) undo more than two right chips, all through multi-word keywords
+("hot springs", "shoppers drug mart", "gift shop"), and (b)'s gain is only the
+added titles. (c) ships. (b′) and (d′) read "a single keyword" as a one-word
+keyword, a reading chosen after seeing (b)'s undone chips; most of their
+extra gain is the added titles ("Train and Co Drama Theater", "Hotel
+California tribute show", "Cabin Fever Brewing"), and they put the sparkle on
+about thirty right chips the model only agreed with ("Taxi from the station"),
+so they wait for a decision about the sparkle on everyday titles.
+
+*Two on-device models.* The content-tagging model is the fallback, not the
+first model: it refused no more than the general one here and scored lower.
+`npm run eval:categories -- --refusals` asks each arrangement about
+`packages/core/src/categories.refusals.json`, 38 legitimate titles guardrails
+might refuse (beer, bars, spirits, wine, cannabis, gambling, pharmacy items,
+alarming words), 35 of them labelled and 11 also in the eval set:
+
+| | General | Content tagging |
+|---|---|---|
+| Refusal set: refused, error, timeout | 0, 0, 0 | 0, 0, 0 |
+| Refusal set: answered `other` | 1 | 4 |
+| Refusal set: right, of 35 labelled (11 in the eval set) | 31 (9) | 28 (9) |
+| Eval, history and table first (gate a): train, held-out, undone | 91%, 68%, 0 | 89%, 68%, 2 |
+| Eval, the model on every title: train, held-out | 89%, 77% | 86%, 74% |
+| p50 per request | 247 ms | 262 ms |
+
+The retry (general, then content tagging after a refusal or error) scored
+exactly as the general model alone: nothing here was refused or failed, so it
+never ran. It is there for the phone.
+
+*Latency.* The first request of a fresh process for "Hazy IPA": 3.8 s after a
+long idle following heavy use, 0.76 to 1.6 s after three idle minutes (four
+runs), 0.3 s with the model warm. Prewarmed 1.5 s before the request: 288 and
+301 ms; 4 s before: 306 and 711 ms (`npm run eval:categories --
+--first-request cold|prewarmed`). A cold first request can pass the old 2.5 s
+timeout here, and a phone is slower. Prewarming also changes some greedy
+answers: on a prewarmed session the model differs from a fresh one on 8 of 221
+titles (one fixed, three broken, "Hazy IPA" coffee → drinks); only the first
+title after the sheet opens gets the prewarmed session.
+
+A phone may run a smaller variant ("AFM 3 Core"); its accuracy and its
+guardrails are checked on the phone. This Mac refused none of the refusal set
+with either model, while a phone gave "Hazy IPA" no answer; the logs
+(above) say whether that was a refusal or a cold start past the timeout.
 
 **Chip state machine.** The category chip holds `{ category, source }` with
 `source ∈ keyword | model | user`, and these rules prevent the model from
@@ -385,20 +498,27 @@ overwriting a choice the user has made:
   drops any reply that arrives afterwards. Later title edits do not re-infer.
   `user` is sticky until the sheet is dismissed.
 - While `source` is `keyword` or `model`, every keystroke runs the local
-  guess (`guessCategory`: history, then the keyword table). If it knows the
-  new title (a history or keyword hit), it is applied at once and `source`
-  becomes `keyword`. If it knows nothing and `source` is `model`, the model's
-  pick stays (`source` stays `model`, the sparkle stays) while the new title
-  continues the title the model answered: one starts with the other after
-  trimming and case folding, so the person is extending it or backspacing
-  through it (an empty field continues nothing). Otherwise the guess is
-  applied: Other, `source = keyword`. The controller remembers the asked
-  title of the reply that set or last confirmed the pick for this. After the
-  500 ms pause it issues a model request for the new title only when the
-  guess found nothing ("Model refinement"); a reply that differs swaps the
-  chip, one that agrees changes nothing shown. So typing "Surly's brewing"
-  with pauses keeps the model's Drinks from the first answer on, instead of
-  dropping to Other on each keystroke between answers.
+  guess (`guessCategory`: history, then the keyword table). If the guess
+  stands (a history hit, or keywords of one category), it is applied at once
+  and `source` becomes `keyword`. If the model decides it (`needsModel`:
+  nothing known, or keywords of two categories) and `source` is `model`, the
+  model's pick stays (`source` stays `model`, the sparkle stays) while the new
+  title continues the title the model answered: one starts with the other
+  after trimming and case folding, so the person is extending it or
+  backspacing through it (an empty field continues nothing). Otherwise the
+  guess is applied (Other, or the table's longer keyword), `source =
+  keyword`. The controller remembers the asked title of the reply that set or
+  last confirmed the pick for this. After the 500 ms pause it issues a model
+  request for the new title only when the model decides the guess ("Model
+  refinement"); a reply that differs swaps the chip, one that agrees changes
+  nothing shown. So typing "Surly's brewing" with pauses keeps the model's
+  Drinks from the first answer on, instead of dropping to Other on each
+  keystroke between answers, and "Hotel bar tab" keeps the model's Drinks
+  instead of flicking back to the table's Lodging.
+- The model's `other` is no answer (`refineCategory` returns null): the chip
+  keeps what it shows, so the sparkle never sits on Other ("Sur" stays Other
+  with no sparkle). A pick the model already made for an earlier form of the
+  title stays too.
 - Each model request carries the exact title it was asked about. A reply is
   applied only if that title still matches the field and `source` is not
   `user`; otherwise it is discarded. So a model result can be refined by a
