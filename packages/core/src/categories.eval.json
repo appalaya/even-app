@@ -1,5 +1,5 @@
 {
-  "about": "Labelled expense titles for choosing and checking how Even names a category (design.md \"Model refinement\"; run `npm run eval:categories`). The first 96 are Banff trip and shared-household titles, six per category, many outside the keyword table on purpose: the model is there for the long tail. The rest are more long-tail titles: bars, breweries, cafés, lodges, lift tickets and gear rentals, transit and parking apps, pharmacies, tips, fees, deposits, refunds, misspellings, lowercase, emoji, non-English names, ambiguous ones, and repeats of earlier merchants. Each label is the category a person would expect on the chip: what was paid for when the title says it (\"Airport parking\" is parking, \"Gas station snacks\" is food, \"Costco gas\" is fuel, \"Hotel valet\" is parking), otherwise what that kind of place mostly sells (\"Hotel bar\" is drinks). `split`: \"train\" titles may be looked at while tuning prompts and rules; \"heldout\" titles are never tuned on and give the honest number. Titles are invented; categories.test.ts checks the file's shape.",
+  "about": "Labelled expense titles for choosing and checking how Even names a category (design.md \"Model refinement\"; run `npm run eval:categories`). The first 96 are Banff trip and shared-household titles, six per category, many outside the keyword table on purpose: the model is there for the long tail. The rest are more long-tail titles: bars, breweries, cafés, lodges, lift tickets and gear rentals, transit and parking apps, pharmacies, tips, fees, deposits, refunds, misspellings, lowercase, emoji, non-English names, ambiguous ones, and repeats of earlier merchants. The last seven (held-out) put a common keyword inside a longer proper name (\"Train and Co Drama Theater\", seen on a phone as Transit), six where the table's word misleads and one where it is right (\"Sushi Train Robson\"). Each label is the category a person would expect on the chip: what was paid for when the title says it (\"Airport parking\" is parking, \"Gas station snacks\" is food, \"Costco gas\" is fuel, \"Hotel valet\" is parking), otherwise what that kind of place mostly sells (\"Hotel bar\" is drinks). `split`: \"train\" titles may be looked at while tuning prompts and rules; \"heldout\" titles are never tuned on and give the honest number. Titles are invented; categories.test.ts checks the file's shape.",
   "cases": [
     { "title": "Nourish Bistro", "category": "food", "split": "train" },
     { "title": "Chuck's Steakhouse", "category": "food", "split": "train" },
@@ -245,6 +245,14 @@
     { "title": "Storage unit", "category": "other", "split": "train" },
     { "title": "Laundry", "category": "other", "split": "heldout" },
     { "title": "Stamps", "category": "other", "split": "heldout" },
-    { "title": "Spotify family plan", "category": "other", "split": "heldout" }
+    { "title": "Spotify family plan", "category": "other", "split": "heldout" },
+
+    { "title": "Train and Co Drama Theater", "category": "activities", "split": "heldout" },
+    { "title": "Hotel California tribute show", "category": "activities", "split": "heldout" },
+    { "title": "Cabin Fever Brewing", "category": "drinks", "split": "heldout" },
+    { "title": "Lodge cast iron skillet", "category": "shopping", "split": "heldout" },
+    { "title": "Market Street Barbershop", "category": "other", "split": "heldout" },
+    { "title": "Train Station Pub", "category": "drinks", "split": "heldout" },
+    { "title": "Sushi Train Robson", "category": "food", "split": "heldout" }
   ]
 }

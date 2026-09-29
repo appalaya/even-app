@@ -215,3 +215,33 @@ export function inferCategory(title: string): Category {
   }
   return best?.category ?? 'other';
 }
+
+/** A keyword the table finds in a title, and the category it names. */
+export interface KeywordMatch {
+  /** The keyword in normalised form ("tim hortons"). */
+  readonly keyword: string;
+  readonly category: Category;
+}
+
+/**
+ * Every keyword the table finds in `title`, in title order, leaving out any that lies inside a longer match ("bus" and
+ * "ticket" inside "bus ticket"): the evidence behind `inferCategory`'s answer, which is the longest of these. Empty
+ * when nothing matches. "Train and Co Drama Theater" → [train (transit)]; "Train Station Pub" → [train (transit),
+ * pub (drinks)]; "Bus ticket to Jasper" → [bus ticket (transit)].
+ */
+export function keywordMatches(title: string): KeywordMatch[] {
+  if (typeof title !== 'string') return [];
+  const norm = normalize(title);
+  if (norm === '') return [];
+  const haystack = ` ${norm} `;
+  const found: { start: number; end: number; match: KeywordMatch }[] = [];
+  for (const k of PREPARED) {
+    for (let pos = haystack.indexOf(k.needle); pos !== -1; pos = haystack.indexOf(k.needle, pos + 1)) {
+      found.push({ start: pos, end: pos + k.length, match: { keyword: k.needle.trim(), category: k.category } });
+    }
+  }
+  return found
+    .filter((m) => !found.some((o) => o.start <= m.start && m.end <= o.end && o.end - o.start > m.end - m.start))
+    .sort((a, b) => a.start - b.start || b.end - a.end)
+    .map((m) => m.match);
+}

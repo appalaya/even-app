@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { CATEGORIES, type Category } from './types.js';
-import { CATEGORY_EMOJI, CATEGORY_KEYWORDS, CATEGORY_LABEL, inferCategory, isCategory } from './categories.js';
+import {
+  CATEGORY_EMOJI,
+  CATEGORY_KEYWORDS,
+  CATEGORY_LABEL,
+  inferCategory,
+  isCategory,
+  keywordMatches,
+} from './categories.js';
 import { LIMITS } from './constants.js';
 
 const codePoints = (s: string): string => [...s].map((c) => c.codePointAt(0)?.toString(16)).join(' ');
@@ -268,5 +275,71 @@ describe('categories.eval.json (labelled titles for the keyword table, history a
 
   it('keeps a held-out split of at least 60 titles that prompts and rules are never tuned on', () => {
     expect(set.cases.filter((c) => c.split === 'heldout').length).toBeGreaterThanOrEqual(60);
+  });
+});
+
+describe('keywordMatches (the evidence behind inferCategory)', () => {
+  it('lists every keyword found, in title order, leaving out one inside a longer match', () => {
+    const matches = (title: string) => keywordMatches(title).map((m) => `${m.keyword}:${m.category}`);
+    expect(matches('Train and Co Drama Theater')).toEqual(['train:transit']);
+    expect(matches('Train Station Pub')).toEqual(['train:transit', 'pub:drinks']);
+    expect(matches('Hotel bar')).toEqual(['hotel:lodging', 'bar:drinks']);
+    expect(matches('Bus ticket to Jasper')).toEqual(['bus ticket:transit']); // not bus, not ticket
+    expect(matches('Uber to hotel')).toEqual(['uber to:transit', 'hotel:lodging']);
+    expect(matches("Tim Horton's")).toEqual(['tim hortons:coffee']);
+    expect(matches('Taxi, then another taxi')).toEqual(['taxi:transit', 'taxi:transit']);
+    expect(matches('Rundle')).toEqual([]);
+    expect(matches('')).toEqual([]);
+    expect(keywordMatches(42 as unknown as string)).toEqual([]);
+  });
+
+  it("agrees with inferCategory: the answer is the category of one of the matches, and 'other' exactly when none", () => {
+    for (const title of [
+      'Hotel bar',
+      'Gas station snacks',
+      'Sushi Train Robson',
+      'Lift ticket at Sunshine',
+      'Rundle',
+      'Costco gas',
+    ]) {
+      const found = keywordMatches(title);
+      const inferred = inferCategory(title);
+      if (found.length === 0) expect([title, inferred]).toEqual([title, 'other']);
+      else expect([title, found.map((m) => m.category)]).toEqual([title, expect.arrayContaining([inferred])]);
+    }
+  });
+});
+
+describe('categories.refusals.json (titles a model might refuse, for the on-device model)', () => {
+  const refusals = JSON.parse(
+    readFileSync(new URL('./categories.refusals.json', import.meta.url), 'utf8'),
+  ) as { about: unknown; titles: { title: unknown; category: unknown; kind: unknown }[] };
+  const evalSet = JSON.parse(
+    readFileSync(new URL('./categories.eval.json', import.meta.url), 'utf8'),
+  ) as { cases: { title: string; category: string }[] };
+
+  it('holds 30 to 40 titles, each labelled with a category or null, and a kind', () => {
+    expect(typeof refusals.about).toBe('string');
+    expect(refusals.titles.length).toBeGreaterThanOrEqual(30);
+    expect(refusals.titles.length).toBeLessThanOrEqual(40);
+    for (const t of refusals.titles) {
+      expect(Object.keys(t).sort()).toEqual(['category', 'kind', 'title']);
+      const title = t.title as string;
+      expect(typeof title).toBe('string');
+      expect(title.trim()).toBe(title);
+      expect(title.length).toBeGreaterThan(0);
+      expect(title.length).toBeLessThanOrEqual(LIMITS.titleMax);
+      expect([title, t.category === null || isCategory(t.category)]).toEqual([title, true]);
+      expect([title, typeof t.kind]).toEqual([title, 'string']);
+    }
+    const titles = refusals.titles.map((t) => (t.title as string).toLowerCase());
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  it('labels a title that is also in the eval set the way the eval set does', () => {
+    const labels = new Map(evalSet.cases.map((c) => [c.title, c.category]));
+    const shared = refusals.titles.filter((t) => labels.has(t.title as string));
+    expect(shared.length).toBeGreaterThanOrEqual(5);
+    for (const t of shared) expect([t.title, t.category]).toEqual([t.title, labels.get(t.title as string)]);
   });
 });
