@@ -15,6 +15,7 @@ import { LINKS } from '@/features/settings/about';
 import { runStartupSelfCheck } from '@/selfCheck';
 // Imported for its side effect too: the task is defined when the bundle loads, before the OS asks for it.
 import { registerBackgroundRefresh } from '@/services/background/task';
+import { ensureActivityChannel } from '@/services/notifications/local';
 import { AppProvider, usePrefs } from '@/state';
 import { ThemeProvider, useTheme } from '@/theme';
 
@@ -30,9 +31,11 @@ export const unstable_settings = { anchor: 'index' };
 const PREFS_WAIT_MS = 400;
 
 export default function RootLayout() {
-  // Once per launch; iOS decides when the task runs (the simulator refuses it, which is logged, not thrown).
+  // Once per launch; iOS decides when the task runs (the simulator refuses it, which is logged, not thrown). Android's
+  // notification channel is made here too, so Settings lists "Group activity" before the first notification.
   useEffect(() => {
     void registerBackgroundRefresh();
+    void ensureActivityChannel();
   }, []);
   return (
     <GestureHandlerRootView style={styles.root}>

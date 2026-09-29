@@ -6,12 +6,15 @@
  * - `ensureNotificationPermission()`: the contextual permission request (never at launch); a no-op once the OS has
  *   an answer. `askForNotificationsOnce()` is what the group screen calls the first time a group with more than one
  *   member is opened: it asks at most once per install (`prefs` row `notifications.asked`);
- * - `clearActivityNotification(localId)`: for the group screen, once its activity has been seen.
+ * - `clearActivityNotification(localId)`: for the group screen, once its activity has been seen;
+ * - `ensureActivityChannel()`: Android's "Group activity" channel, which every activity notification is posted in.
  *
  * "Last notified" per group (when, and how many events) is the `prefs` row `notifications.ledger`
  * (coalesce.ts `prefsLedger`): local group ids and counts only, nothing decrypted.
  */
 import * as Notifications from 'expo-notifications';
+import { AndroidImportance } from 'expo-notifications';
+import { Platform } from 'react-native';
 
 import { openAppServices } from '../../state/openAppServices';
 import type { AppServices } from '../../state/services';
@@ -25,6 +28,47 @@ import {
   type LedgerStore,
   type PlannedNotification,
 } from './coalesce';
+
+/**
+ * Android shows each notification channel by name in Settings › Apps › Even › Notifications, where people can turn it
+ * off. Even posts one kind of notification, a group's new activity, so it has one channel. Without it
+ * expo-notifications posts to its fallback channel, "Miscellaneous". The channel is delivered the way that fallback
+ * was (high importance: a sound and a heads-up banner, badge and vibration on), so only the name changes. An app can
+ * lower a channel's importance later but never raise it. iOS has no channels.
+ */
+export const ACTIVITY_CHANNEL = {
+  id: 'group-activity',
+  name: 'Group activity',
+  description: 'New expenses and payments in your groups.',
+} as const;
+
+let activityChannel: Promise<void> | null = null;
+
+/**
+ * Creates (once per process) Android's "Group activity" channel; a no-op on iOS. The root layout calls it at launch,
+ * so the channel is listed from the first run, and the background task calls it before posting, since Android can
+ * run the task without the app's screens. Creating a channel asks for nothing. Never throws.
+ */
+export function ensureActivityChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return Promise.resolve();
+  activityChannel ??= Notifications.setNotificationChannelAsync(ACTIVITY_CHANNEL.id, {
+    name: ACTIVITY_CHANNEL.name,
+    description: ACTIVITY_CHANNEL.description,
+    importance: AndroidImportance.HIGH,
+    showBadge: true,
+    enableVibrate: true,
+  }).then(
+    () => undefined,
+    (error: unknown) => {
+      activityChannel = null;
+      console.warn(
+        'notifications: could not create the channel',
+        error instanceof Error ? error.message : error,
+      );
+    },
+  );
+  return activityChannel;
+}
 
 /** expo-notifications' `IosAuthorizationStatus.PROVISIONAL`. */
 const IOS_PROVISIONAL = 3;
@@ -73,12 +117,15 @@ export async function scheduleActivityNotifications(
     return entry !== undefined && showing.has(activityIdentifier(localId)) ? entry : null;
   });
   const posted: PlannedNotification[] = [];
+  if (planned.length > 0) await ensureActivityChannel();
   for (const plan of planned) {
     try {
       await Notifications.scheduleNotificationAsync({
         identifier: plan.identifier,
         content: { title: plan.title, body: plan.body, data: { localId: plan.localId } },
-        trigger: null,
+        // Posted now, in the "Group activity" channel on Android (expo-notifications takes the channel on the
+        // trigger; iOS reads this as "now").
+        trigger: { channelId: ACTIVITY_CHANNEL.id },
       });
       posted.push(plan);
     } catch {
