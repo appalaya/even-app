@@ -23,3 +23,5 @@ becomes the "What's New" notes.
   phone that never picked a name is asked
 - Even names the category for you as you type the title, on your phone, with
   nothing sent anywhere (iPhones with Apple Intelligence turned on)
+- An About page with a Diagnostics screen that shows what the app knows about
+  its model and sync; nothing leaves your phone

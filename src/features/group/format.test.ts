@@ -7,6 +7,7 @@ import {
   deviceShort,
   isoDateLabel,
   staleSince,
+  statusLineWords,
   syncedLabel,
 } from './format';
 
@@ -36,6 +37,49 @@ describe('group formats', () => {
     expect(plain(syncedLabel(at(26, 10, 5), NOW, 'en-US'))).toBe('Synced at 10:05 AM');
     expect(syncedLabel(at(24, 10, 5), NOW, 'en-US')).toBe('Synced Sep 24');
     expect(plain(staleSince(at(26, 14, 10), NOW, 'en-US'))).toBe('2:10 PM');
+  });
+
+  it("words Group's status line from a group's sync status", () => {
+    const sync = (extra: Partial<Parameters<typeof statusLineWords>[0]>) => ({
+      syncing: false,
+      lifecycle: 'active',
+      lastSyncedAt: NOW - 2 * 60_000,
+      lastSyncError: null,
+      ...extra,
+    });
+    expect(statusLineWords(sync({}), NOW)).toEqual({ state: 'synced', label: 'Synced 2 min ago' });
+    expect(statusLineWords(sync({ syncing: true }), NOW)).toEqual({
+      state: 'syncing',
+      label: 'Syncing…',
+    });
+    expect(statusLineWords(sync({}), NOW, { replaying: true }).label).toBe('Syncing…');
+    expect(statusLineWords(sync({ lastSyncError: 'unauthorized' }), NOW)).toEqual({
+      state: 'stale',
+      label: "Can't reach this group's server.",
+    });
+    expect(statusLineWords(sync({ lifecycle: 'blocked' }), NOW).label).toBe(
+      'This group is blocked on its server.',
+    );
+    expect(statusLineWords(sync({ lastSyncError: 'not_an_even_server' }), NOW).label).toBe(
+      "This group's server isn't an Even server.",
+    );
+    expect(statusLineWords(sync({ lastSyncError: 'unsupported_version' }), NOW).label).toBe(
+      "This group's server needs an update.",
+    );
+    expect(
+      plain(
+        statusLineWords(sync({ lastSyncError: 'network', lastSyncedAt: at(26, 14, 10) }), NOW, {
+          locale: 'en-US',
+        }).label,
+      ),
+    ).toBe('Not synced since 2:10 PM');
+    expect(statusLineWords(sync({ lastSyncedAt: null }), NOW)).toEqual({
+      state: 'stale',
+      label: 'Not synced yet',
+    });
+    expect(statusLineWords(sync({ lastSyncedAt: null, lastSyncError: 'network' }), NOW).label).toBe(
+      'Not synced yet',
+    );
   });
 
   it('shortens a device id', () => {

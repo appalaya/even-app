@@ -49,6 +49,7 @@ import {
   toggleMember,
 } from '@/features/split/draft';
 
+import { refineCategory } from '../state/categories';
 import type { NewEventRow } from '../services/storage/types';
 import type { ServerInfo, SyncResult, Transport } from '../services/sync/types';
 import type { AppServices } from '../state';
@@ -78,6 +79,9 @@ export const SEED_STATES = [
   'app-settings',
   'app-settings-emoji',
   'app-settings-help',
+  'about',
+  'diagnostics',
+  'diagnostics-check',
   // Group
   'group',
   'balances',
@@ -158,7 +162,7 @@ export interface SeedOptions {
   emoji?: string | null;
   /** Hold the empty-state motion at this time (ms). */
   motionAt?: number;
-  /** Group settings and App settings: a content offset, as if scrolled. */
+  /** Group settings, App settings and Diagnostics: a content offset, as if scrolled. */
   y?: number;
 }
 
@@ -346,6 +350,8 @@ export interface Scenario {
 
 /** A server nobody answers (a non-routable address): a sync hangs for the transport's 30 s timeout. */
 const SILENT_SERVER = 'https://10.255.255.1';
+/** A server that refuses at once (nothing listens on port 9 of the phone itself): every push fails, fast. */
+const REFUSING_SERVER = 'https://127.0.0.1:9';
 
 interface Banff {
   log: Log;
@@ -1068,6 +1074,8 @@ interface GroupSpec {
   spends?: Spend[];
   archived?: boolean;
   synced: boolean;
+  /** The group's server; the default one when omitted. */
+  serverUrl?: string;
 }
 
 /** Creates a group as Sam (or `myName`), adds its expenses split equally among everyone, archives it if asked. */
@@ -1079,6 +1087,7 @@ async function createAs(s: AppServices, spec: GroupSpec): Promise<string> {
     myName,
     myId: spec.myId,
     people: spec.people,
+    ...(spec.serverUrl === undefined ? {} : { serverUrl: spec.serverUrl }),
   });
   const derived = await s.groupState.get(localId);
   const ids = new Map<string, string>();
@@ -1154,6 +1163,70 @@ async function otherGroups(s: AppServices): Promise<void> {
     spends: [{ payer: 'Sam', amount: 6600, title: 'Internet', category: 'fees' }],
     synced: true,
   });
+}
+
+/**
+ * The AppDiagnostics board's Sync card: Banff 2026 synced 2 min ago, Oak Street house an hour ago, Friday dinners
+ * never synced with its server refusing it ("Can't reach this group's server.") and its entries unsent, Tofino
+ * weekend 3 days ago. Friday dinners is on a server that refuses at once, so its entries stay unsent; the times and
+ * the error are written once the syncs the new groups started have finished, so the list reads as drawn (until the
+ * engine's own retry of Friday dinners, 30 s later, words its error as the network one).
+ */
+async function diagnosticsGroups(s: AppServices): Promise<void> {
+  const tofino = await createAs(s, {
+    name: 'Tofino weekend',
+    people: ['Maya', 'Jordan', 'Nathan', 'Priya'],
+    synced: true,
+  });
+  const friday = await createAs(s, {
+    name: 'Friday dinners',
+    people: ['Maya', 'Jordan', 'Nathan', 'Priya', 'Leo'],
+    spends: [{ payer: 'Jordan', amount: 7200, title: 'Ramen', category: 'food' }],
+    synced: false,
+    serverUrl: REFUSING_SERVER,
+  });
+  const oak = await createAs(s, {
+    name: 'Oak Street house',
+    people: ['Maya', 'Priya'],
+    spends: [{ payer: 'Sam', amount: 6600, title: 'Internet', category: 'fees' }],
+    synced: true,
+  });
+  const banff = await createAs(s, {
+    name: 'Banff 2026',
+    people: ['Maya', 'Jordan', 'Nathan'],
+    spends: [{ payer: 'Maya', amount: 20800, title: 'Cabin', category: 'lodging' }],
+    synced: true,
+  });
+  await askTheModel();
+  for (let waited = 0; waited < 8000; waited += 200) {
+    const list = s.groupState.peekList();
+    if (list.status === 'ready' && list.rows.every((row) => !row.sync.syncing)) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const now = Date.now();
+  const stamps: [string, number | null, string | null][] = [
+    [banff, now - 2 * 60_000, null],
+    [oak, now - 61 * 60_000, null],
+    [friday, null, 'unauthorized'],
+    [tofino, now - 3 * 24 * 3_600_000, null],
+  ];
+  for (const [localId, lastSyncedAt, lastSyncError] of stamps) {
+    await s.store.setSyncState(localId, { lastSyncedAt, lastSyncError });
+    s.groupState.invalidate(localId);
+  }
+  s.groupState.groupsChanged();
+}
+
+/**
+ * Diagnostics' "Since Even opened": a few titles asked of the real on-device model through the chip's path
+ * (`refineCategory`), so the table shows what this phone's model answers. The titles are this seed's own; they are
+ * not kept anywhere (only each outcome is).
+ */
+async function askTheModel(): Promise<void> {
+  for (const title of ['Sur', 'Fairmont Banff Springs', "Surly's brewing"]) {
+    await refineCategory(title);
+  }
 }
 
 /**
@@ -1986,6 +2059,23 @@ export async function seed(
     case 'app-settings-help':
       // Scrolled so Groups, Help and About show, as the bottom of the AppSettings board.
       return { steps: [push(`/settings?y=${options.y ?? 206}`)] };
+    case 'about':
+      return { steps: [push('/settings'), push('/about', 400)] };
+    case 'diagnostics':
+    case 'diagnostics-check': {
+      await diagnosticsGroups(s);
+      const query = [
+        ...(state === 'diagnostics-check' ? ['check=1'] : []),
+        ...(options.y === undefined ? [] : [`y=${options.y}`]),
+      ].join('&');
+      return {
+        steps: [
+          push('/settings'),
+          push('/about', 400),
+          push(`/diagnostics${query === '' ? '' : `?${query}`}`, 400),
+        ],
+      };
+    }
 
     // ----- Group, Expense detail -----
     case 'expense-flagged':

@@ -4,6 +4,8 @@
  *
  * Times are in the device locale's own format (every board: "9:14 PM", "Not synced since 2:10 PM" in en-US).
  */
+import { notSyncedLabel } from '@/components/statusLineWords';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function startOfDay(ms: number): number {
@@ -70,6 +72,49 @@ export function staleSince(lastSyncedAt: number, now: number, locale?: string): 
   return startOfDay(lastSyncedAt) === startOfDay(now)
     ? clockTime(lastSyncedAt, locale)
     : shortDate(lastSyncedAt, now, locale);
+}
+
+/** Errors the status line words on their own (design.md "Error handling"); the rest read "Not synced since …". */
+const SYNC_ERROR_WORDS: Readonly<Record<string, string>> = {
+  group_blocked: 'This group is blocked on its server.',
+  not_an_even_server: "This group's server isn't an Even server.",
+  unsupported_version: "This group's server needs an update.",
+  unauthorized: "Can't reach this group's server.",
+};
+
+/** What the status line needs to know about a group's sync (`SyncStatus`). */
+export interface StatusLineInput {
+  syncing: boolean;
+  /** `blocked` reads as the `group_blocked` error. */
+  lifecycle: string;
+  lastSyncedAt: number | null;
+  lastSyncError: string | null;
+}
+
+/**
+ * The status line under Group's big number, as words: "Syncing…" while a cycle runs (or the glyph replays a turn);
+ * an error with words of its own ("Can't reach this group's server."); after any other error, or before the first
+ * sync, "Not synced since 2:10 PM" / "Not synced yet"; else "Synced 2 min ago".
+ */
+export function statusLineWords(
+  sync: StatusLineInput,
+  now: number,
+  options: { replaying?: boolean; locale?: string } = {},
+): { state: 'synced' | 'syncing' | 'stale'; label: string } {
+  if (sync.syncing || options.replaying === true) return { state: 'syncing', label: 'Syncing…' };
+  const error = sync.lifecycle === 'blocked' ? 'group_blocked' : sync.lastSyncError;
+  if (error !== null) {
+    const words = SYNC_ERROR_WORDS[error];
+    if (words !== undefined) return { state: 'stale', label: words };
+  }
+  if (error !== null || sync.lastSyncedAt === null) {
+    const label =
+      sync.lastSyncedAt === null
+        ? 'Not synced yet'
+        : notSyncedLabel(staleSince(sync.lastSyncedAt, now, options.locale));
+    return { state: 'stale', label };
+  }
+  return { state: 'synced', label: syncedLabel(sync.lastSyncedAt, now, options.locale) };
 }
 
 /** A device id's short form for the Activity tab ("7QX2"): its first four letters or digits, uppercased. */

@@ -2,11 +2,11 @@ import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
-import { notSyncedLabel, type StatusLineProps } from '@/components';
+import type { StatusLineProps } from '@/components';
 import { askForNotificationsOnce, clearActivityNotification } from '@/services/notifications/local';
 import { useApp, useSyncStatus, type GroupSnapshot, type InviteInfo } from '@/state';
 
-import { staleSince, syncedLabel } from './format';
+import { statusLineWords } from './format';
 import { groupHrefs } from './routes';
 
 /**
@@ -86,14 +86,6 @@ export function useNow(ms = 30_000): number {
   return now;
 }
 
-/** Errors the status line words on their own (design.md "Error handling"); the rest read "Not synced since …". */
-const ERROR_WORDS: Readonly<Record<string, string>> = {
-  group_blocked: 'This group is blocked on its server.',
-  not_an_even_server: "This group's server isn't an Even server.",
-  unsupported_version: "This group's server needs an update.",
-  unauthorized: "Can't reach this group's server.",
-};
-
 /** One turn of the sync glyph (StatusLine: 1.1 s per turn). */
 const REPLAY_MS = 1100;
 
@@ -126,20 +118,8 @@ export function useStatusLine(localId: string): StatusLineProps | null {
   }, [groups, localId]);
 
   if (sync === null) return null;
-  if (sync.syncing || replaying) return { state: 'syncing', label: 'Syncing…' };
-  const error = sync.lifecycle === 'blocked' ? 'group_blocked' : sync.lastSyncError;
-  if (error !== null) {
-    const words = ERROR_WORDS[error];
-    if (words !== undefined) return { state: 'stale', label: words, onSyncNow };
-  }
-  if (error !== null || sync.lastSyncedAt === null) {
-    const label =
-      sync.lastSyncedAt === null
-        ? 'Not synced yet'
-        : notSyncedLabel(staleSince(sync.lastSyncedAt, now));
-    return { state: 'stale', label, onSyncNow };
-  }
-  return { state: 'synced', label: syncedLabel(sync.lastSyncedAt, now), onSyncNow };
+  const words = statusLineWords(sync, now, { replaying });
+  return words.state === 'syncing' ? words : { ...words, onSyncNow };
 }
 
 /**

@@ -34,13 +34,7 @@ export interface StatusLineProps {
   button?: boolean;
 }
 
-/**
- * The stale line as the States board words it: "Not synced since 2:10 pm". `time` is the caller's formatted time of
- * the last successful sync.
- */
-export function notSyncedLabel(time: string): string {
-  return `Not synced since ${time}`;
-}
+export { notSyncedLabel } from './statusLineWords';
 
 /**
  * The sync line under Group's big number: 6 pt dot, 6 pt gap, 13/18 `textMuted`, and a 44 pt sync button at the

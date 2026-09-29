@@ -100,6 +100,8 @@ function RootStack() {
         <Stack.Screen name="join" options={SHEET_ROUTE} />
         <Stack.Screen name="i" options={SHEET_ROUTE} />
         <Stack.Screen name="settings" />
+        <Stack.Screen name="about" />
+        <Stack.Screen name="diagnostics" />
       </Stack>
     </>
   );

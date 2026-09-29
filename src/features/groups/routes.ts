@@ -9,6 +9,8 @@ export const hrefs = {
   create: '/create' as Href,
   join: '/join' as Href,
   settings: '/settings' as Href,
+  about: '/about' as Href,
+  diagnostics: '/diagnostics' as Href,
   group: (localId: string): Href => `/group/${encodeURIComponent(localId)}` as Href,
   joinWithCode: (code: string): Href => `/join?code=${encodeURIComponent(code)}` as Href,
   pickName: (localId: string): Href => `/join?localId=${encodeURIComponent(localId)}` as Href,

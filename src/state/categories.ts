@@ -33,7 +33,8 @@
  *
  * Only the on-device model is ever used; a title never leaves the phone (design.md "Model refinement"). Each
  * availability check and each model reply is logged with `console.log` (outcome, category, milliseconds, model), never
- * the title (design.md "Reading the logs").
+ * the title (design.md "Reading the logs"). Each reply is also kept, in memory only, among the last 20 outcomes since
+ * launch that Diagnostics lists (`useCategoryModelLog`); the title is never kept.
  */
 import {
   inferCategory as inferFromKeywords,
@@ -183,7 +184,7 @@ function token(value: unknown): string | null {
  * malformed is an `error` with no category. Only the checked fields reach the log, so nothing the native side
  * returns can put a title there.
  */
-function readReply(value: unknown): {
+export function readModelReply(value: unknown): {
   category: Category | null;
   outcome: ClassifierOutcome;
   model: string | null;
@@ -215,6 +216,121 @@ function readReply(value: unknown): {
   };
 }
 
+/**
+ * A native availability answer, checked: `available`, or `unavailable` with the platform's reason when it is a plain
+ * word (`unknown` otherwise). Anything malformed is unavailable.
+ */
+export function readAvailability(value: unknown): ClassifierAvailability {
+  const status = (value as { status?: unknown } | null | undefined)?.status;
+  if (status === 'available') return { status: 'available' };
+  return {
+    status: 'unavailable',
+    reason: token((value as { reason?: unknown } | null | undefined)?.reason) ?? 'unknown',
+  };
+}
+
+// ---------- Outcomes since launch (Diagnostics) ----------
+
+/**
+ * What became of one question to the model, as Diagnostics lists it: a category (`answered`), no answer (`none`: the
+ * model's `other`, or no model after all), a refusal or guardrail, no answer in time, or an error.
+ */
+export type ModelOutcome = 'answered' | 'none' | 'refused' | 'timeout' | 'error';
+
+/** One model reply, kept in memory for Diagnostics. Never the title. */
+export interface ModelOutcomeEntry {
+  outcome: ModelOutcome;
+  /** The category the model named (only for `answered`), else null. */
+  category: Category | null;
+  /** From the call to the reply, as the app measured it (the log's `ms`). */
+  ms: number;
+  /** The model whose attempt decided it (`general`, `contentTagging`), or null. */
+  model: string | null;
+  /** Wall-clock time of the reply. */
+  at: number;
+}
+
+/** How many outcomes Diagnostics keeps: the last 20 since launch. */
+export const MODEL_OUTCOMES_KEPT = 20;
+
+/**
+ * A fixed-size ring of the latest model outcomes, in memory only (gone at the next launch). `peek` returns the same
+ * array until the next `record`, newest first, so `useSyncExternalStore` re-renders exactly when one arrives.
+ */
+export interface ModelOutcomeLog {
+  record(entry: ModelOutcomeEntry): void;
+  peek(): readonly ModelOutcomeEntry[];
+  subscribe(listener: () => void): () => void;
+  clear(): void;
+}
+
+export function createModelOutcomeLog(capacity: number = MODEL_OUTCOMES_KEPT): ModelOutcomeLog {
+  const size = Math.max(1, Math.floor(capacity));
+  const ring: (ModelOutcomeEntry | undefined)[] = new Array<ModelOutcomeEntry | undefined>(size);
+  let next = 0;
+  let count = 0;
+  let snapshot: readonly ModelOutcomeEntry[] = Object.freeze([]);
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of [...listeners]) {
+      try {
+        listener();
+      } catch {
+        // A broken subscriber costs nobody an answer.
+      }
+    }
+  };
+  const rebuild = () => {
+    const newestFirst: ModelOutcomeEntry[] = [];
+    for (let i = 1; i <= count; i += 1) {
+      const entry = ring[(next - i + size) % size];
+      if (entry !== undefined) newestFirst.push(entry);
+    }
+    snapshot = Object.freeze(newestFirst);
+  };
+  return {
+    record(entry) {
+      ring[next] = Object.freeze({ ...entry });
+      next = (next + 1) % size;
+      count = Math.min(count + 1, size);
+      rebuild();
+      notify();
+    },
+    peek: () => snapshot,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear() {
+      ring.fill(undefined);
+      next = 0;
+      count = 0;
+      rebuild();
+      notify();
+    },
+  };
+}
+
+/** A native outcome as Diagnostics words it: the model's `other`, no model and a blank title are all no answer. */
+function toModelOutcome(outcome: ClassifierOutcome): ModelOutcome {
+  switch (outcome) {
+    case 'answered':
+    case 'refused':
+    case 'timeout':
+    case 'error':
+      return outcome;
+    default:
+      return 'none';
+  }
+}
+
+/** Where the refiner's outcomes go: the app's ring (`setOnDeviceModel`), nowhere by default. */
+export type ModelOutcomeSink = (entry: ModelOutcomeEntry) => void;
+
+const nowhere: ModelOutcomeSink = () => undefined;
+
 export interface CategoryRefiner {
   /** Add expense opened: check availability now and, if the model is there, load it before the first title. */
   prepare(): void;
@@ -230,16 +346,25 @@ export const MODEL_LOG_PREFIX = '[even] category model';
  * unavailable, or an availability call that fails, means null for every title without asking the model. The model's
  * `other`, an answer that is not one of the sixteen category ids, a refusal, a timeout, a rejection, or a throw is
  * null too, so the local guess stands. A model that becomes ready later (Apple Intelligence just turned on) is used
- * from the next launch. Each availability check and each reply is logged to `log`, never the title.
+ * from the next launch. Each availability check and each reply is logged to `log`, never the title; each reply is
+ * also handed to `record` (outcome, category, milliseconds, model, time; never the title).
  */
 export function createCategoryRefiner(
   model: OnDeviceModel | null,
   log: ModelLog = consoleLog,
+  record: ModelOutcomeSink = nowhere,
 ): CategoryRefiner {
-  // Diagnostics never cost an answer: a log that throws is ignored.
+  // Diagnostics never cost an answer: a log or a sink that throws is ignored.
   const say = (line: string): void => {
     try {
       log(line);
+    } catch {
+      // nothing to do
+    }
+  };
+  const keep = (entry: ModelOutcomeEntry): void => {
+    try {
+      record(entry);
     } catch {
       // nothing to do
     }
@@ -250,15 +375,14 @@ export function createCategoryRefiner(
     usable ??= Promise.resolve()
       .then(() => model.availability())
       .then(
-        (availability) => {
-          const available = availability?.status === 'available';
-          const reason = available
-            ? ''
-            : ` reason=${token((availability as { reason?: unknown } | undefined)?.reason) ?? 'unknown'}`;
+        (answer) => {
+          const availability = readAvailability(answer);
           say(
-            `${MODEL_LOG_PREFIX} availability ${available ? 'available' : 'unavailable'}${reason}`,
+            availability.status === 'available'
+              ? `${MODEL_LOG_PREFIX} availability available`
+              : `${MODEL_LOG_PREFIX} availability unavailable reason=${availability.reason}`,
           );
-          return available;
+          return availability.status === 'available';
         },
         () => {
           say(`${MODEL_LOG_PREFIX} availability unavailable reason=checkFailed`);
@@ -276,33 +400,84 @@ export function createCategoryRefiner(
     async refine(title) {
       if (model === null || title.trim() === '' || !(await isUsable())) return null;
       const started = Date.now();
-      let reply: ReturnType<typeof readReply>;
+      let reply: ReturnType<typeof readModelReply>;
       try {
-        reply = readReply(await model.classifyExpense(title));
+        reply = readModelReply(await model.classifyExpense(title));
       } catch {
         reply = { category: null, outcome: 'error', model: null, detail: 'nativeCallFailed' };
       }
+      const at = Date.now();
+      const ms = at - started;
       const parts = [
         `outcome=${reply.outcome}`,
         `category=${reply.category ?? '-'}`,
-        `ms=${Date.now() - started}`,
+        `ms=${ms}`,
         `model=${reply.model ?? '-'}`,
       ];
       if (reply.detail !== null) parts.push(`detail=${reply.detail}`);
       say(`${MODEL_LOG_PREFIX} ${parts.join(' ')}`);
+      keep({
+        outcome: toModelOutcome(reply.outcome),
+        category: reply.category,
+        ms,
+        model: reply.model,
+        at,
+      });
       return reply.category;
     },
   };
 }
 
+/** The last 20 model outcomes since launch, for Diagnostics (`useCategoryModelLog`). In memory only. */
+const modelOutcomes = createModelOutcomeLog();
+
+let installed: OnDeviceModel | null = null;
 let refiner = createCategoryRefiner(null);
 
 /**
  * Installs the on-device model (the app, once per process) or a stub (tests); null removes it. `log` receives the
- * diagnostics (default `console.log`).
+ * diagnostics (default `console.log`); every reply to `refineCategory` is kept among the outcomes since launch.
  */
 export function setOnDeviceModel(model: OnDeviceModel | null, log?: ModelLog): void {
-  refiner = createCategoryRefiner(model, log);
+  installed = model;
+  refiner = createCategoryRefiner(model, log, modelOutcomes.record);
+}
+
+/**
+ * The installed on-device model, for Diagnostics' "Check on this phone" (which asks it directly, so its answers
+ * reach neither the outcomes since launch nor history); null when there is none.
+ */
+export function installedOnDeviceModel(): OnDeviceModel | null {
+  return installed;
+}
+
+/**
+ * The model's availability now, asked afresh (Diagnostics): null when no model is installed, `unavailable` with
+ * `checkFailed` when the call fails. The chip keeps the answer it got at its first use for the rest of the launch.
+ */
+export async function categoryModelAvailability(): Promise<ClassifierAvailability | null> {
+  const model = installed;
+  if (model === null) return null;
+  try {
+    return readAvailability(await model.availability());
+  } catch {
+    return { status: 'unavailable', reason: 'checkFailed' };
+  }
+}
+
+/** The outcomes since launch, newest first; the same array until the next reply. */
+export function peekModelOutcomes(): readonly ModelOutcomeEntry[] {
+  return modelOutcomes.peek();
+}
+
+/** Called after each new outcome; returns the unsubscribe. */
+export function subscribeModelOutcomes(listener: () => void): () => void {
+  return modelOutcomes.subscribe(listener);
+}
+
+/** Tests only: forget the outcomes since launch. */
+export function clearModelOutcomes(): void {
+  modelOutcomes.clear();
 }
 
 /**

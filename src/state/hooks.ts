@@ -6,6 +6,7 @@
 import type { MemberState } from '@even/core';
 import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
 
+import { peekModelOutcomes, subscribeModelOutcomes, type ModelOutcomeEntry } from './categories';
 import { AppContext } from './context';
 import type { GroupListSnapshot, GroupSnapshot, SyncStatus } from './groupState';
 import type { Appearance, NotificationStatus, Prefs } from './prefs';
@@ -98,4 +99,13 @@ export function usePrefs(): PrefsHandle {
     }),
     [prefs, snapshot],
   );
+}
+
+/**
+ * Diagnostics: the category model's last 20 outcomes since launch, newest first (outcome, category, milliseconds,
+ * model, time; never a title). Re-renders as each reply to the chip arrives. Needs no provider: the ring lives in
+ * memory in `categories.ts`.
+ */
+export function useCategoryModelLog(): readonly ModelOutcomeEntry[] {
+  return useSyncExternalStore(subscribeModelOutcomes, peekModelOutcomes);
 }

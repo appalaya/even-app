@@ -5,6 +5,7 @@
 export { AppProvider, type AppProviderProps } from './AppProvider';
 export {
   useApp,
+  useCategoryModelLog,
   useGroup,
   useGroups,
   useMe,
@@ -45,6 +46,7 @@ export { isStateError, StateError, type InviteProblem, type StateErrorCode } fro
 export { deviceSeat } from './seat';
 export type { Appearance, NotificationStatus, Prefs } from './prefs';
 export {
+  categoryModelAvailability,
   carriesSparkle,
   chipAfterReply,
   chipAfterTap,
@@ -56,4 +58,6 @@ export {
   shouldRefine,
   type CategoryChip,
   type ChipSource,
+  type ModelOutcome,
+  type ModelOutcomeEntry,
 } from './categories';

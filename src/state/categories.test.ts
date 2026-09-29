@@ -7,22 +7,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   carriesSparkle,
+  categoryModelAvailability,
   chipAfterReply,
   chipAfterTap,
   chipAfterTitle,
+  clearModelOutcomes,
   continuesTitle,
   createCategoryRefiner,
+  createModelOutcomeLog,
   guessCategory,
   inferCategory,
   initialChip,
+  installedOnDeviceModel,
   MODEL_LOG_PREFIX,
+  MODEL_OUTCOMES_KEPT,
   needsModel,
+  peekModelOutcomes,
   prepareCategoryModel,
+  readAvailability,
   refineCategory,
   setCategoryHistory,
   setOnDeviceModel,
   shouldRefine,
+  subscribeModelOutcomes,
   type CategoryChip,
+  type ModelOutcomeEntry,
   type OnDeviceModel,
 } from './categories';
 
@@ -618,6 +627,241 @@ describe('the model diagnostics (design.md "Reading the logs")', () => {
       ]);
     } finally {
       spy.mockRestore();
+    }
+  });
+});
+
+describe('the outcomes since launch (Diagnostics, useCategoryModelLog)', () => {
+  const quiet = () => undefined;
+  const TITLE = 'Hazy IPA at Zorblax Taphouse';
+  afterEach(() => {
+    setOnDeviceModel(null);
+    clearModelOutcomes();
+  });
+
+  function entry(n: number): ModelOutcomeEntry {
+    return { outcome: 'answered', category: 'food', ms: n, model: 'general', at: 1_000 + n };
+  }
+
+  it('keeps the last 20, newest first, and drops the oldest', () => {
+    const ring = createModelOutcomeLog();
+    expect(ring.peek()).toEqual([]);
+    for (let n = 1; n <= 25; n += 1) ring.record(entry(n));
+    const kept = ring.peek();
+    expect(MODEL_OUTCOMES_KEPT).toBe(20);
+    expect(kept).toHaveLength(20);
+    expect(kept.map((e) => e.ms)).toEqual(Array.from({ length: 20 }, (_, i) => 25 - i));
+  });
+
+  it('keeps the snapshot until the next outcome, and tells subscribers once per outcome', () => {
+    const ring = createModelOutcomeLog(3);
+    let calls = 0;
+    const off = ring.subscribe(() => {
+      calls += 1;
+    });
+    const empty = ring.peek();
+    expect(ring.peek()).toBe(empty);
+    ring.record(entry(1));
+    const one = ring.peek();
+    expect(one).not.toBe(empty);
+    expect(ring.peek()).toBe(one);
+    expect(calls).toBe(1);
+    off();
+    ring.record(entry(2));
+    expect(calls).toBe(1);
+    expect(ring.peek().map((e) => e.ms)).toEqual([2, 1]);
+    ring.clear();
+    expect(ring.peek()).toEqual([]);
+  });
+
+  it('keeps copies: changing a recorded entry or the snapshot changes nothing kept', () => {
+    const ring = createModelOutcomeLog();
+    const e = entry(1);
+    ring.record(e);
+    e.ms = 999;
+    expect(ring.peek()[0]?.ms).toBe(1);
+    expect(Object.isFrozen(ring.peek())).toBe(true);
+    expect(Object.isFrozen(ring.peek()[0])).toBe(true);
+  });
+
+  it('a subscriber that throws costs nothing: the others still hear, the outcome is kept', () => {
+    const ring = createModelOutcomeLog();
+    let heard = 0;
+    ring.subscribe(() => {
+      throw new Error('broken screen');
+    });
+    ring.subscribe(() => {
+      heard += 1;
+    });
+    ring.record(entry(1));
+    expect(heard).toBe(1);
+    expect(ring.peek()).toHaveLength(1);
+  });
+
+  it('refineCategory keeps every model reply: outcome, category, milliseconds, model and time', async () => {
+    const replies: unknown[] = [
+      said('drinks'),
+      said('other', 'other'),
+      {
+        category: null,
+        outcome: 'refused',
+        ms: 180,
+        model: 'contentTagging',
+        detail: 'guardrailViolation',
+      },
+      said(null, 'timeout'),
+      said(null, 'error'),
+      said(null, 'unavailable'),
+      said('Drinks'),
+      'drinks',
+    ];
+    setOnDeviceModel(stubModel(async () => replies.shift()).model, quiet);
+    const before = Date.now();
+    for (let i = 0; i < 8; i += 1) await refineCategory(TITLE);
+    const kept = peekModelOutcomes();
+    expect(kept.map((e) => [e.outcome, e.category, e.model])).toEqual(
+      [
+        ['answered', 'drinks', 'general'],
+        ['none', null, 'general'],
+        ['refused', null, 'contentTagging'],
+        ['timeout', null, 'general'],
+        ['error', null, 'general'],
+        ['none', null, 'general'],
+        ['error', null, 'general'],
+        ['error', null, null],
+      ].reverse(),
+    );
+    for (const e of kept) {
+      expect(e.ms).toBeGreaterThanOrEqual(0);
+      expect(e.at).toBeGreaterThanOrEqual(before);
+      expect(e.at).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it('keeps a rejection or a throw as an error', async () => {
+    setOnDeviceModel(stubModel(() => Promise.reject(new Error(TITLE))).model, quiet);
+    await refineCategory(TITLE);
+    expect(peekModelOutcomes().map((e) => e.outcome)).toEqual(['error']);
+  });
+
+  it('never keeps the title, even when the native side echoes it back', async () => {
+    const echoes: unknown[] = [
+      { category: TITLE, outcome: 'answered', ms: 1, model: TITLE, detail: TITLE },
+      {
+        category: null,
+        outcome: TITLE,
+        ms: TITLE,
+        model: 'general',
+        detail: `guardrail: ${TITLE}`,
+      },
+      TITLE,
+    ];
+    setOnDeviceModel(stubModel(async () => echoes.shift()).model, quiet);
+    for (let i = 0; i < 3; i += 1) await refineCategory(TITLE);
+    const kept = peekModelOutcomes();
+    expect(kept).toHaveLength(3);
+    for (const e of kept) {
+      expect(Object.keys(e).sort()).toEqual(['at', 'category', 'model', 'ms', 'outcome']);
+      expect(JSON.stringify(e)).not.toMatch(/Hazy|Zorblax|IPA|Taphouse/);
+    }
+  });
+
+  it('keeps nothing when the model was not asked: a blank title, no model, or an unavailable one', async () => {
+    await refineCategory(TITLE);
+    setOnDeviceModel(stubModel(async () => said('food')).model, quiet);
+    await refineCategory('   ');
+    setOnDeviceModel(
+      stubModel(
+        async () => said('food'),
+        async () => ({ status: 'unavailable', reason: 'appleIntelligenceNotEnabled' }),
+      ).model,
+      quiet,
+    );
+    await refineCategory(TITLE);
+    expect(peekModelOutcomes()).toEqual([]);
+  });
+
+  it('a refiner of its own keeps nothing unless given a sink, and a sink that throws costs nothing', async () => {
+    const { refine } = createCategoryRefiner(stubModel(async () => said('drinks')).model, quiet);
+    await refine(TITLE);
+    expect(peekModelOutcomes()).toEqual([]);
+    const throwing = createCategoryRefiner(
+      stubModel(async () => said('drinks')).model,
+      quiet,
+      () => {
+        throw new Error('ring gone');
+      },
+    );
+    await expect(throwing.refine(TITLE)).resolves.toBe('drinks');
+  });
+
+  it('tells a subscriber as each reply arrives, and stops when it unsubscribes', async () => {
+    setOnDeviceModel(stubModel(async () => said('coffee')).model, quiet);
+    let heard = 0;
+    const off = subscribeModelOutcomes(() => {
+      heard += 1;
+    });
+    await refineCategory('Nourish');
+    await refineCategory('Nourish Bistro');
+    off();
+    await refineCategory('Nourish Bistro dinner');
+    expect(heard).toBe(2);
+    expect(peekModelOutcomes()).toHaveLength(3);
+  });
+});
+
+describe('the model for Diagnostics (installedOnDeviceModel, categoryModelAvailability)', () => {
+  afterEach(() => setOnDeviceModel(null));
+
+  it('has no model and no availability while none is installed', async () => {
+    expect(installedOnDeviceModel()).toBeNull();
+    await expect(categoryModelAvailability()).resolves.toBeNull();
+  });
+
+  it('asks the installed model afresh each time, and checks what it says', async () => {
+    let answer: unknown = { status: 'available' };
+    const stub = stubModel(
+      async () => said('food'),
+      async () => answer as Awaited<ReturnType<OnDeviceModel['availability']>>,
+    );
+    setOnDeviceModel(stub.model, () => undefined);
+    expect(installedOnDeviceModel()).toBe(stub.model);
+    await expect(categoryModelAvailability()).resolves.toEqual({ status: 'available' });
+    answer = { status: 'unavailable', reason: 'modelNotReady' };
+    await expect(categoryModelAvailability()).resolves.toEqual({
+      status: 'unavailable',
+      reason: 'modelNotReady',
+    });
+    answer = { status: 'unavailable', reason: 'not a word!' };
+    await expect(categoryModelAvailability()).resolves.toEqual({
+      status: 'unavailable',
+      reason: 'unknown',
+    });
+    expect(stub.availabilityCalls()).toBe(3);
+  });
+
+  it('a failed check is unavailable with checkFailed', async () => {
+    setOnDeviceModel(
+      stubModel(
+        async () => said('food'),
+        () => Promise.reject(new Error('gone')),
+      ).model,
+      () => undefined,
+    );
+    await expect(categoryModelAvailability()).resolves.toEqual({
+      status: 'unavailable',
+      reason: 'checkFailed',
+    });
+  });
+
+  it('readAvailability: available, a reason that is a word, else unknown; malformed is unavailable', () => {
+    expect(readAvailability({ status: 'available', reason: 'x' })).toEqual({ status: 'available' });
+    expect(readAvailability({ status: 'unavailable', reason: 'deviceNotEligible' })).toEqual({
+      status: 'unavailable',
+      reason: 'deviceNotEligible',
+    });
+    for (const value of [null, undefined, 'available', {}, { status: 'yes' }]) {
+      expect(readAvailability(value)).toEqual({ status: 'unavailable', reason: 'unknown' });
     }
   });
 });
