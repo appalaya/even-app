@@ -4,20 +4,27 @@
  * The UI owns the category chip. This module gives it the inference sources (history, the keyword table, the
  * on-device model) and the transition rules as pure functions, so the contract is written once and tested:
  *
- * The chip holds `{ category, source }` with `source ∈ keyword | model | user`:
+ * The chip holds `{ category, source }` with `source ∈ keyword | model | user`, and the model's pick also the title
+ * the model answered (`CategoryChip`):
  * - A user tap sets `source = user`, cancels any in-flight model request, and drops any reply that arrives
  *   afterwards. Later title edits do not re-infer (`chipAfterTap`). `user` is sticky until the sheet is dismissed.
  * - While `source` is `keyword` or `model`, every keystroke runs instant inference (history first, then the keyword
- *   table: `inferCategory`), applied immediately with `source = keyword` (`chipAfterTitle`).
+ *   table: `guessCategory`) (`chipAfterTitle`). A guess that knows the title (history or a keyword hit) is applied
+ *   immediately with `source = keyword`. A guess that knows nothing keeps the model's pick (`source` stays `model`)
+ *   while the new title continues the one the model answered (`continuesTitle`: the person is extending it or
+ *   backspacing through it); otherwise it is applied, Other with `source = keyword`. So the chip does not bounce
+ *   back to Other with each keystroke between pauses.
  * - When the user pauses typing (500 ms), and while `source` is not `user`, the UI asks the model (`refineCategory`)
- *   and remembers the exact title it asked about (`shouldRefine`).
+ *   about a title neither history nor the table knows, and remembers the exact title it asked about
+ *   (`shouldRefine`).
  * - A reply is applied only if that title still matches the field and `source` is not `user`; otherwise it is
- *   discarded (`chipAfterReply`). An applied reply sets `source = model`, so a model result can be refined by a
- *   later model result but never overwrite a tap. The swap animates (UI).
+ *   discarded (`chipAfterReply`). An applied reply sets `source = model` and remembers the title it answered, so a
+ *   model result can be refined by a later model result but never overwrite a tap. A reply that agrees with the
+ *   model's pick changes nothing the person sees; one that differs swaps the chip (the swap animates, UI).
  * - While `source` is `model` the chip carries the sparkle, with no timer (`carriesSparkle`), so a choice the user
  *   did not make is never invisible. A keyword-inferred chip and a chip the user chose never carry it: a tap takes
- *   it away (the UI fades it out) and a keystroke's keyword guess drops it. When the model changes the chip, the
- *   swap animates (UI: `features/addExpense/chipMachine.ts`).
+ *   it away (the UI fades it out) and a keystroke whose guess is applied drops it. When the model changes the chip,
+ *   the swap animates (UI: `features/addExpense/chipMachine.ts`).
  * - Tapping Save freezes the chip: the event carries whatever it shows, never a later guess, and the chip keeps
  *   what it shows, the sparkle included (UI).
  * Replies and taps are both handled on the JavaScript thread in arrival order, so a tap is never lost.
@@ -183,10 +190,14 @@ export function refineCategory(title: string): Promise<Category | null> {
 
 export type ChipSource = 'keyword' | 'model' | 'user';
 
-export interface CategoryChip {
-  category: Category;
-  source: ChipSource;
-}
+/**
+ * The chip: the category it shows and where that came from. The model's pick also remembers the title the model
+ * answered (the asked title of the reply that set or last confirmed it), which is how a keystroke tells a title being
+ * extended or backspaced from a new one (`chipAfterTitle`).
+ */
+export type CategoryChip =
+  | { category: Category; source: 'keyword' | 'user' }
+  | { category: Category; source: 'model'; answeredTitle: string };
 
 /** The chip for a fresh sheet (or an edited expense, which starts from its saved category as `user`). */
 export function initialChip(title: string, saved?: Category): CategoryChip {
@@ -197,19 +208,43 @@ export function initialChip(title: string, saved?: Category): CategoryChip {
 
 /**
  * The sparkle: the chip carries it exactly while it shows the model's pick and the user has not tapped it. It is
- * derived from `source`, never timed; a keystroke (back to `keyword`) or a tap (`user`) takes it away.
+ * derived from `source`, never timed; a keystroke whose local guess is applied (back to `keyword`) or a tap (`user`)
+ * takes it away.
  */
-export function carriesSparkle(chip: CategoryChip): boolean {
+export function carriesSparkle(chip: Pick<CategoryChip, 'source'>): boolean {
   return chip.source === 'model';
 }
 
-/** A keystroke: unless the user chose, keyword inference runs and its guess replaces a keyword or model chip. */
+/**
+ * Whether `title` continues `answeredTitle`, the title the model was asked about: one starts with the other after
+ * trimming and case folding, so the person is extending it ("Surly" → "Surly's brewing") or backspacing through it.
+ * An empty title continues nothing: clearing the field and typing again starts over.
+ */
+export function continuesTitle(answeredTitle: string, title: string): boolean {
+  const asked = answeredTitle.trim().toLowerCase();
+  const now = title.trim().toLowerCase();
+  return now !== '' && (now.startsWith(asked) || asked.startsWith(now));
+}
+
+/**
+ * A keystroke, unless the user chose. History and the keyword table run first: a guess that knows the title replaces
+ * a keyword or model chip at once (`source = keyword`). A guess that knows nothing keeps the model's pick while the
+ * title continues the one the model answered (the next pause asks the model about the new title); otherwise the
+ * guess, Other, replaces the chip.
+ */
 export function chipAfterTitle(chip: CategoryChip, title: string): CategoryChip {
   if (chip.source === 'user') return chip;
-  const category = inferCategory(title);
-  return category === chip.category && chip.source === 'keyword'
+  const guess = guessCategory(title);
+  if (
+    chip.source === 'model' &&
+    guess.from === 'none' &&
+    continuesTitle(chip.answeredTitle, title)
+  ) {
+    return chip;
+  }
+  return guess.category === chip.category && chip.source === 'keyword'
     ? chip
-    : { category, source: 'keyword' };
+    : { category: guess.category, source: 'keyword' };
 }
 
 /** A tap on the chip: the user's choice wins from now on. */
@@ -228,7 +263,8 @@ export function shouldRefine(chip: CategoryChip, title: string): boolean {
 /**
  * A model reply for `askedTitle`: applied only if the field still shows that exact title and the source is not
  * `user` (so a later model reply refines an earlier one); otherwise the chip is returned unchanged (the reply is
- * dropped).
+ * dropped). An applied reply makes the chip the model's pick for `askedTitle`; one that agrees with the model's
+ * pick changes only the title it remembers.
  */
 export function chipAfterReply(
   chip: CategoryChip,
@@ -237,7 +273,9 @@ export function chipAfterReply(
 ): CategoryChip {
   if (reply.category === null) return chip;
   if (chip.source === 'user' || reply.askedTitle !== currentTitle) return chip;
-  return chip.source === 'model' && chip.category === reply.category
+  return chip.source === 'model' &&
+    chip.category === reply.category &&
+    chip.answeredTitle === reply.askedTitle
     ? chip
-    : { category: reply.category, source: 'model' };
+    : { category: reply.category, source: 'model', answeredTitle: reply.askedTitle };
 }

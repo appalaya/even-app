@@ -3,29 +3,36 @@
  * reducer plus a small controller that owns the 500 ms pause and the model requests. Pure: no React, no timers of
  * its own (the controller takes a scheduler), so the whole contract, including the races, runs under Vitest.
  *
- * The chip holds `{ category, source }` with `source ∈ keyword | model | user`:
+ * The chip holds `{ category, source }` with `source ∈ keyword | model | user`, and the model's pick also the title
+ * the model answered (`answeredTitle`):
  * - A user tap sets `source = user`, cancels any in-flight model request and drops any reply that arrives
  *   afterwards. Later title edits do not re-infer. `user` is sticky until the sheet is dismissed.
- * - While `source` is `keyword` or `model`, every keystroke runs instant inference (history first, then the keyword
- *   table; applied immediately, `source` becomes `keyword`) and, after a 500 ms pause, the controller issues a fresh
- *   model request if neither knows the title (`shouldAskModel`).
+ * - While `source` is `keyword` or `model`, every keystroke runs the local guess (`guessCategory`: history first,
+ *   then the keyword table). A guess that knows the title is applied immediately and `source` becomes `keyword`. A
+ *   guess that knows nothing keeps the model's pick (`source` stays `model`, the sparkle stays) while the new title
+ *   continues the title the model answered (`answeredTitle`; `continuesTitle`: one starts with the other after
+ *   trimming and case folding, so the person is extending or backspacing it); otherwise it is applied (Other,
+ *   `keyword`). So the chip does not bounce back to Other with the typing rhythm. After a 500 ms pause the
+ *   controller issues a fresh model request if neither history nor the table knows the title (`shouldAskModel`).
  * - Each model request carries the exact title it was asked about. A reply is applied only if that title still
  *   matches the field and `source` is not `user`; otherwise it is discarded. A model result can be refined by a
- *   later model result, but never overwrite a tap.
+ *   later model result (one that differs swaps the chip, one that agrees changes nothing the person sees), but
+ *   never overwrite a tap. An applied reply records the title it answered in `answeredTitle`.
  * - Save freezes the chip: the event carries whatever it shows, and nothing changes it afterwards, the sparkle
  *   included.
  * - The sparkle (AddExpenseStates, "Category chip"): while `source` is `model` (the model's pick, not yet touched)
  *   the chip carries it (`tagged`, derived from `source` as `carriesSparkle` states it, never timed), so a choice
  *   the user did not make is never invisible. Picking a category takes it away (`source = user`; the UI fades it
- *   out), and so does a keystroke, which puts the keyword guess back. A keyword-inferred chip and a chip the user
- *   chose never carry it. When the model changes the chip, `swaps` counts up so the UI animates the swap.
+ *   out), and so does a keystroke whose local guess is applied (`source = keyword`). A keyword-inferred chip and a
+ *   chip the user chose never carry it. When the model changes the chip, `swaps` counts up so the UI animates the
+ *   swap.
  *
  * Replies and taps are both handled on the JavaScript thread in arrival order, so a tap is never lost.
- * `src/state/categories.ts` states the same rules as plain functions over `{ category, source }`.
+ * `src/state/categories.ts` states the same rules as plain functions over `CategoryChip`.
  */
 import type { Category } from '@even/core';
 
-import { guessCategory, inferCategory } from '@/state/categories';
+import { continuesTitle, guessCategory, inferCategory } from '@/state/categories';
 
 export type ChipSource = 'keyword' | 'model' | 'user';
 
@@ -38,6 +45,11 @@ export interface ChipState {
   swaps: number;
   /** The chip carries the sparkle: `source` is `model` (`carriesSparkle`). Derived, never timed; Save keeps it. */
   tagged: boolean;
+  /**
+   * The title the model answered with the pick the chip shows: the asked title of the reply that set or last
+   * confirmed it. A keystroke that continues it keeps the pick. Null exactly when `source` is not `model`.
+   */
+  answeredTitle: string | null;
 }
 
 export type ChipEvent =
@@ -53,8 +65,22 @@ export type ChipEvent =
 /** A fresh sheet infers from the title; an edited expense starts from its saved category, as the user's choice. */
 export function initialChipState(title: string, saved?: Category): ChipState {
   return saved === undefined
-    ? { category: inferCategory(title), source: 'keyword', frozen: false, swaps: 0, tagged: false }
-    : { category: saved, source: 'user', frozen: false, swaps: 0, tagged: false };
+    ? {
+        category: inferCategory(title),
+        source: 'keyword',
+        frozen: false,
+        swaps: 0,
+        tagged: false,
+        answeredTitle: null,
+      }
+    : {
+        category: saved,
+        source: 'user',
+        frozen: false,
+        swaps: 0,
+        tagged: false,
+        answeredTitle: null,
+      };
 }
 
 export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
@@ -62,18 +88,40 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
   switch (event.type) {
     case 'title': {
       if (state.source === 'user') return state;
-      const category = inferCategory(event.title);
-      return category === state.category && state.source === 'keyword'
+      const guess = guessCategory(event.title);
+      // Neither history nor the table knows the title, and the person is extending or backspacing the title the model
+      // answered: the model's pick stands (the next pause asks about the new title) instead of bouncing to Other.
+      if (
+        state.source === 'model' &&
+        state.answeredTitle !== null &&
+        guess.from === 'none' &&
+        continuesTitle(state.answeredTitle, event.title)
+      ) {
+        return state;
+      }
+      return guess.category === state.category && state.source === 'keyword'
         ? state
-        : { ...state, category, source: 'keyword', tagged: false };
+        : {
+            ...state,
+            category: guess.category,
+            source: 'keyword',
+            tagged: false,
+            answeredTitle: null,
+          };
     }
     case 'reply': {
       if (event.category === null) return state;
       if (state.source === 'user' || event.askedTitle !== event.currentTitle) return state;
       const changed = event.category !== state.category;
-      // The model agrees with the chip: no swap, but the chip is the model's pick now and carries the sparkle.
+      // The model agrees with the chip: no swap, but the chip is the model's pick for this title now and carries the
+      // sparkle. Agreeing with its own pick changes nothing the person sees, only the title it answered.
       if (!changed) {
-        return state.source === 'model' ? state : { ...state, source: 'model', tagged: true };
+        if (state.source === 'model') {
+          return state.answeredTitle === event.askedTitle
+            ? state
+            : { ...state, answeredTitle: event.askedTitle };
+        }
+        return { ...state, source: 'model', tagged: true, answeredTitle: event.askedTitle };
       }
       return {
         ...state,
@@ -81,12 +129,19 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
         source: 'model',
         swaps: state.swaps + 1,
         tagged: true,
+        answeredTitle: event.askedTitle,
       };
     }
     case 'tap':
       return state.source === 'user' && state.category === event.category
         ? state
-        : { ...state, category: event.category, source: 'user', tagged: false };
+        : {
+            ...state,
+            category: event.category,
+            source: 'user',
+            tagged: false,
+            answeredTitle: null,
+          };
     case 'freeze':
       return { ...state, frozen: true };
   }
@@ -141,7 +196,10 @@ export class ChipController {
     };
   };
 
-  /** A keystroke. Keyword inference now; a model request once typing pauses. */
+  /**
+   * A keystroke. The local guess now (or the model's pick kept, while the title continues the one it answered); a
+   * model request once typing pauses.
+   */
   setTitle(title: string): void {
     this.title = title;
     this.dispatch({ type: 'title', title });

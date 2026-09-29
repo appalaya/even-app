@@ -385,9 +385,20 @@ overwriting a choice the user has made:
   drops any reply that arrives afterwards. Later title edits do not re-infer.
   `user` is sticky until the sheet is dismissed.
 - While `source` is `keyword` or `model`, every keystroke runs the local
-  guess (history, then the keyword table; applied immediately, source becomes
-  `keyword`) and, after the 500 ms pause, issues a model request only when
-  that guess found nothing ("Model refinement").
+  guess (`guessCategory`: history, then the keyword table). If it knows the
+  new title (a history or keyword hit), it is applied at once and `source`
+  becomes `keyword`. If it knows nothing and `source` is `model`, the model's
+  pick stays (`source` stays `model`, the sparkle stays) while the new title
+  continues the title the model answered: one starts with the other after
+  trimming and case folding, so the person is extending it or backspacing
+  through it (an empty field continues nothing). Otherwise the guess is
+  applied: Other, `source = keyword`. The controller remembers the asked
+  title of the reply that set or last confirmed the pick for this. After the
+  500 ms pause it issues a model request for the new title only when the
+  guess found nothing ("Model refinement"); a reply that differs swaps the
+  chip, one that agrees changes nothing shown. So typing "Surly's brewing"
+  with pauses keeps the model's Drinks from the first answer on, instead of
+  dropping to Other on each keystroke between answers.
 - Each model request carries the exact title it was asked about. A reply is
   applied only if that title still matches the field and `source` is not
   `user`; otherwise it is discarded. So a model result can be refined by a
@@ -402,12 +413,13 @@ overwriting a choice the user has made:
   padding 12 instead of 14. There is no timer and no word; the chip's
   accessibility label says "suggested". It goes when the user taps the chip
   and picks a category, even the one the model picked (`source = user`): it
-  fades out over 250 ms. A keystroke puts the keyword guess back
-  (`source = keyword`), which drops it at once; a model reply for the new
-  title brings it back. A model reply that agrees with the keyword guess
-  makes the chip the model's pick too, so it carries the sparkle, with no
-  swap. A keyword-inferred chip carries nothing, and a user-chosen chip never
-  carries it. When the model changes the chip, the swap animates (a 260 ms
+  fades out over 250 ms. A keystroke whose local guess is applied
+  (`source = keyword`) drops it at once; a model reply for the new title
+  brings it back. A keystroke that keeps the model's pick keeps it. A model
+  reply that agrees with the keyword guess makes the chip the model's pick
+  too, so it carries the sparkle, with no swap. A keyword-inferred chip
+  carries nothing, and a user-chosen chip never carries it. When the model
+  changes the chip, the swap animates (a 260 ms
   fade and scale in from 0.9). The chip's width never jumps for the sparkle:
   its 18 pt of room closes over the same 250 ms as the fade (or as a
   keystroke drops it), and opens over 260 ms as it fades in, in step with the

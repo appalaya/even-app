@@ -1367,9 +1367,9 @@ function draftFor(b: BanffC, init: Partial<Omit<SheetDraft, 'id' | 'groupId'>>):
   }).id;
 }
 
-/** The model's pick, not yet touched: the chip carries the sparkle, with no timer. */
-function suggested(category: ChipState['category']): ChipState {
-  return { category, source: 'model', frozen: false, swaps: 1, tagged: true };
+/** The model's pick for `title`, not yet touched: the chip carries the sparkle, with no timer. */
+function suggested(category: ChipState['category'], title: string): ChipState {
+  return { category, source: 'model', frozen: false, swaps: 1, tagged: true, answeredTitle: title };
 }
 
 /** The boards' drafts: the sheet's fields, the chip, and the split editor's state. */
@@ -1396,7 +1396,11 @@ export function planFor(b: BanffC, state: SheetState): SheetPlan {
     case 'add-expense':
       // AddExpense: the keyword table does not know "Surly's brewing"; the model's pick is Drinks, with its sparkle.
       return expense(
-        draftFor(b, { title: "Surly's brewing", amountText: '36', chip: suggested('drinks') }),
+        draftFor(b, {
+          title: "Surly's brewing",
+          amountText: '36',
+          chip: suggested('drinks', "Surly's brewing"),
+        }),
       );
     case 'add-typing':
       // Typing the title: the keypad hides, the amount shrinks, Save sits above the keyboard.
@@ -1414,14 +1418,18 @@ export function planFor(b: BanffC, state: SheetState): SheetPlan {
         draftFor(b, {
           title: 'Grizzly House',
           amountText: '148',
-          chip: suggested('lodging'),
+          chip: suggested('lodging', 'Grizzly House'),
           pickerOpen: true,
         }),
       );
     case 'add-suggested':
       // The model's pick, not yet touched: the sparkle, no timer (AddExpenseStates, "Category chip").
       return expense(
-        draftFor(b, { title: 'Grizzly House', amountText: '148', chip: suggested('lodging') }),
+        draftFor(b, {
+          title: 'Grizzly House',
+          amountText: '148',
+          chip: suggested('lodging', 'Grizzly House'),
+        }),
       );
     case 'add-chosen':
       // CategoryChosen: you picked Food.

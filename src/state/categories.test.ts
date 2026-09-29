@@ -10,6 +10,7 @@ import {
   chipAfterReply,
   chipAfterTap,
   chipAfterTitle,
+  continuesTitle,
   createCategoryRefiner,
   guessCategory,
   inferCategory,
@@ -19,6 +20,7 @@ import {
   setCategoryHistory,
   setOnDeviceModel,
   shouldRefine,
+  type CategoryChip,
   type OnDeviceModel,
 } from './categories';
 
@@ -84,7 +86,11 @@ describe('categories', () => {
       askedTitle: 'Fairmont Banff',
       category: 'lodging',
     });
-    expect(applied).toEqual({ category: 'lodging', source: 'model' });
+    expect(applied).toEqual({
+      category: 'lodging',
+      source: 'model',
+      answeredTitle: 'Fairmont Banff',
+    });
     // The field moved on: the stale reply is dropped.
     expect(
       chipAfterReply(chip, 'Fairmont Banff spa', {
@@ -112,29 +118,36 @@ describe('categories', () => {
       askedTitle: 'Sunshine',
       category: 'lodging',
     });
-    expect(first).toEqual({ category: 'lodging', source: 'model' });
+    expect(first).toEqual({ category: 'lodging', source: 'model', answeredTitle: 'Sunshine' });
     expect(shouldRefine(first, 'Sunshine')).toBe(true);
     const refined = chipAfterReply(first, 'Sunshine', {
       askedTitle: 'Sunshine',
       category: 'activities',
     });
-    expect(refined).toEqual({ category: 'activities', source: 'model' });
+    expect(refined).toEqual({ category: 'activities', source: 'model', answeredTitle: 'Sunshine' });
     // The same answer again changes nothing.
     expect(
       chipAfterReply(refined, 'Sunshine', { askedTitle: 'Sunshine', category: 'activities' }),
     ).toBe(refined);
+    // The same answer for a longer title changes only the title it answered.
+    expect(
+      chipAfterReply(refined, 'Sunshine Village', {
+        askedTitle: 'Sunshine Village',
+        category: 'activities',
+      }),
+    ).toEqual({ category: 'activities', source: 'model', answeredTitle: 'Sunshine Village' });
     // A stale model reply is still dropped.
     expect(
       chipAfterReply(refined, 'Sunshine lift', { askedTitle: 'Sunshine', category: 'lodging' }),
     ).toBe(refined);
   });
 
-  it('a keystroke after a model answer re-infers from the table, as a keyword chip', () => {
+  it('a keystroke the table knows replaces a model answer at once, as a keyword chip', () => {
     const model = chipAfterReply(initialChip('Nourish'), 'Nourish', {
       askedTitle: 'Nourish',
       category: 'food',
     });
-    expect(model).toEqual({ category: 'food', source: 'model' });
+    expect(model).toEqual({ category: 'food', source: 'model', answeredTitle: 'Nourish' });
     expect(chipAfterTitle(model, 'Nourish parking')).toEqual({
       category: 'parking',
       source: 'keyword',
@@ -151,7 +164,7 @@ describe('categories', () => {
     expect(initialChip('Uber', 'food')).toEqual({ category: 'food', source: 'user' });
   });
 
-  it("the sparkle marks the model's pick until a tap or a keystroke, and nothing else", () => {
+  it("the sparkle marks the model's pick until a tap or a keystroke that replaces it, and nothing else", () => {
     const keyword = chipAfterTitle(initialChip(''), 'Taxi');
     expect(carriesSparkle(keyword)).toBe(false);
     const model = chipAfterReply(
@@ -167,10 +180,85 @@ describe('categories', () => {
     expect(
       carriesSparkle(chipAfterReply(keyword, 'Taxi', { askedTitle: 'Taxi', category: 'transit' })),
     ).toBe(true);
-    // A tap, even on the model's own pick, and a keystroke both take it away.
+    // A tap, even on the model's own pick, takes it away; so does a keystroke whose local guess replaces the pick
+    // (a keyword hit, or a title that does not continue the one answered).
     expect(carriesSparkle(chipAfterTap(model, 'drinks'))).toBe(false);
-    expect(carriesSparkle(chipAfterTitle(model, "Surly's brewing co"))).toBe(false);
+    expect(carriesSparkle(chipAfterTitle(model, "Surly's brewing bar"))).toBe(false);
+    expect(carriesSparkle(chipAfterTitle(model, 'Rimrock'))).toBe(false);
+    // A keystroke that goes on with the title answered, which the table does not know, keeps it.
+    expect(carriesSparkle(chipAfterTitle(model, "Surly's brewing co"))).toBe(true);
     expect(carriesSparkle(initialChip('Uber', 'food'))).toBe(false);
+  });
+
+  it('continuesTitle: one title starts with the other, after trimming and case folding; empty continues nothing', () => {
+    expect(continuesTitle('Surly', "Surly's brewing")).toBe(true); // extending
+    expect(continuesTitle("Surly's brewing", 'Surly')).toBe(true); // backspacing
+    expect(continuesTitle('Surly', 'Surly')).toBe(true);
+    expect(continuesTitle("  SURLY'S ", "surly's brewing")).toBe(true);
+    expect(continuesTitle('Surly', 'surl')).toBe(true);
+    expect(continuesTitle("Surly's brewing", 'Surly brewing')).toBe(false); // edited in the middle
+    expect(continuesTitle('Surly', 'Rimrock')).toBe(false); // pasted over
+    expect(continuesTitle('Surly', '')).toBe(false); // emptied: starting over
+    expect(continuesTitle('Surly', '   ')).toBe(false);
+  });
+
+  it("a keystroke that continues the answered title keeps the model's pick while the local guess knows nothing", () => {
+    const model = chipAfterReply(initialChip('Surly'), 'Surly', {
+      askedTitle: 'Surly',
+      category: 'drinks',
+    });
+    for (const title of ["Surly'", "Surly's brewing", 'Sur', 'SURLY ', "surly's brewing co"]) {
+      expect(chipAfterTitle(model, title)).toBe(model);
+    }
+    // History or the table knowing the new title wins at once, even when it agrees with the model.
+    expect(chipAfterTitle(model, "Surly's bar")).toEqual({ category: 'drinks', source: 'keyword' });
+    expect(chipAfterTitle(model, "Surly's taxi")).toEqual({
+      category: 'transit',
+      source: 'keyword',
+    });
+    // Not a continuation: the local guess, Other.
+    for (const title of ['Rimrock', 'Sunshine', '']) {
+      expect(chipAfterTitle(model, title)).toEqual({ category: 'other', source: 'keyword' });
+    }
+    // A keyword chip showing Other is not the model's pick: nothing to keep.
+    const keyword = chipAfterTitle(initialChip(''), 'Surly');
+    expect(chipAfterTitle(keyword, "Surly's")).toBe(keyword);
+    expect(keyword).toEqual({ category: 'other', source: 'keyword' });
+  });
+
+  it('replays "Surly\'s brewing" typed with pauses: once the model says Drinks the chip never leaves it', () => {
+    // Keystrokes with a pause after "Surly", "Surly's" and "Surly's brew", where the model answers the title as it
+    // reads; the phone showed Other again on each keystroke after an answer.
+    const pausesAfter = new Set(['Surly', "Surly's", "Surly's brew", "Surly's brewing"]);
+    let chip: CategoryChip = initialChip('');
+    const seen: string[] = [];
+    let title = '';
+    for (const ch of "Surly's brewing") {
+      title += ch;
+      chip = chipAfterTitle(chip, title);
+      seen.push(`${title}: ${chip.category}/${chip.source}`);
+      if (pausesAfter.has(title) && shouldRefine(chip, title)) {
+        chip = chipAfterReply(chip, title, { askedTitle: title, category: 'drinks' });
+      }
+    }
+    expect(seen).toEqual([
+      'S: other/keyword',
+      'Su: other/keyword',
+      'Sur: other/keyword',
+      'Surl: other/keyword',
+      'Surly: other/keyword',
+      "Surly': drinks/model",
+      "Surly's: drinks/model",
+      "Surly's : drinks/model",
+      "Surly's b: drinks/model",
+      "Surly's br: drinks/model",
+      "Surly's bre: drinks/model",
+      "Surly's brew: drinks/model",
+      "Surly's brewi: drinks/model",
+      "Surly's brewin: drinks/model",
+      "Surly's brewing: drinks/model",
+    ]);
+    expect(chip).toEqual({ category: 'drinks', source: 'model', answeredTitle: "Surly's brewing" });
   });
 });
 
