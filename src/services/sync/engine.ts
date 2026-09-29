@@ -26,7 +26,11 @@
  * - `pending_deletes` are retried at the start of `syncAll` (every debt) and of a group's cycle (that group's):
  *   204, or 404 (nothing left), pays the debt; no answer, 5xx, 429 and 503 keep it; any other answer (401, 410, …)
  *   drops it with a local log line, since retrying cannot change it.
- * - Logs name the server origin and an error code or message, never a group id, token, envelope, or body.
+ * - A sync failure is logged as fixed words, its code and HTTP status (`sync failed code=unauthorized status=401`):
+ *   never the server URL or host, the error's message, or any text from a response. React Native writes every
+ *   console line to the device log, release builds included, and the server is whoever the invite names. A local
+ *   failure outside a cycle (the store, a listener) adds its error's name and message. Never a group id, token,
+ *   envelope, or body (../even-server/THREAT-MODEL.md "What we log").
  */
 import {
   b64urlDecode,
@@ -37,6 +41,7 @@ import {
   envelopeShape,
   EVENT_TYPES,
   groupIdForToken,
+  InvalidServerUrlError,
   isId,
   LIMITS,
   open,
@@ -142,8 +147,24 @@ export interface SyncEngineHandle extends SyncEngine {
 
 // ---------- Small pure helpers ----------
 
-/** An error for a log line: its name and message only, never a `cause` chain or an attached object. */
+/**
+ * A sync failure for a log line: fixed words, the code, and the HTTP status when there was one. Never its message,
+ * which a transport may have filled from the response, or the local error it wraps.
+ */
+export function describeFailure(what: string, error: SyncError): string {
+  return error.status === undefined
+    ? `${what} code=${error.code}`
+    : `${what} code=${error.code} status=${error.status}`;
+}
+
+/**
+ * A local error for a log line: its name and message only, never a `cause` chain or an attached object. A
+ * `SyncError` is described by `describeFailure`, and an `InvalidServerUrlError` by its name alone (its message
+ * quotes the URL).
+ */
 export function describeError(error: unknown): string {
+  if (error instanceof SyncError) return describeFailure('SyncError', error);
+  if (error instanceof InvalidServerUrlError) return 'InvalidServerUrlError';
   return error instanceof Error ? `${error.name}: ${error.message}` : typeof error;
 }
 
@@ -763,13 +784,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
   /** Records a failed cycle on the group row (when there is one), backs off, and schedules the retry. */
   async function recordFailure(
     localId: string,
-    group: GroupRow | null,
     error: SyncError,
     trigger: SyncTrigger,
   ): Promise<SyncResult> {
     const code = error.code;
     if (code === 'unauthorized' || code === 'local_error') {
-      log(`sync: ${code} for a group on ${group?.serverUrl ?? 'an unknown server'}`, error.message);
+      log(describeFailure('sync failed', error));
     }
     let retryAt: number | null;
     if (code === 'group_blocked' || code === 'no_secret' || code === 'group_full') {
@@ -811,7 +831,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       emit({ type: 'started', localId, trigger });
       const result = await recordFailure(
         localId,
-        null,
         new SyncError('local_error', describeError(error)),
         trigger,
       );
@@ -853,7 +872,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       backoff.delete(localId);
       result = synced;
     } catch (thrown) {
-      result = await recordFailure(localId, group, toSyncError(thrown), trigger);
+      result = await recordFailure(localId, toSyncError(thrown), trigger);
     }
     emit({ type: 'finished', localId, trigger, result });
     return result;
@@ -937,7 +956,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         } else if (DEBT_TRANSIENT.has(error.code)) {
           return { outcome: 'pending' };
         } else {
-          log(`sync: dropped a pending delete on ${debt.serverUrl}`, error.code);
+          log(describeFailure('sync dropped a pending delete', error));
           outcome = { outcome: 'dropped', error: error.code };
         }
       }

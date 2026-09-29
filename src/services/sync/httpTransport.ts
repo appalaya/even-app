@@ -4,8 +4,11 @@
  * `SyncError` carrying the protocol `error` code, `index`, `reason`, and `Retry-After` in ms.
  *
  * No retries here: the engine owns retry, backoff, and `Retry-After`. Every request times out after 30 s (the body
- * read included) as a `network` error. Error messages name the route pattern (`POST /v1/groups/{groupId}/events`),
- * never the path itself, which carries the group id (../even-server/THREAT-MODEL.md "What we log").
+ * read included) as a `network` error. Error messages are fixed words: the route pattern
+ * (`POST /v1/groups/{groupId}/events`), the HTTP status and the code, never the path itself, which carries the
+ * group id, and never text from the response (a `message`, an `error` that is not a protocol code). A message can
+ * reach a log line, React Native writes every console line to the device log in release builds too, and the
+ * server is whoever the invite names (../even-server/THREAT-MODEL.md "What we log").
  */
 import { b64urlEncode, canonicalOrigin, InvalidServerUrlError, type Envelope } from '@even/core';
 
@@ -287,8 +290,9 @@ export class HttpTransport implements Transport {
     const status = response.status;
     const retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'), this.now());
     const record = isRecord(body) ? body : {};
+    // Read only to pick a code from the fixed list. The body's `message` is never read: the server's own words
+    // stay out of the error, and so out of every log line.
     const named = typeof record.error === 'string' ? record.error : undefined;
-    const message = typeof record.message === 'string' ? record.message : undefined;
 
     let code: SyncErrorCode;
     if (status === 404 || status === 405) {
@@ -304,11 +308,7 @@ export class HttpTransport implements Transport {
     if (isCount(record.index)) details.index = record.index;
     if (record.reason === 'bytes' || record.reason === 'events') details.reason = record.reason;
     if (retryAfterMs !== undefined) details.retryAfterMs = retryAfterMs;
-    return new SyncError(
-      code,
-      message ?? `${request}: HTTP ${status} ${named ?? ''}`.trim(),
-      details,
-    );
+    return new SyncError(code, `${request}: HTTP ${status} ${code}`, details);
   }
 }
 

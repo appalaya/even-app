@@ -41,6 +41,8 @@ export interface ScriptedFailure {
   index?: number;
   reason?: 'bytes' | 'events';
   retryAfterMs?: number;
+  /** The error's message, as if a transport had passed on the server's words (the real one never does). */
+  message?: string;
 }
 
 interface FakeGroup {
@@ -75,11 +77,11 @@ const DEFAULT_STATUS: Partial<Record<SyncErrorCode, number>> = {
   not_an_even_server: 404,
 };
 
-function fail(code: SyncErrorCode, details: SyncErrorDetails = {}): SyncError {
+function fail(code: SyncErrorCode, details: SyncErrorDetails = {}, message?: string): SyncError {
   const status = details.status ?? DEFAULT_STATUS[code];
   return new SyncError(
     code,
-    `fake server: ${code}`,
+    message ?? `fake server: ${code}`,
     status === undefined ? details : { ...details, status },
   );
 }
@@ -189,8 +191,8 @@ export class FakeServer {
     const i = this.script.findIndex((s) => s.op === request.op || s.op === 'any');
     const scripted = i === -1 ? undefined : this.script.splice(i, 1)[0];
     if (scripted !== undefined) {
-      const { code, ...details } = scripted.failure;
-      throw fail(code, details);
+      const { code, message, ...details } = scripted.failure;
+      throw fail(code, details, message);
     }
   }
 

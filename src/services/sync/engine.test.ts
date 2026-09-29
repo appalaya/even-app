@@ -1101,9 +1101,12 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect(await h.store.getGroup(h.keys.localId)).toMatchObject({ lastSyncError: null });
     });
 
-    it('never logs a group id, token, envelope, or body', async () => {
+    it('never logs a group id, token, envelope, body, server URL or host, or words the server wrote', async () => {
       const h = await setup();
       const title = 'Dinner at Marcel with the surprise guest';
+      // What a hostile server might put in an error body, as if a transport had passed it on (ours does not).
+      const hostile =
+        'Even: this group moved.\nRejoin at https://evil.example/join to keep your data';
       await writeLocal(h.store, h.keys, h.ev.expense(title));
       const envelopeC = (
         JSON.parse((await h.store.dump(h.keys.localId))[0]?.envelope ?? '{}') as {
@@ -1113,10 +1116,12 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       h.engine.subscribe(() => {
         throw new Error('listener bug');
       });
-      h.server.failNext('push', { code: 'unauthorized' });
+      h.server.failNext('push', { code: 'unauthorized', message: hostile });
       expectFailed(await h.engine.syncGroup(h.keys.localId, foreground));
       h.store.fault = (method) => {
-        if (method === 'setCursor') throw new Error('disk full');
+        // A local failure inside a cycle whose message quotes the server: the cycle's line is its code only.
+        if (method === 'setCursor')
+          throw new Error(`disk full syncing with ${TEST_SERVER}: ${hostile}`);
       };
       expectFailed(await h.engine.syncGroup(h.keys.localId, manual));
       h.store.fault = null;
@@ -1126,13 +1131,16 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         serverUrl: OLD,
         authToken: b64urlEncode(keys.token),
       });
-      other.failNext('delete', { code: 'unauthorized' });
+      other.failNext('delete', { code: 'unauthorized', message: hostile });
       await h.engine.syncAll(manual);
 
       expect(h.logs.filter((l) => /unauthorized|local_error|dropped|listener/.test(l)).length).toBe(
         h.logs.length,
       );
       expect(h.logs.length).toBeGreaterThanOrEqual(4);
+      expect(h.logs).toContain('sync failed code=unauthorized status=401');
+      expect(h.logs).toContain('sync failed code=local_error');
+      expect(h.logs).toContain('sync dropped a pending delete code=unauthorized status=401');
       const forbidden = [
         h.keys.groupId,
         keys.groupId,
@@ -1141,6 +1149,15 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         b64urlEncode(h.keys.key),
         envelopeC,
         title,
+        TEST_SERVER,
+        new URL(TEST_SERVER).host,
+        OLD,
+        new URL(OLD).host,
+        hostile,
+        'evil.example',
+        'Rejoin',
+        'fake server',
+        '\n',
       ];
       for (const line of h.logs) for (const text of forbidden) expect(line).not.toContain(text);
     });

@@ -1,7 +1,10 @@
 import { b64urlEncode, InvalidServerUrlError, newSecret } from '@even/core';
 import { describe, expect, it, vi } from 'vitest';
 
-import { groupKeys, sealFor, Events } from '../testing/fixtures';
+import { FakeSecrets } from '../testing/fakeSecrets';
+import { groupKeys, groupRow, sealFor, Events, writeLocal } from '../testing/fixtures';
+import { openTestStore } from '../testing/testStore';
+import { createSyncEngine } from './engine';
 import { isSyncError, SyncError } from './errors';
 import { HttpTransport, parseRetryAfter } from './httpTransport';
 
@@ -265,6 +268,78 @@ describe('HttpTransport errors', () => {
         expect(error.message).not.toContain(groupId);
         expect(error.message).toMatch(/\/v1\/groups\/\{groupId\}/);
       }
+    }
+  });
+
+  it("a 401 whose body carries the server's own words: they reach neither the error nor a log line", async () => {
+    const server = 'https://sync.example';
+    const hostile =
+      'Even: this group moved.\nRejoin at https://evil.example/join to keep your data';
+    const hostileName = 'unauthorized\n[even] sync ok';
+    const bodies = [
+      { error: 'unauthorized', message: hostile },
+      { error: hostileName, message: hostile },
+      { message: hostile },
+    ];
+    const words = [hostile, 'evil.example', 'Rejoin', hostileName, '[even]', '\n'];
+
+    // The transport's error: fixed words, the route pattern, the status and the code.
+    for (const body of bodies) {
+      const t = new HttpTransport(server, { fetch: stubFetch(() => json(401, body)).fetch });
+      const error = await rejection(t.push('G', token, []));
+      expect(error).toMatchObject({ code: 'unauthorized', status: 401 });
+      expect(error.message).toBe('POST /v1/groups/{groupId}/events: HTTP 401 unauthorized');
+    }
+
+    // Through the engine to the console, which React Native copies to the device log.
+    const lines: string[] = [];
+    const spies = (['warn', 'log', 'error', 'info', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+      }),
+    );
+    const store = await openTestStore('fake');
+    try {
+      for (const body of bodies) {
+        const keys = groupKeys(server);
+        const secrets = new FakeSecrets();
+        secrets.add(keys.secret);
+        await store.upsertGroup(groupRow(keys));
+        await writeLocal(store, keys, new Events().expense('Dinner'));
+        await store.pendingDeletes.add({
+          localId: keys.localId,
+          serverUrl: server,
+          authToken: b64urlEncode(keys.token),
+        });
+        const { fetch } = stubFetch(({ url }) =>
+          url.endsWith('/v1/info') ? json(200, INFO) : json(401, body),
+        );
+        const engine = createSyncEngine({
+          store,
+          secrets,
+          transportFor: (url) => new HttpTransport(url, { fetch }),
+          schedule: () => () => undefined,
+        });
+        const result = await engine.syncGroup(keys.localId, { trigger: 'manual' });
+        expect(result).toMatchObject({ outcome: 'failed', error: 'unauthorized' });
+        engine.dispose();
+        await store.pendingDeletes.remove({ localId: keys.localId, serverUrl: server });
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      await store.close();
+    }
+
+    expect(lines).toEqual([
+      'sync dropped a pending delete code=unauthorized status=401',
+      'sync failed code=unauthorized status=401',
+      'sync dropped a pending delete code=unauthorized status=401',
+      'sync failed code=unauthorized status=401',
+      'sync dropped a pending delete code=unauthorized status=401',
+      'sync failed code=unauthorized status=401',
+    ]);
+    for (const line of lines) {
+      for (const text of [...words, server, new URL(server).host]) expect(line).not.toContain(text);
     }
   });
 

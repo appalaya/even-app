@@ -948,7 +948,14 @@ throws: every failure is recorded there and announced with a `finished`
 event, including a group row that could not be read (recorded if the row can
 still be written).
 
-Local log lines name the server origin and an error code or message, never a
+Local log lines for a sync failure are fixed words, the error code and the
+HTTP status (`sync failed code=unauthorized status=401`, `sync dropped a
+pending delete code=unauthorized status=401`): never the server's URL or
+host, the error's message, or any text from a response (its `message`, an
+`error` that is not a protocol code). React Native writes every console line
+to the device log, release builds included, and the server is whoever the
+invite names, so nothing it writes is repeated there. A local failure outside
+a cycle (the store, a listener) adds its error's name and message. Never a
 group id, token, envelope or body (the same rule as the server's, in
 `THREAT-MODEL.md` "What we log").
 
@@ -980,8 +987,9 @@ options exist. Requests are sent with `redirect: 'error'` so the bearer
 token stays on its origin; React Native's `fetch` may not honour that option,
 which is checked on a real device.
 Every request times out after 30 s as `network`. It never retries; retry,
-backoff and `Retry-After` belong to the engine. Error messages carry the
-route pattern (`/v1/groups/{groupId}/events`), never the path. Tests may
+backoff and `Retry-After` belong to the engine. Error messages are fixed
+words: the route pattern (`/v1/groups/{groupId}/events`), the status and the
+code; never the path, and never text from the response body. Tests may
 allow `http://127.0.0.1` and `http://localhost` with an explicit option,
 still deriving keys for the `https` form; the app never sets it.
 
