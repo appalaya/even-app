@@ -8,6 +8,7 @@ import {
   checkSummary,
   countOf,
   deviceLabel,
+  diagnosticsSections,
   lastSyncedLabel,
   medianLine,
   modelLabel,
@@ -141,6 +142,18 @@ describe('diagnostics words', () => {
     expect(deviceLabel(android)).toBe('Pixel 9');
     expect(systemRow({ ...android, constants: {} })).toEqual({ label: 'Android', value: '36' });
     expect(deviceLabel({ ...android, constants: {} })).toBe('Android');
+  });
+});
+
+describe('which sections Diagnostics shows', () => {
+  it('shows the model sections on iOS, Sync only with groups, This build always', () => {
+    expect(diagnosticsSections('ios', 2)).toEqual(['model', 'check', 'sync', 'build']);
+    expect(diagnosticsSections('ios', 0)).toEqual(['model', 'check', 'build']);
+  });
+
+  it('leaves out Category model and Check on this phone on Android, which has no on-device model', () => {
+    expect(diagnosticsSections('android', 2)).toEqual(['sync', 'build']);
+    expect(diagnosticsSections('android', 0)).toEqual(['build']);
   });
 });
 

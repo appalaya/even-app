@@ -3,15 +3,18 @@
  * running and done states), pushed from About: "‹ About" with "Diagnostics" centred in the nav bar. Read-only apart
  * from "Check the model"; everything on it is already on the phone, and nothing here is sent anywhere.
  *
- * - Category model: Status and Model (the availability asked when the page opens), then "Since Even opened", the
- *   last 20 outcomes of the chip's model (`useCategoryModelLog`; never a title), or the empty sentence.
- * - Check on this phone: "Check the model" runs the bundled test titles through the model one at a time
+ * - Category model (iOS only): Status and Model (the availability asked when the page opens), then "Since Even
+ *   opened", the last 20 outcomes of the chip's model (`useCategoryModelLog`; never a title), or the empty sentence.
+ * - Check on this phone (iOS only): "Check the model" runs the bundled test titles through the model one at a time
  *   (`useModelCheck`): "Checking… 37 of 221" over a progress bar with the button off, then the score, the median
  *   time, and each category's right of total with a bar as on Balances. Off while the model is unavailable.
  * - Sync: per group, its name and unsent count, when it last synced, and the last error in Group's status line words.
  * - This build: version and build, the system version, the device, and Apple Intelligence. No device id: the page is
  *   meant to be screenshotted, and the id is the one value on it that is stable across groups and reinstalls, while
  *   nothing a tester or support has can be matched against it (the server never sees it).
+ *
+ * Android has no on-device model, so it leaves out both model sections (`diagnosticsSections`) and opens on Sync, or
+ * This build with no groups; iOS is unchanged.
  *
  * Spacing as drawn: the first section header 16 above, the rest 24, 6 below; info rows 48 min, padded 6 16, the
  * label `textSecondary`; separators 1 pt inset 16; every card inset 16, radius 16; captions 6 under their card.
@@ -43,6 +46,7 @@ import {
   checkSummary,
   countOf,
   deviceLabel,
+  diagnosticsSections,
   lastSyncedLabel,
   medianLine,
   modelLabel,
@@ -55,6 +59,7 @@ import {
   syncErrorLine,
   systemRow,
   unsentLabel,
+  type DiagnosticsSection,
   type PlatformFacts,
 } from './format';
 import { useModelAvailability, useModelCheck, type ModelCheckState } from './hooks';
@@ -91,6 +96,10 @@ export function DiagnosticsScreen() {
 
   const back = () => (router.canGoBack() ? router.back() : router.replace(hrefs.about));
   const system = systemRow(PLATFORM);
+  const sections = diagnosticsSections(PLATFORM.os, rows.length);
+  const shows = (section: DiagnosticsSection) => sections.includes(section);
+  // The first section header sits 16 below the nav bar, the rest 24 (their default).
+  const spacingTop = (section: DiagnosticsSection) => (section === sections[0] ? 16 : undefined);
 
   return (
     <Screen
@@ -100,45 +109,57 @@ export function DiagnosticsScreen() {
         scrollY === undefined ? undefined : { transform: [{ translateY: -scrollY }] }
       }
     >
-      <SectionHeader variant="settings" spacingTop={16}>
-        Category model
-      </SectionHeader>
-      <Card radius="group" style={styles.card}>
-        <InfoRow label="Status" value={known ? modelStatus(availability) : ''} />
-        <Separator inset={16} />
-        <InfoRow label="Model" value={known ? modelName(availability) : ''} />
-        <Separator inset={16} />
-        <AppText
-          variant="caption"
-          color="textSecondary"
-          weight="semibold"
-          accessibilityRole="header"
-          style={styles.tableTitle}
-        >
-          Since Even opened
-        </AppText>
-        {outcomes.length === 0 ? (
-          <AppText variant="subheadLoose" color="textSecondary" style={styles.empty}>
-            Nothing yet. The model runs when a title doesn&apos;t match a keyword.
-          </AppText>
-        ) : (
-          <OutcomesTable entries={outcomes} />
-        )}
-      </Card>
-      <Footnote>Only outcomes are kept, never titles.</Footnote>
-
-      <SectionHeader variant="settings">Check on this phone</SectionHeader>
-      <Card radius="group" style={styles.card}>
-        <CheckCard state={check} enabled={canCheck} onStart={start} />
-      </Card>
-      <Footnote>
-        Runs the app&apos;s built-in test titles on this phone&apos;s model. About a minute. Nothing
-        leaves the phone.
-      </Footnote>
-
-      {rows.length > 0 && (
+      {shows('model') && (
         <>
-          <SectionHeader variant="settings">Sync</SectionHeader>
+          <SectionHeader variant="settings" spacingTop={spacingTop('model')}>
+            Category model
+          </SectionHeader>
+          <Card radius="group" style={styles.card}>
+            <InfoRow label="Status" value={known ? modelStatus(availability) : ''} />
+            <Separator inset={16} />
+            <InfoRow label="Model" value={known ? modelName(availability) : ''} />
+            <Separator inset={16} />
+            <AppText
+              variant="caption"
+              color="textSecondary"
+              weight="semibold"
+              accessibilityRole="header"
+              style={styles.tableTitle}
+            >
+              Since Even opened
+            </AppText>
+            {outcomes.length === 0 ? (
+              <AppText variant="subheadLoose" color="textSecondary" style={styles.empty}>
+                Nothing yet. The model runs when a title doesn&apos;t match a keyword.
+              </AppText>
+            ) : (
+              <OutcomesTable entries={outcomes} />
+            )}
+          </Card>
+          <Footnote>Only outcomes are kept, never titles.</Footnote>
+        </>
+      )}
+
+      {shows('check') && (
+        <>
+          <SectionHeader variant="settings" spacingTop={spacingTop('check')}>
+            Check on this phone
+          </SectionHeader>
+          <Card radius="group" style={styles.card}>
+            <CheckCard state={check} enabled={canCheck} onStart={start} />
+          </Card>
+          <Footnote>
+            Runs the app&apos;s built-in test titles on this phone&apos;s model. About a minute.
+            Nothing leaves the phone.
+          </Footnote>
+        </>
+      )}
+
+      {shows('sync') && (
+        <>
+          <SectionHeader variant="settings" spacingTop={spacingTop('sync')}>
+            Sync
+          </SectionHeader>
           <Card radius="group" separatorInset={16} style={styles.card}>
             {rows.map((row) => (
               <SyncRow key={row.localId} row={row} now={now} />
@@ -147,7 +168,9 @@ export function DiagnosticsScreen() {
         </>
       )}
 
-      <SectionHeader variant="settings">This build</SectionHeader>
+      <SectionHeader variant="settings" spacingTop={spacingTop('build')}>
+        This build
+      </SectionHeader>
       <Card radius="group" separatorInset={16} style={styles.card}>
         <InfoRow label="Version" value={APP_VERSION} />
         <InfoRow label={system.label} value={system.value} />

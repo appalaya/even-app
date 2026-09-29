@@ -122,6 +122,20 @@ export function syncErrorLine(sync: StatusLineInput, now: number, locale?: strin
   return statusLineWords({ ...sync, syncing: false }, now, { locale }).label;
 }
 
+/** Diagnostics' sections, top to bottom. */
+export type DiagnosticsSection = 'model' | 'check' | 'sync' | 'build';
+
+/**
+ * The sections Diagnostics shows, in order. Category model and Check on this phone describe the on-device model,
+ * which only iOS has, so Android leaves both out rather than show a feature it does not have; Sync needs a group.
+ */
+export function diagnosticsSections(os: string, groupCount: number): DiagnosticsSection[] {
+  const sections: DiagnosticsSection[] = os === 'ios' ? ['model', 'check'] : [];
+  if (groupCount > 0) sections.push('sync');
+  sections.push('build');
+  return sections;
+}
+
 /** What React Native's `Platform` says about the phone (the fields This build reads). */
 export interface PlatformFacts {
   os: string;
