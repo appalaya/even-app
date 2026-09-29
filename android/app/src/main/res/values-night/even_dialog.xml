@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Even: the dialog's dark colours, from src/theme/themes.ts (values/even_dialog.xml). -->
+<resources>
+  <color name="even_dialog_surface">#1A1C1B</color>
+  <color name="even_dialog_text">#F1F1ED</color>
+  <color name="even_dialog_text_secondary">#A9ACA6</color>
+  <color name="even_dialog_accent">#74C1AB</color>
+</resources>

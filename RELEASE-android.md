@@ -188,9 +188,12 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   after the phone's theme or App settings' Appearance changes. In `res/values/styles.xml`, AppTheme's
   `android:enforceNavigationBarContrast` (false, so three-button navigation shows the canvas instead of the
   system's translucent scrim) and `android:windowLightNavigationBar` (`@bool/even_light_navigation_bar`, from
-  `res/values/even_system_bars.xml` and its `values-night` twin). Prebuild with `--no-clean` keeps items it does
-  not set in `styles.xml` and never touches the `even_*` files; run on a copy of the repository, it left
-  `android/` unchanged.
+  `res/values/even_system_bars.xml` and its `values-night` twin); and its `alertDialogTheme` and
+  `android:windowTitleStyle`, which dress `Alert.alert`'s dialog in Even's surface, ink, accent, radius and Inter
+  (`res/values/even_dialog.xml` and its `values-night` twin, `res/drawable/even_dialog_background.xml`,
+  `res/font/even_inter.xml`; the colours mirror `src/theme/themes.ts`, so change them together). Prebuild with
+  `--no-clean` keeps items it does not set in `styles.xml` and never touches the `even_*` files; run on a copy of
+  the repository, it left `android/` unchanged.
 - R8 is on (`android.enableMinifyInReleaseBuilds=true` in `android/gradle.properties`, the Expo SDK 58 default).
   If a release build misbehaves where a debug build does not, add keep rules to `android/app/proguard-rules.pro`.
 - Local smoke build, not a release path: `cd android && ./gradlew bundleRelease` needs JDK 17 and an Android SDK
