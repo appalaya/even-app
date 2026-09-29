@@ -171,18 +171,34 @@ const OUTCOMES: ReadonlySet<string> = new Set<ClassifierOutcome>([
   'blank',
 ]);
 
-/** A word the native side may report (a model, a reason, an error kind); anything else is not logged. */
+/** A word the native side may report (a reason, an error kind); anything else is not logged. */
 const TOKEN = /^[A-Za-z][A-Za-z0-9]{0,39}$/;
 
 function token(value: unknown): string | null {
   return typeof value === 'string' && TOKEN.test(value) ? value : null;
 }
 
+/** The models the native side can name (ExpenseClassifier.swift, `ExpenseClassifierModel`); any other value is null. */
+const MODELS: ReadonlySet<string> = new Set(['general', 'contentTagging']);
+
+function modelOf(value: unknown): string | null {
+  return typeof value === 'string' && MODELS.has(value) ? value : null;
+}
+
+/**
+ * A reported word that is part of the title is dropped. `TOKEN` passes any one word, so a one-word title ("Zorblax")
+ * echoed back as the detail would otherwise reach the log.
+ */
+function notFromTitle(word: string | null, title: string): string | null {
+  return word !== null && title.toLowerCase().includes(word.toLowerCase()) ? null : word;
+}
+
 /**
  * A native reply, checked field by field: the category only when the outcome is `answered` and it is one of the
- * sixteen ids other than `other`; `other` from the model (as the category or the outcome) is no answer. Anything
- * malformed is an `error` with no category. Only the checked fields reach the log, so nothing the native side
- * returns can put a title there.
+ * sixteen ids other than `other`; `other` from the model (as the category or the outcome) is no answer; the model
+ * only when it is one the native side can name. Anything malformed is an `error` with no category. Only the checked
+ * fields reach the log (and `refine` drops a detail that is part of the title), so nothing the native side returns
+ * can put a title there.
  */
 export function readModelReply(value: unknown): {
   category: Category | null;
@@ -198,7 +214,7 @@ export function readModelReply(value: unknown): {
     typeof reply.outcome === 'string' && OUTCOMES.has(reply.outcome)
       ? (reply.outcome as ClassifierOutcome)
       : null;
-  const model = token(reply.model);
+  const model = modelOf(reply.model);
   const detail = token(reply.detail);
   if (reply.category === 'other' || said === 'other') {
     return { category: null, outcome: 'other', model, detail };
@@ -402,7 +418,8 @@ export function createCategoryRefiner(
       const started = Date.now();
       let reply: ReturnType<typeof readModelReply>;
       try {
-        reply = readModelReply(await model.classifyExpense(title));
+        const read = readModelReply(await model.classifyExpense(title));
+        reply = { ...read, detail: notFromTitle(read.detail, title) };
       } catch {
         reply = { category: null, outcome: 'error', model: null, detail: 'nativeCallFailed' };
       }

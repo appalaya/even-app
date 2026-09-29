@@ -608,6 +608,26 @@ describe('the model diagnostics (design.md "Reading the logs")', () => {
     }
   });
 
+  it('never logs a one-word title echoed back as the model or the detail', async () => {
+    // One word passes the word filter the reason and the error kind go through, so the checks cannot rest on the
+    // title having a space in it.
+    const WORD = 'Zorblax';
+    const echoes: unknown[] = [
+      { category: null, outcome: 'refused', ms: 1, model: WORD, detail: WORD },
+      { category: null, outcome: 'error', ms: 1, model: 'general', detail: WORD.toLowerCase() },
+      { category: null, outcome: 'timeout', ms: 1, model: WORD.toUpperCase(), detail: null },
+    ];
+    const { lines, log } = recorder();
+    const { refine } = createCategoryRefiner(stubModel(async () => echoes.shift()).model, log);
+    for (let i = 0; i < 3; i += 1) await refine(WORD);
+    expect(lines.slice(1).map((l) => l.replace(/ms=\d+/, 'ms=N'))).toEqual([
+      `${MODEL_LOG_PREFIX} outcome=refused category=- ms=N model=-`,
+      `${MODEL_LOG_PREFIX} outcome=error category=- ms=N model=general`,
+      `${MODEL_LOG_PREFIX} outcome=timeout category=- ms=N model=-`,
+    ]);
+    for (const line of lines) expect(line.toLowerCase()).not.toContain('zorblax');
+  });
+
   it('a log that throws costs nothing: the answer still arrives', async () => {
     const { refine } = createCategoryRefiner(stubModel(async () => said('drinks')).model, () => {
       throw new Error('console gone');
@@ -764,6 +784,18 @@ describe('the outcomes since launch (Diagnostics, useCategoryModelLog)', () => {
       expect(Object.keys(e).sort()).toEqual(['at', 'category', 'model', 'ms', 'outcome']);
       expect(JSON.stringify(e)).not.toMatch(/Hazy|Zorblax|IPA|Taphouse/);
     }
+  });
+
+  it('never keeps a one-word title echoed back as the model', async () => {
+    setOnDeviceModel(
+      stubModel(async () => ({ category: 'drinks', outcome: 'answered', ms: 1, model: 'Zorblax' }))
+        .model,
+      quiet,
+    );
+    await refineCategory('Zorblax');
+    expect(peekModelOutcomes()).toEqual([
+      expect.objectContaining({ outcome: 'answered', category: 'drinks', model: null }),
+    ]);
   });
 
   it('keeps nothing when the model was not asked: a blank title, no model, or an unavailable one', async () => {
@@ -993,6 +1025,31 @@ describe('the native module (modules/even-classifier)', () => {
       /URLSession|URLRequest|HttpURLConnection|OkHttp/,
     ]) {
       expect(native).not.toMatch(forbidden);
+    }
+  });
+
+  it('words an error by its case or its type, never its message, which may quote the prompt', () => {
+    const swift = sources('ios', '.swift').join('\n');
+    // `describe` is where every error becomes the reply's `detail` and the log's `detail=`.
+    const body =
+      /static func describe\(_ error: any Error\) -> \(ExpenseClassifierOutcome, String\) \{([\s\S]*?)\n {2}\}/.exec(
+        swift,
+      )?.[1];
+    expect(body).toBeDefined();
+    const returned = [...(body ?? '').matchAll(/return (\(\.\w+, [^\n]*?\))(?= *\}?$)/gm)].map(
+      (m) => m[1],
+    );
+    expect(returned.length).toBeGreaterThanOrEqual(10);
+    expect(returned).toHaveLength([...(body ?? '').matchAll(/\breturn\b/g)].length);
+    for (const value of returned) {
+      expect(value).toMatch(/^\(\.\w+, ("[A-Za-z]+"|String\(describing: type\(of: error\)\))\)$/);
+    }
+    for (const forbidden of [
+      /localizedDescription|debugDescription|failureReason|recoverySuggestion/,
+      /String\((describing|reflecting): error\)/,
+      /\\\(error\b/,
+    ]) {
+      expect(swift).not.toMatch(forbidden);
     }
   });
 
