@@ -1583,7 +1583,8 @@ These are budgets, checked in review:
 - Three primary screens, no tab bar.
 - Two required fields to add an expense; a first-time user saves one in under
   ten seconds.
-- One accent colour per theme, system fonts, no onboarding carousel.
+- One accent colour per theme, the system font on iOS and Inter on Android
+  (bundled; `src/theme/typography.ts`), no onboarding carousel.
 - Dark mode and dynamic type from the first commit.
 - Nothing asks for a permission at launch.
 - Every list has an empty state that says what to do, in one sentence.

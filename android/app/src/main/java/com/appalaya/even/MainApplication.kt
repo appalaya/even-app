@@ -1,4 +1,5 @@
 package com.appalaya.even
+import com.facebook.react.common.assets.ReactFontManager
 
 import android.app.Application
 import android.content.res.Configuration
@@ -29,6 +30,10 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // @generated begin xml-fonts-init - expo prebuild (DO NOT MODIFY) sync-c4ef71d937ca6882ec44a92b23ec2927518a5ea4
+    ReactFontManager.getInstance().addCustomFont(this, "Inter", R.font.xml_inter)
+    ReactFontManager.getInstance().addCustomFont(this, "InterDisplay", R.font.xml_inter_display)
+    // @generated end xml-fonts-init
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {

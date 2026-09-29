@@ -1,11 +1,13 @@
-import type { TextStyle } from 'react-native';
+import { Platform, type TextStyle } from 'react-native';
 
 /**
  * The type scale the canvas uses, transcribed from the artboards' inline styles (font-size / line-height /
- * weight / letter-spacing, in points). The system font throughout (-apple-system on the boards, SF on iOS).
+ * weight / letter-spacing, in points). The system font on iOS (-apple-system on the boards, SF on the phone); Inter
+ * on Android (`androidFace` below).
  *
  * Sizes and line heights follow the iOS Dynamic Type defaults (Large Title 34/41, Title 3 20/25, Body 17/22,
- * Callout 16/21, Subhead 15/20, Footnote 13/18), so `allowFontScaling` scales them the way the OS scales its own.
+ * Callout 16/21, Subhead 15/20, Footnote 13/18), so `allowFontScaling` scales them the way the OS scales its own
+ * (Android's font size setting too).
  * A variant carries the weight the canvas uses most for it; `AppText`'s `weight` overrides it.
  */
 
@@ -24,7 +26,34 @@ export const tabularNums = { fontVariant: ['tabular-nums'] } as const satisfies 
 /** `ui-monospace` resolves to SF Mono on iOS (invite link and code field on the canvas). */
 export const monoFamily = 'ui-monospace';
 
-export const typography = {
+/**
+ * Android draws Inter (the OFL release, bundled from `assets/fonts` by app.json's `expo-font` entry as the families
+ * `Inter` and `InterDisplay`, Regular to Bold, so `fontWeight` picks the face). iOS keeps the system font and gets
+ * nothing here.
+ *
+ * Inter has two cuts: Text for reading sizes and Display, drawn tighter for large ones. Its optical-size axis runs
+ * from 14 (Text) to 32 (Display); a style takes the cut its size is nearer to, so Display from 24 pt up (the big
+ * number, the amount, large titles, the keypad), Text below. Tabular figures (`tabularNums`) are Inter's `tnum`.
+ */
+const INTER_DISPLAY_FROM = 24;
+
+function androidFace(fontSize: number | undefined): TextStyle {
+  if (Platform.OS !== 'android') return {};
+  return { fontFamily: (fontSize ?? 0) >= INTER_DISPLAY_FROM ? 'InterDisplay' : 'Inter' };
+}
+
+/** Adds the Android face to every style that names no family of its own (the mono styles keep theirs). */
+function withAndroidFace<T extends Record<string | number, TextStyle>>(styles: T): T {
+  if (Platform.OS !== 'android') return styles;
+  const faced: Record<string | number, TextStyle> = {};
+  for (const [key, style] of Object.entries(styles)) {
+    faced[key] =
+      style.fontFamily === undefined ? { ...style, ...androidFace(style.fontSize) } : style;
+  }
+  return faced as T;
+}
+
+export const typography = withAndroidFace({
   /** 34/41 bold, −0.4: "Groups", "Settings". */
   largeTitle: { fontSize: 34, lineHeight: 41, fontWeight: '700', letterSpacing: -0.4 },
   /** 34/41 bold, −0.8: the "Even" wordmark in the header of Groups (empty) and behind Create / Join sheets. */
@@ -85,7 +114,7 @@ export const typography = {
   mono: { fontSize: 14, lineHeight: 20, fontWeight: '400', fontFamily: monoFamily },
   /** 15/22 mono: the pasted code on Join with code. */
   monoLoose: { fontSize: 15, lineHeight: 22, fontWeight: '400', fontFamily: monoFamily },
-} as const satisfies Record<string, TextStyle>;
+} as const satisfies Record<string, TextStyle>);
 
 export type TypographyVariant = keyof typeof typography;
 
@@ -104,7 +133,7 @@ export const emojiType = {
  * 32, 36, 56 and 72 pt. Emoji at 24 and 26 are not drawn anywhere; they take the 28 pt size scaled down (noted in
  * the kit report).
  */
-export const avatarType = {
+const avatarGlyphs = {
   24: { initials: { fontSize: 13, lineHeight: 16 }, emoji: { fontSize: 13, lineHeight: 16 } },
   26: { initials: { fontSize: 13, lineHeight: 16 }, emoji: { fontSize: 14, lineHeight: 16 } },
   28: { initials: { fontSize: 13, lineHeight: 16 }, emoji: { fontSize: 15, lineHeight: 18 } },
@@ -115,5 +144,13 @@ export const avatarType = {
   56: { initials: { fontSize: 22, lineHeight: 26 }, emoji: { fontSize: 30, lineHeight: 36 } },
   72: { initials: { fontSize: 28, lineHeight: 34 }, emoji: { fontSize: 38, lineHeight: 44 } },
 } as const satisfies Record<number, { initials: TextStyle; emoji: TextStyle }>;
+
+/** `avatarGlyphs`, with the Android face on the initials (the emoji draw from the system's emoji font). */
+export const avatarType = Object.fromEntries(
+  Object.entries(avatarGlyphs).map(([size, glyphs]) => [
+    size,
+    { ...glyphs, initials: { ...glyphs.initials, ...androidFace(glyphs.initials.fontSize) } },
+  ]),
+) as unknown as typeof avatarGlyphs;
 
 export type AvatarSize = keyof typeof avatarType;
