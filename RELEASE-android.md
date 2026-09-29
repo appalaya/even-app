@@ -180,10 +180,12 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   deletes `android/` and regenerates it from the template, dropping the hand edits below. Plain prebuild with no
   platform flag does this to `ios/` too. If it happens, restore the file with
   `git checkout -- android/app/build.gradle`. The workflow also fails any bundle not signed with the upload key.
-- The hand edits, all in `android/app/build.gradle`: the "Even:" block (signing and version numbers from the
+- The hand edits. In `android/app/build.gradle`: the "Even:" block (signing and version numbers from the
   environment), `signingConfigs.release`, `buildTypes.release` using it, and the two assignments after
   `defaultConfig`. With `--no-clean`, prebuild rewrites the first `versionCode` and `versionName` literals in the
-  file (the ones in `defaultConfig`) from `app.json`, so leave those alone; the assignments after them win.
+  file (the ones in `defaultConfig`) from `app.json`, so leave those alone; the assignments after them win. In
+  `MainActivity.kt`: `onConfigurationChanged`, which keeps the navigation bar's buttons on the app's light or dark
+  after the phone's theme or App settings' Appearance changes.
 - R8 is on (`android.enableMinifyInReleaseBuilds=true` in `android/gradle.properties`, the Expo SDK 58 default).
   If a release build misbehaves where a debug build does not, add keep rules to `android/app/proguard-rules.pro`.
 - Local smoke build, not a release path: `cd android && ./gradlew bundleRelease` needs JDK 17 and an Android SDK

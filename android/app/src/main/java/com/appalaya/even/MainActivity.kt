@@ -1,8 +1,10 @@
 package com.appalaya.even
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import androidx.core.view.WindowInsetsControllerCompat
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -21,6 +23,19 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+  }
+
+  /**
+   * Even: the navigation bar follows the app's light or dark. React Native sets its buttons (and,
+   * with three-button navigation, the system's contrast scrim behind them) once, when the activity
+   * starts; `uiMode` changes are handled here without a restart, so switching the phone's theme, or
+   * App settings' Appearance (AppCompat night mode), left a light bar under a dark app and back.
+   * A hand edit: `npx expo prebuild --platform android --no-clean` keeps it (RELEASE-android.md).
+   */
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    val night = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = !night
   }
 
   /**
