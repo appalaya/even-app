@@ -1,5 +1,5 @@
 import { CURRENCY_EXPONENTS } from '@even/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   COMMON_CURRENCIES,
@@ -29,6 +29,37 @@ describe('currencies', () => {
   it('names a currency in sentence case, singular', () => {
     expect(currencyName('CAD', 'en')).toBe('Canadian dollar');
     expect(currencyName('EUR', 'en')).toBe('Euro');
+    expect(currencyName('JPY', 'en')).toBe('Japanese yen');
+  });
+
+  it("keeps the table's English name where the engine answers with display names (Hermes on Android)", () => {
+    // Hermes on Android: the display name where the symbol goes, title case, the same for one and two.
+    const displayNames: Record<string, string> = { CAD: 'Canadian Dollar', EUR: 'Euro' };
+    class DisplayNameFormat {
+      constructor(
+        private readonly locale: string | undefined,
+        private readonly options: { currency: string },
+      ) {}
+      formatToParts(count: number) {
+        return [
+          { type: 'currency', value: displayNames[this.options.currency] ?? this.options.currency },
+          { type: 'literal', value: ' ' },
+          { type: 'integer', value: String(count) },
+        ];
+      }
+      resolvedOptions() {
+        return { locale: this.locale ?? 'en-US' };
+      }
+    }
+    vi.stubGlobal('Intl', Object.assign(Object.create(Intl), { NumberFormat: DisplayNameFormat }));
+    try {
+      expect(currencyName('CAD', 'en-CA')).toBe('Canadian dollar');
+      expect(currencyName('EUR')).toBe('Euro');
+      // Outside English the display name is the locale's own and stays.
+      expect(currencyName('CAD', 'de-DE')).toBe('Canadian Dollar');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('lists Common as drawn (the region currency leads), then every other code A–Z, each once', () => {

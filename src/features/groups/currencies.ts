@@ -69,26 +69,46 @@ export function defaultCurrency(locale: string = deviceLocale()): string {
 
 /**
  * The currency's name in the locale, sentence case, singular: "Canadian dollar", "Euro", "US dollar" (the board's
- * "Canadian dollar · CAD"). From `Intl.NumberFormat`'s unit name for one; Hermes has none, so the English table
+ * "Canadian dollar · CAD"). From `Intl.NumberFormat`'s unit name for one; Hermes on iOS has none, so the English table
  * (CLDR's names) stands in, and the code itself for a code outside it.
+ *
+ * Hermes on Android answers with the currency's display name where the symbol goes instead, the same for any count and
+ * in English in title case ("Canadian Dollar 1", "Canadian Dollar 2"). In English a name that stays the same for two is
+ * that display name, or a name with no plural ("Japanese yen"); the table has either one right.
  */
 export function currencyName(code: string, locale?: string): string {
   try {
-    const parts = new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency: code,
-      currencyDisplay: 'name',
-      maximumFractionDigits: 0,
-      minimumFractionDigits: 0,
-    }).formatToParts(1);
-    const name = parts.find((part) => part.type === 'currency')?.value.trim();
-    if (name !== undefined && name !== '' && name.toUpperCase() !== code) {
+    const { name, language } = nameFor(code, locale, 1);
+    const samePluralInEnglish = language === 'en' && nameFor(code, locale, 2).name === name;
+    if (name !== undefined && name !== '' && name.toUpperCase() !== code && !samePluralInEnglish) {
       return name.charAt(0).toLocaleUpperCase(locale) + name.slice(1);
     }
   } catch {
     // An engine without currency names: fall through to the table.
   }
   return CURRENCY_NAMES_EN[code] ?? code;
+}
+
+/** The currency part of `count` formatted with its name, and the language `Intl` resolved the locale to. */
+function nameFor(
+  code: string,
+  locale: string | undefined,
+  count: number,
+): { name: string | undefined; language: string } {
+  const format = new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: code,
+    currencyDisplay: 'name',
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  });
+  return {
+    name: format
+      .formatToParts(count)
+      .find((part) => part.type === 'currency')
+      ?.value.trim(),
+    language: format.resolvedOptions().locale.split('-')[0] ?? '',
+  };
 }
 
 /**
