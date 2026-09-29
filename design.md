@@ -384,9 +384,10 @@ overwriting a choice the user has made:
 - A user tap sets `source = user`, cancels any in-flight model request, and
   drops any reply that arrives afterwards. Later title edits do not re-infer.
   `user` is sticky until the sheet is dismissed.
-- While `source` is `keyword` or `model`, every keystroke runs keyword
-  inference (applied immediately, source becomes `keyword`) and, after the
-  500 ms pause, issues a fresh model request.
+- While `source` is `keyword` or `model`, every keystroke runs the local
+  guess (history, then the keyword table; applied immediately, source becomes
+  `keyword`) and, after the 500 ms pause, issues a model request only when
+  that guess found nothing ("Model refinement").
 - Each model request carries the exact title it was asked about. A reply is
   applied only if that title still matches the field and `source` is not
   `user`; otherwise it is discarded. So a model result can be refined by a
@@ -419,7 +420,9 @@ so there is no window in which a user tap can be lost.
 
 Either way, inference is only a default: the event carries the category that
 was on the chip at save time, never the guess, so no two phones ever need to
-agree on an inference. No learning from overrides in v1.
+agree on an inference. The one thing the phone learns from an override is
+the title itself: the category saved with a title is recalled for the same or
+a similar title later ("Model refinement", history first).
 
 **Rounding.** Equal splits are `floor(amount / n)` per member. Percent splits
 use integer basis points and `floor(amount × bp / 10000)`, computed in
