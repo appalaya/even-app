@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
 import {
+  Platform,
   Pressable,
   StyleSheet,
   TextInput,
@@ -135,6 +136,9 @@ export interface TextFieldProps extends Omit<TextInputProps, 'style' | 'placehol
   containerStyle?: ViewProps['style'];
 }
 
+/** A sheet's slide-in (`Sheet`, 300 ms), after which an Android field with `autoFocus` asks for the keyboard again. */
+const ANDROID_REFOCUS_MS = 320;
+
 /** A text field in one of the canvas shapes. Placeholder text is `textMuted`, the caret and selection the accent. */
 export function TextField({
   variant = 'inline',
@@ -156,6 +160,16 @@ export function TextField({
 }: TextFieldProps) {
   const { tokens } = useTheme();
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const autoFocus = input.autoFocus === true;
+  // Android: a field that mounts with `autoFocus` in a sheet (a `Modal`, a window of its own) takes focus before that
+  // window does, so the caret showed and the keyboard stayed down (Rename group, Add member). There it is focused once
+  // the sheet has slid in (300 ms) instead, which raises the keyboard.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !autoFocus) return;
+    const timer = setTimeout(() => inputRef.current?.focus(), ANDROID_REFOCUS_MS);
+    return () => clearTimeout(timer);
+  }, [autoFocus]);
   const spec = SPECS[variant];
   const background =
     variant === 'cell' || (variant === 'inline' && on === 'fill') ? tokens.surface : tokens.fill;
@@ -192,6 +206,8 @@ export function TextField({
     >
       <TextInput
         {...input}
+        ref={inputRef}
+        autoFocus={Platform.OS === 'android' ? false : input.autoFocus}
         multiline={variant === 'code' ? true : input.multiline}
         accessibilityLabel={input.accessibilityLabel ?? label}
         accessibilityHint={error ?? input.accessibilityHint}
