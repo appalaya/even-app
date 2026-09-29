@@ -89,36 +89,42 @@ public enum ExpenseClassifier {
 
   static let log = Logger(subsystem: "com.appalaya.even", category: "category-model")
 
-  /// The guide for each category is its meaning in the app (design.md "Categories"), not a copy of the keyword
-  /// table. Tuned with scripts/eval-categories.swift on the eval set's train split only: without the guides the model
-  /// answered "food" for bars and coffee shops, and household services (dry cleaning, key cutting, storage) came back
-  /// as "rental" until rental said "to drive" and other named them. The model is asked only about titles neither
-  /// history nor the keyword table knows, and those whose keywords name two categories ("Hotel bar")
-  /// (src/features/addExpense/chipMachine.ts, `shouldAskModel`).
+  /// Written for the phone's smaller model ("AFM 3 Core"): one short line per category with at most five concrete
+  /// words, then one plain sentence for each pair the eval set shows confused, and no examples. Each line is the
+  /// category's meaning in the app (design.md "Categories"), not a copy of the keyword table. Chosen with
+  /// scripts/eval-categories.swift, tuned on the train split and the refusal set only, among a minimal and a richer
+  /// variant (design.md "Model refinement", "A prompt for the smaller model"): the build 120 prompt never said
+  /// "beer", so "Hazy IPA" came back coffee. The model is asked only about titles neither history nor the keyword
+  /// table knows, and those whose keywords name two categories ("Hotel bar") (src/features/addExpense/chipMachine.ts,
+  /// `shouldAskModel`).
   public static let instructions = """
     You label shared trip and household expenses with one category. Answer with the category only.
 
-    A title is often just a business or place name: label what was most likely paid for there. A refund or deposit \
+    A title is often just a business or place name: label what is usually paid for there. A refund or deposit \
     belongs to what it was for.
 
     Categories:
-    food: restaurants, meals, takeout and food delivery
-    groceries: supermarkets, grocery stores and food bought to cook
-    drinks: bars, pubs, breweries, alcohol and liquor stores
-    coffee: coffee shops, coffee and tea drinks
-    lodging: hotels, motels, hostels, vacation rentals, cabins and campsites
-    flights: airlines, airfare and anything bought from an airline
-    transit: taxis, ride-hailing, buses, trains, shuttles and ferries
-    fuel: gas stations, fuel and EV charging
-    parking: parking lots, garages, meters and valet
-    rental: renting a car, van, truck, RV or campervan to drive
-    activities: tickets, tours, lift passes, gear rentals, attractions, hot springs, spas and shows
-    shopping: clothes, outdoor gear, souvenirs and other store purchases
-    fees: bank and ATM fees, tolls, tips, taxes, fines, insurance, visas and service charges
-    health: pharmacies, medicine, doctors, clinics and first aid
-    gifts: presents, flowers, registries and donations
-    other: only when no category above fits, such as household bills, subscriptions, laundry, repairs, postage and \
-    storage
+    food: restaurants, meals, takeout, food delivery
+    groceries: supermarkets, grocery stores, food to cook
+    drinks: beer, IPA, wine, bars, breweries
+    coffee: cafés, coffee, espresso, tea
+    lodging: hotels, motels, cabins, campsites
+    flights: airlines, airfare, baggage
+    transit: taxis, ride-hailing, buses, trains, ferries
+    fuel: gas stations, gas, diesel, EV charging
+    parking: parking lots, garages, meters, valet
+    rental: renting a car, van or RV
+    activities: tickets, tours, lift passes, gear rentals
+    shopping: clothes, outdoor gear, souvenirs, other stores
+    fees: tips, tolls, bank fees, fines, insurance
+    health: pharmacies, medicine, doctors, clinics
+    gifts: presents, flowers, donations
+    other: only when nothing above fits, such as bills
+
+    Beer of any style is drinks, never coffee.
+    Food from a store is groceries; other store goods are shopping.
+    A place to stay is lodging; a vehicle to drive is rental.
+    A ride is transit, filling the tank is fuel, and leaving the car is parking.
     """
 
   /// Whether the first model in `models` can answer now. Not logged; `checkAvailability` is the logged one.
@@ -160,16 +166,25 @@ public enum ExpenseClassifier {
     return availability
   }
 
+  /// Every request is this prefix and the title. The prewarm names it too, which keeps a prewarmed session's answer
+  /// equal to a fresh one's (`prewarm`).
+  static let promptPrefix = "Expense title: "
+
   /// Loads each available model in `models` and the instructions ahead of the first title (the app calls this when
   /// Add expense opens), so the first answer is not a cold start. Each prewarmed session answers the next title asked
   /// of its model only. No-op for a model that is unavailable.
+  ///
+  /// The prewarm names `promptPrefix`. Without a prefix, a prewarmed session answered differently from a fresh one
+  /// under greedy decoding although its transcript was the same: 7 of 160 titles with the build 120 prompt ("Hazy
+  /// IPA" drinks instead of coffee), 21 of 278 with this one. With the prefix, 0 of 278 differed, so the first title
+  /// after the sheet opens gets the answer any later title would (design.md "Model refinement", "Determinism").
   public static func prewarm(_ models: [ExpenseClassifierModel] = models) {
     #if canImport(FoundationModels)
     if #available(iOS 26.0, macOS 26.0, *) {
       var warmed: [String] = []
       for model in models where availability(of: model) == .available {
         let session = newSession(model)
-        session.prewarm()
+        session.prewarm(promptPrefix: Prompt(promptPrefix))
         SpareSessions.shared.put(session, for: model)
         warmed.append(model.rawValue)
       }
@@ -288,7 +303,7 @@ public enum ExpenseClassifier {
     let session = SpareSessions.shared.take(model) ?? newSession(model)
     do {
       let response = try await session.respond(
-        to: "Expense title: \(title)",
+        to: promptPrefix + title,
         generating: ExpenseCategory.self,
         options: GenerationOptions(samplingMode: .greedy)
       )

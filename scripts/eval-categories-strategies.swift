@@ -189,6 +189,78 @@ let originalInstructions = """
   other: only when no category above fits, such as household bills
   """
 
+/// The prompt shipped to build 120 (tuned once on train): long lists per category, and drinks never said "beer", so on
+/// a phone "Hazy IPA" came back coffee.
+let build120Instructions = """
+  You label shared trip and household expenses with one category. Answer with the category only.
+
+  A title is often just a business or place name: label what was most likely paid for there. A refund or deposit \
+  belongs to what it was for.
+
+  Categories:
+  food: restaurants, meals, takeout and food delivery
+  groceries: supermarkets, grocery stores and food bought to cook
+  drinks: bars, pubs, breweries, alcohol and liquor stores
+  coffee: coffee shops, coffee and tea drinks
+  lodging: hotels, motels, hostels, vacation rentals, cabins and campsites
+  flights: airlines, airfare and anything bought from an airline
+  transit: taxis, ride-hailing, buses, trains, shuttles and ferries
+  fuel: gas stations, fuel and EV charging
+  parking: parking lots, garages, meters and valet
+  rental: renting a car, van, truck, RV or campervan to drive
+  activities: tickets, tours, lift passes, gear rentals, attractions, hot springs, spas and shows
+  shopping: clothes, outdoor gear, souvenirs and other store purchases
+  fees: bank and ATM fees, tolls, tips, taxes, fines, insurance, visas and service charges
+  health: pharmacies, medicine, doctors, clinics and first aid
+  gifts: presents, flowers, registries and donations
+  other: only when no category above fits, such as household bills, subscriptions, laundry, repairs, postage and \
+  storage
+  """
+
+/// The variants for the smaller model, beside the shipped one (`ExpenseClassifier.instructions`: five words at most
+/// per category, then a sentence per confused pair). Minimal: three words at most per category.
+let minimalInstructions = """
+  You label shared trip and household expenses with one category. Answer with the category only.
+
+  A title is often just a business or place name: label what is usually paid for there.
+
+  Categories:
+  food: restaurants, meals, takeout
+  groceries: supermarkets, grocery stores
+  drinks: beer, wine, bars
+  coffee: cafés, coffee, tea
+  lodging: hotels, cabins, campsites
+  flights: airlines, airfare
+  transit: taxis, buses, trains
+  fuel: gas stations, EV charging
+  parking: parking lots, meters, valet
+  rental: a car, van or RV to drive
+  activities: tickets, tours, lift passes
+  shopping: clothes, gear, souvenirs
+  fees: tips, tolls, fines, bank fees
+  health: pharmacies, medicine, doctors
+  gifts: presents, flowers, donations
+  other: only when nothing above fits, such as bills
+  """
+
+/// The pairs the eval set shows confused, one sentence each, as the shipped prompt ends.
+let boundarySentences = """
+  Beer of any style is drinks, never coffee.
+  Food from a store is groceries; other store goods are shopping.
+  A place to stay is lodging; a vehicle to drive is rental.
+  A ride is transit, filling the tank is fuel, and leaving the car is parking.
+  """
+
+/// Minimal, then the boundary sentences.
+let minimalBoundaryInstructions = minimalInstructions + "\n\n" + boundarySentences
+
+/// The shipped prompt without its boundary sentences: five words at most per category.
+let linesInstructions: String = {
+  let shipped = ExpenseClassifier.instructions
+  guard let range = shipped.range(of: "\n\n" + boundarySentences) else { return shipped }
+  return String(shipped[..<range.lowerBound])
+}()
+
 @available(macOS 26.0, iOS 26.0, *)
 func session(_ instructions: String, tagging: Bool = false) -> LanguageModelSession {
   let model = tagging ? SystemLanguageModel(useCase: .contentTagging) : SystemLanguageModel.default
@@ -357,6 +429,18 @@ func allAskers() -> [Asker] {
       Asker(name: "tuned+hint", summary: "the shipped prompt with the table's guess as a hint", usesHint: true) {
         title, hint in await direct(ExpenseClassifier.instructions, hintPrompt(title, hint))
       },
+      Asker(name: "build120", summary: "the prompt shipped to build 120, no hint", usesHint: false) { title, _ in
+        await direct(build120Instructions, "Expense title: \(title)")
+      },
+      Asker(name: "minimal", summary: "the minimal prompt: three words per category", usesHint: false) { title, _ in
+        await direct(minimalInstructions, "Expense title: \(title)")
+      },
+      Asker(name: "minimal+boundaries", summary: "the minimal prompt and the boundary sentences", usesHint: false) {
+        title, _ in await direct(minimalBoundaryInstructions, "Expense title: \(title)")
+      },
+      Asker(name: "lines", summary: "the shipped prompt without its boundary sentences", usesHint: false) {
+        title, _ in await direct(linesInstructions, "Expense title: \(title)")
+      },
       Asker(name: "fewshot", summary: "the few-shot prompt, no hint", usesHint: false) { title, _ in
         await direct(fewShotInstructions, "Expense title: \(title)")
       },
@@ -386,6 +470,10 @@ func prewarm(asker: String) {
     case let name where name.hasPrefix("fewshot"): prewarm(fewShotInstructions)
     case let name where name.hasPrefix("tuned"): prewarm(ExpenseClassifier.instructions)
     case "tagging-tuned": session(ExpenseClassifier.instructions, tagging: true).prewarm()
+    case "build120": prewarm(build120Instructions)
+    case "minimal": prewarm(minimalInstructions)
+    case "minimal+boundaries": prewarm(minimalBoundaryInstructions)
+    case "lines": prewarm(linesInstructions)
     default: prewarm(originalInstructions)
     }
   }

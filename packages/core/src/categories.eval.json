@@ -1,5 +1,5 @@
 {
-  "about": "Labelled expense titles for choosing and checking how Even names a category (design.md \"Model refinement\"; run `npm run eval:categories`). The first 96 are Banff trip and shared-household titles, six per category, many outside the keyword table on purpose: the model is there for the long tail. The rest are more long-tail titles: bars, breweries, cafés, lodges, lift tickets and gear rentals, transit and parking apps, pharmacies, tips, fees, deposits, refunds, misspellings, lowercase, emoji, non-English names, ambiguous ones, and repeats of earlier merchants. The last seven (held-out) put a common keyword inside a longer proper name (\"Train and Co Drama Theater\", seen on a phone as Transit), six where the table's word misleads and one where it is right (\"Sushi Train Robson\"). Each label is the category a person would expect on the chip: what was paid for when the title says it (\"Airport parking\" is parking, \"Gas station snacks\" is food, \"Costco gas\" is fuel, \"Hotel valet\" is parking), otherwise what that kind of place mostly sells (\"Hotel bar\" is drinks). `split`: \"train\" titles may be looked at while tuning prompts and rules; \"heldout\" titles are never tuned on and give the honest number. Titles are invented; categories.test.ts checks the file's shape.",
+  "about": "Labelled expense titles for choosing and checking how Even names a category (design.md \"Model refinement\"; run `npm run eval:categories`). The first 96 are Banff trip and shared-household titles, six per category, many outside the keyword table on purpose: the model is there for the long tail. The rest are more long-tail titles: bars, breweries, cafés, lodges, lift tickets and gear rentals, transit and parking apps, pharmacies, tips, fees, deposits, refunds, misspellings, lowercase, emoji, non-English names, ambiguous ones, and repeats of earlier merchants. Then seven (held-out) put a common keyword inside a longer proper name (\"Train and Co Drama Theater\", seen on a phone as Transit), six where the table's word misleads and one where it is right (\"Sushi Train Robson\"). The last thirty (held-out) are in the styles a phone sees from this owner, added after \"Hazy IPA\" came back Coffee on a phone and written before any prompt change was scored (two were reworded afterwards, before their answers were seen, because history read them as near-repeats of \"✈️ home\"): Canadian trip and household names, craft beer, coffee chains, ski resorts and hardware stores. Each label is the category a person would expect on the chip: what was paid for when the title says it (\"Airport parking\" is parking, \"Gas station snacks\" is food, \"Costco gas\" is fuel, \"Hotel valet\" is parking), otherwise what that kind of place mostly sells (\"Hotel bar\" is drinks). `split`: \"train\" titles may be looked at while tuning prompts and rules; \"heldout\" titles are never tuned on and give the honest number. Titles are invented; categories.test.ts checks the file's shape.",
   "cases": [
     { "title": "Nourish Bistro", "category": "food", "split": "train" },
     { "title": "Chuck's Steakhouse", "category": "food", "split": "train" },
@@ -253,6 +253,37 @@
     { "title": "Lodge cast iron skillet", "category": "shopping", "split": "heldout" },
     { "title": "Market Street Barbershop", "category": "other", "split": "heldout" },
     { "title": "Train Station Pub", "category": "drinks", "split": "heldout" },
-    { "title": "Sushi Train Robson", "category": "food", "split": "heldout" }
+    { "title": "Sushi Train Robson", "category": "food", "split": "heldout" },
+
+    { "title": "Grizzly Paw", "category": "drinks", "split": "heldout" },
+    { "title": "Parallel 49 growler", "category": "drinks", "split": "heldout" },
+    { "title": "Big Rock Grasshopper", "category": "drinks", "split": "heldout" },
+    { "title": "Double IPA", "category": "drinks", "split": "heldout" },
+    { "title": "Phillips Blue Buck", "category": "drinks", "split": "heldout" },
+    { "title": "Kokanee 24-pack", "category": "drinks", "split": "heldout" },
+    { "title": "Oatmeal porter", "category": "drinks", "split": "heldout" },
+    { "title": "49th Parallel", "category": "coffee", "split": "heldout" },
+    { "title": "Blenz", "category": "coffee", "split": "heldout" },
+    { "title": "Phil & Sebastian", "category": "coffee", "split": "heldout" },
+    { "title": "Waves Coffee House", "category": "coffee", "split": "heldout" },
+    { "title": "Tim's double double", "category": "coffee", "split": "heldout" },
+    { "title": "Good Earth", "category": "coffee", "split": "heldout" },
+    { "title": "Revelstoke day tickets", "category": "activities", "split": "heldout" },
+    { "title": "Nakiska", "category": "activities", "split": "heldout" },
+    { "title": "Marmot Basin lift pass", "category": "activities", "split": "heldout" },
+    { "title": "Sun Peaks rentals", "category": "activities", "split": "heldout" },
+    { "title": "Whistler Epic Pass", "category": "activities", "split": "heldout" },
+    { "title": "Canmore Home Hardware", "category": "shopping", "split": "heldout" },
+    { "title": "RONA", "category": "shopping", "split": "heldout" },
+    { "title": "Paint from Home Depot", "category": "shopping", "split": "heldout" },
+    { "title": "Lee Valley", "category": "shopping", "split": "heldout" },
+    { "title": "BC Ferries", "category": "transit", "split": "heldout" },
+    { "title": "Via Rail to Jasper", "category": "transit", "split": "heldout" },
+    { "title": "LCBO", "category": "drinks", "split": "heldout" },
+    { "title": "Save-On-Foods", "category": "groceries", "split": "heldout" },
+    { "title": "Pharmasave", "category": "health", "split": "heldout" },
+    { "title": "Mary Brown's", "category": "food", "split": "heldout" },
+    { "title": "Enmax bill", "category": "other", "split": "heldout" },
+    { "title": "Canada Post", "category": "other", "split": "heldout" }
   ]
 }

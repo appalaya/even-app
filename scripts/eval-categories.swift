@@ -13,6 +13,8 @@
 //   npm run eval:categories -- --strategy all        # every strategy
 //   npm run eval:categories -- --strategy b-fallback,c-hint --misses all
 //   npm run eval:categories -- --strategy gate-a,gate-b,gate-c,gate-d   # when the model is asked (design.md)
+//   npm run eval:categories -- --strategy all-general,p-build120,p-lines,p-minimal,p-minimal-b --added 30
+//                                                    # the prompt variants for the smaller model (design.md)
 //   npm run eval:categories -- --refusals            # the titles guardrails might refuse, per model arrangement
 //   npm run eval:categories -- --first-request cold  # one fresh process's first request (or `prewarmed`)
 //
@@ -26,8 +28,9 @@
 //                         category at once and the model is not asked
 //   --split train|heldout|all
 //                         score only that split (tune prompts with `--split train`, so held-out stays unseen)
-//   --misses train|heldout|all|none
+//   --misses train|heldout|added|all|none
 //                         whose misses to list (default train: look at held-out misses only for the final report)
+//   --added <n>           also score the file's last n titles on their own (a batch added to the held-out split)
 //   --refusals            ask each model arrangement about packages/core/src/categories.refusals.json and count
 //                         what comes back: answered, other, refused (guardrail or refusal), error, timeout; with
 //                         `--arrangements a,b` for a subset (default: every arrangement)
@@ -181,6 +184,16 @@ let strategies: [Strategy] = [
            asker: "tuned", gate: .fallback),
   Strategy(name: "f-tuned-hint", summary: "(f)+(c) the shipped prompt with the table's hint", asker: "tuned+hint",
            gate: .hint),
+  Strategy(name: "p-build120", summary: "the prompt shipped to build 120, on every title", asker: "build120",
+           gate: .always),
+  Strategy(name: "p-minimal", summary: "the minimal prompt (three words per category), on every title",
+           asker: "minimal", gate: .always),
+  Strategy(name: "p-minimal-b", summary: "the minimal prompt and the boundary sentences, on every title",
+           asker: "minimal+boundaries", gate: .always),
+  Strategy(name: "p-lines", summary: "the shipped prompt without its boundary sentences, on every title",
+           asker: "lines", gate: .always),
+  Strategy(name: "shipped-build120", summary: "the shipped path with the build 120 prompt", asker: "build120",
+           gate: .fallbackConflict, history: true, otherIsNoAnswer: true),
   Strategy(name: "f-fewshot", summary: "(f) few-shot prompt, always", asker: "fewshot", gate: .always),
   Strategy(name: "f-fewshot-fallback", summary: "(f) few-shot, only when the table finds nothing", asker: "fewshot",
            gate: .fallback),
@@ -200,6 +213,7 @@ struct Options {
   var strategies = ["shipped"]
   var misses = "train"
   var split = "all"
+  var added = 0
   var refusals = false
   var arrangements: [String]? = nil
   var firstRequest: String? = nil
@@ -217,6 +231,7 @@ func parseArguments() -> Options {
       o.strategies = (args.next() ?? "shipped").split(separator: ",").map(String.init)
     case "--misses": o.misses = args.next() ?? o.misses
     case "--split": o.split = args.next() ?? o.split
+    case "--added": o.added = Int(args.next() ?? "") ?? 0
     case "--refusals": o.refusals = true
     case "--arrangements": o.arrangements = (args.next() ?? "").split(separator: ",").map(String.init)
     case "--first-request": o.firstRequest = args.next() ?? "cold"
@@ -226,7 +241,7 @@ func parseArguments() -> Options {
       for s in strategies { print("\(s.name.padding(toLength: 22, withPad: " ", startingAt: 0)) \(s.summary)") }
       exit(0)
     default:
-      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --split train|heldout|all --misses train|heldout|all|none --refusals [--arrangements a,b] --first-request cold|prewarmed [--title t] [--wait-ms n] --list")
+      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --split train|heldout|all --misses train|heldout|added|all|none --added <n> --refusals [--arrangements a,b] --first-request cold|prewarmed [--title t] [--wait-ms n] --list")
       exit(2)
     }
   }
@@ -259,8 +274,10 @@ struct EvalCategories {
       return
     }
     var file: CasesFile
+    var added: Set<String> = []
     do {
       file = try JSONDecoder().decode(CasesFile.self, from: Data(contentsOf: URL(fileURLWithPath: options.cases)))
+      added = Set(file.cases.suffix(options.added).map(\.title))
       if options.split != "all" { file = CasesFile(cases: file.cases.filter { $0.split == options.split }) }
     } catch {
       print("Could not read \(options.cases): \(error)")
@@ -297,7 +314,9 @@ struct EvalCategories {
     }
     let train = file.cases.filter { $0.split == "train" }.count
     let heldout = file.cases.filter { $0.split == "heldout" }.count
-    print("Cases: \(file.cases.count) (train \(train), held-out \(heldout)), timeout \(ExpenseClassifier.timeout)\n")
+    let addedNote = added.isEmpty ? "" : ", the last \(added.count) also scored as added"
+    print("Cases: \(file.cases.count) (train \(train), held-out \(heldout)\(addedNote)),"
+      + " timeout \(ExpenseClassifier.timeout)\n")
 
     // Ask each asker once per (title, hint) it is needed for.
     let askers = Dictionary(uniqueKeysWithValues: allAskers().map { ($0.name, $0) })
@@ -338,6 +357,8 @@ struct EvalCategories {
       var row = Row()
       for c in file.cases {
         row.total[c.split, default: 0] += 1
+        let isAdded = added.contains(c.title)
+        if isAdded { row.total["added", default: 0] += 1 }
         let matched = c.keyword != "other"
         let recalled = strategy.history ? c.history : nil
         // What the chip shows as you type: the recalled category, else the keyword guess.
@@ -363,7 +384,12 @@ struct EvalCategories {
             row.noAnswer += 1
           }
         }
-        if final == c.category { row.right[c.split, default: 0] += 1 } else { row.misses.append((c, final, answer)) }
+        if final == c.category {
+          row.right[c.split, default: 0] += 1
+          if isAdded { row.right["added", default: 0] += 1 }
+        } else {
+          row.misses.append((c, final, answer))
+        }
         if final != instant {
           row.swaps += 1
           if instant == c.category { row.undo += 1; row.undone.append((c, final)) }
@@ -373,17 +399,22 @@ struct EvalCategories {
       rows.append((strategy, row))
     }
 
+    let addedHeader = added.isEmpty ? "" : " \(pad("added", 12))"
     print("""
-      \(pad("strategy", 22)) \(pad("train", 12)) \(pad("held-out", 12)) \(pad("all", 12)) swaps  undo  fix  agree  calls  p50 ms  p95 ms
+      \(pad("strategy", 22)) \(pad("train", 12)) \(pad("held-out", 12))\(addedHeader) \(pad("all", 12)) swaps  undo  fix  agree  calls  p50 ms  p95 ms
       """)
     for (strategy, row) in rows {
       func cell(_ split: String?) -> String {
-        let r = split.map { row.right[$0, default: 0] } ?? row.right.values.reduce(0, +)
-        let t = split.map { row.total[$0, default: 0] } ?? row.total.values.reduce(0, +)
+        // `nil` is every title: the train and held-out splits (the added titles are already in held-out).
+        func both(_ counts: [String: Int]) -> Int { counts["train", default: 0] + counts["heldout", default: 0] }
+        let r = split.map { row.right[$0, default: 0] } ?? both(row.right)
+        let t = split.map { row.total[$0, default: 0] } ?? both(row.total)
         return pad("\(r)/\(t) \(percent(r, t))", 12)
       }
+      let addedCell = added.isEmpty ? "" : " \(cell("added"))"
       print(
-        "\(pad(strategy.name, 22)) \(cell("train")) \(cell("heldout")) \(cell(nil)) \(pad(String(row.swaps), 6))"
+        "\(pad(strategy.name, 22)) \(cell("train")) \(cell("heldout"))\(addedCell) \(cell(nil))"
+          + " \(pad(String(row.swaps), 6))"
           + " \(pad(String(row.undo), 5)) \(pad(String(row.fix), 4)) \(pad(String(row.agree), 6))"
           + " \(pad(String(row.calls), 6))"
           + " \(pad(quantile(row.latencies, 0.5), 7)) \(quantile(row.latencies, 0.95))")
@@ -392,11 +423,15 @@ struct EvalCategories {
 
       swaps: chips that change after the pause (what showed as you typed → final); undo: swaps away from a right chip
       (the cost you see); fix: swaps to the right answer; agree: a keyword or history chip the model agreed with, which
-      gains the sparkle with no swap. calls: model requests; latency is per request, prewarmed.
+      gains the sparkle with no swap. calls: model requests; latency is per request, prewarmed. added: the file's last
+      titles (`--added`), already counted in their split.
       """)
 
     for (strategy, row) in rows {
-      let shown = row.misses.filter { options.misses == "all" || $0.0.split == options.misses }
+      func listed(_ c: EvalCase) -> Bool {
+        options.misses == "all" || c.split == options.misses || (options.misses == "added" && added.contains(c.title))
+      }
+      let shown = row.misses.filter { listed($0.0) }
       if options.misses == "none" { break }
       print("\n\(strategy.name): \(strategy.summary)")
       if row.noAnswer > 0 {
@@ -421,7 +456,7 @@ struct EvalCategories {
         let suffix = extra.isEmpty ? "" : "  [\(extra.joined(separator: ", "))]"
         print("  \(c.split == "heldout" ? "H" : "T") \(c.title)  →  \(final)  (labelled \(c.category))\(suffix)")
       }
-      let undone = row.undone.filter { options.misses == "all" || $0.0.split == options.misses }
+      let undone = row.undone.filter { listed($0.0) }
       if !undone.isEmpty {
         print("  undid a right keyword chip: " + undone.map { "\($0.0.title) → \($0.1)" }.joined(separator: "; "))
       }
