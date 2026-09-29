@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Even: the navigation bar's buttons follow light and dark. AppTheme turns the system's contrast scrim off
+  (android:enforceNavigationBarContrast), so three-button navigation shows the canvas (#F6F5F1 light, #0E100F dark)
+  behind the buttons instead of a translucent band, and the app keeps the buttons readable: dark buttons in light
+  (this file), light in dark (values-night). Sheets are dialogs whose theme is built on AppTheme, so they follow too.
+  MainActivity.onConfigurationChanged sets them again when the theme changes with Even open. A hand edit that
+  prebuild keeps when run without cleaning (RELEASE-android.md).
+-->
+<resources>
+  <bool name="even_light_navigation_bar">true</bool>
+</resources>

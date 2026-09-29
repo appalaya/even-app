@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Even: light navigation buttons over the dark canvas (values/even_system_bars.xml). -->
+<resources>
+  <bool name="even_light_navigation_bar">false</bool>
+</resources>

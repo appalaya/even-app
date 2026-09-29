@@ -26,10 +26,11 @@ class MainActivity : ReactActivity() {
   }
 
   /**
-   * Even: the navigation bar follows the app's light or dark. React Native sets its buttons (and,
-   * with three-button navigation, the system's contrast scrim behind them) once, when the activity
-   * starts; `uiMode` changes are handled here without a restart, so switching the phone's theme, or
-   * App settings' Appearance (AppCompat night mode), left a light bar under a dark app and back.
+   * Even: the navigation bar follows the app's light or dark. The system's contrast scrim is off
+   * (AppTheme, so three-button navigation shows the canvas), and the theme sets the buttons dark or
+   * light when the activity starts (`even_system_bars.xml`, in values and values-night). `uiMode`
+   * changes are handled without a restart, so without this, switching the phone's theme or App
+   * settings' Appearance (AppCompat night mode) with Even open left the buttons as they were.
    * A hand edit: `npx expo prebuild --platform android --no-clean` keeps it (RELEASE-android.md).
    */
   override fun onConfigurationChanged(newConfig: Configuration) {
