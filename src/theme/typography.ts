@@ -23,8 +23,11 @@ export type FontWeightName = keyof typeof fontWeight;
 /** Money and every other column of figures: tabular so digits line up and do not jitter while typing. */
 export const tabularNums = { fontVariant: ['tabular-nums'] } as const satisfies TextStyle;
 
-/** `ui-monospace` resolves to SF Mono on iOS (invite link and code field on the canvas). */
-export const monoFamily = 'ui-monospace';
+/**
+ * The invite link and the code field on the canvas (`ui-monospace`). iOS resolves `ui-monospace` to SF Mono; Android
+ * has no family by that name and drew these in the sans face, so it takes its own `monospace`.
+ */
+export const monoFamily = Platform.OS === 'android' ? 'monospace' : 'ui-monospace';
 
 /**
  * Android draws Inter (the OFL release, bundled from `assets/fonts` by app.json's `expo-font` entry as the families
