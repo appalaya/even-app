@@ -1,0 +1,27 @@
+# Asks App Store Connect whether the app is ready to give a build to the external TestFlight group:
+# Test Information, the Beta App Review contact, and the groups' tester counts. Prints only yes/no and
+# counts (these logs are public). Run it from the Actions tab before pushing a beta/<version>-<build> tag.
+name: TestFlight readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Ask App Store Connect
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Readiness
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: node .github/scripts/asc-readiness.mjs

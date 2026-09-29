@@ -24,6 +24,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/actionlint.yaml'
       - '.github/workflows/web.yml'
+      - '.github/workflows/asc-readiness.yml'
+      - '.github/scripts/**'
       - '.gitignore'
       - 'scripts/**'
   workflow_dispatch:
