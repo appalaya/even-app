@@ -1297,7 +1297,11 @@ Deviating from the canvas in implementation is a no-go.
   here. Empty state: the mark and its circles, Create and Join, and the
   tagline; no explanatory sentence (as drawn). Archived groups sit in a
   collapsed Archived section at the bottom; opened, they are greyed outline
-  cards with Unarchive.
+  cards with Unarchive. The top right is you, not a gear: your 32 pt avatar
+  (initials on your colour, or your emoji, as App settings' You card draws
+  it) in a 44 pt target beside the large title, or a person glyph on the
+  neutral `separator` fill until a name is set; it opens App settings
+  ("App settings. You: Sam." / "App settings. No name set yet.").
 - **Group**: big number at top (your net), under it the simplified settle
   list's transfers that involve you, in both directions ("You pay Maya",
   "Nathan pays you"), the done-adding row (at most five avatars, not-done first then done,
@@ -1362,7 +1366,7 @@ Deviating from the canvas in implementation is a no-go.
   from Balances' "Settle up" it starts empty (you pay, "Choose" whom). From
   and To open the member sheet; recorded, the button reads "✓ Recorded" for
   0.8 s, then the sheet closes.
-- **App settings** (gear on the Groups screen): a "You" card with the avatar
+- **App settings** (your avatar at the top right of Groups): a "You" card with the avatar
   centred at the top, 72 px, a small pencil badge on its corner and no
   caption (tapping opens the same emoji picker sheet used everywhere, with
   "Use initials" to clear), and the Name field on its own row beneath; Appearance (System · Light · Dark); Notifications (the only

@@ -138,7 +138,10 @@ const ICONS = {
   device: { stroke: 2.2, join: 'round', shapes: [rect(7, 2.5, 10, 19, 2.5), path('M11 18.5h2')] },
   /** The "this phone" mark on a name this phone claimed (SeatPick, SeatSameDevice) · 13. */
   phone: { stroke: 2.4, join: 'round', shapes: [rect(6, 2.5, 12, 19, 2.5), path('M11 18.5h2')] },
-  /** No name picked (GroupNoSeat): the note's glyph and "Pick your name" · 20. */
+  /**
+   * No name picked (GroupNoSeat): the note's glyph and "Pick your name" · 20. No name set yet (GroupsEmpty): the
+   * Groups header's avatar · 18.
+   */
   person: {
     stroke: 2.2,
     join: 'round',

@@ -1,14 +1,15 @@
 /**
  * Groups (Main, GroupsDark; GroupsEmpty, GroupsEmptyDark): the app's first screen. Group cards in `useGroups()`
  * order, the collapsed "Archived · N" row, "Import group file", and the sticky "Join with code" · "Create group"
- * footer; with no groups, the wordmark header and the empty state's mark and motion. On a first launch with an
- * empty store and groups left in the keychain, a sheet offers to recover them.
+ * footer; with no groups, the wordmark header and the empty state's mark and motion. The top right is you (your
+ * avatar, or a person glyph until a name is set), which opens App settings. On a first launch with an empty store
+ * and groups left in the keychain, a sheet offers to recover them.
  */
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { AppText, Button, HeaderButton, Icon, Screen, Wordmark } from '@/components';
+import { AppText, Button, Icon, Screen, Wordmark } from '@/components';
 import { ArchivedSection } from '@/features/groups/ArchivedSection';
 import { GroupCard } from '@/features/groups/GroupCard';
 import { GroupsEmpty } from '@/features/groups/GroupsEmpty';
@@ -17,6 +18,7 @@ import { ImportRefusedSheet } from '@/features/groups/ImportRefusedSheet';
 import { hrefs } from '@/features/groups/routes';
 import { useImportGroupFile } from '@/features/groups/useImportGroupFile';
 import { useKeychainRecovery } from '@/features/groups/useKeychainRecovery';
+import { YouButton } from '@/features/groups/YouButton';
 import { ConfirmSheet } from '@/features/join/ConfirmSheet';
 import { hostOf, recoverQuestion } from '@/features/join/invite';
 import { useGroups } from '@/state';
@@ -33,14 +35,7 @@ export default function GroupsScreen() {
   const { importGroupFile, busy, refused, openAnyway, dismissRefused } = useImportGroupFile();
   const [archivedOpen, setArchivedOpen] = useState(__DEV__ && params.archived === 'open');
 
-  const settings = (
-    <HeaderButton
-      icon="gear"
-      size={24}
-      accessibilityLabel="Settings"
-      onPress={() => router.push(hrefs.settings)}
-    />
-  );
+  const settings = <YouButton onPress={() => router.push(hrefs.settings)} />;
   const open = (localId: string) => router.push(hrefs.group(localId));
   const create = () => router.push(hrefs.create);
   const join = () => router.push(hrefs.join);
