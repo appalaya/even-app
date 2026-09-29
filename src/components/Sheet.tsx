@@ -1,5 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import {
+  Dimensions,
+  Keyboard,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
 import {
   GestureDetector,
   GestureHandlerRootView,
@@ -65,6 +74,33 @@ export function sheetBottomPad(bottom: 'home' | 'keypad', insets: EdgeInsets): n
 
 /** With the keyboard up, a sheet's content ends this far above it (every board that draws the keyboard). */
 export const KEYBOARD_GAP = 12;
+
+/**
+ * How far the keyboard reaches up from the bottom of the screen, for a sheet. Reanimated's `useAnimatedKeyboard` reads
+ * it on iOS. On Android a sheet is a `Modal`, a window of its own, and the hook follows the activity's window, so it
+ * read 0 there and the keyboard covered the sheet's foot (Join, Create group, Rename's field). React Native's keyboard
+ * events do fire for the Modal's window, so on Android the sheet follows them, measured from the screen's bottom edge
+ * as the hook measures (the keyboard's own height leaves out the navigation bar under it).
+ */
+function useSheetKeyboard(): SharedValue<number> {
+  const animated = useAnimatedKeyboard();
+  const android = useSharedValue(0);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const shown = Keyboard.addListener('keyboardDidShow', (e) => {
+      const fromBottom = Dimensions.get('screen').height - e.endCoordinates.screenY;
+      android.set(withTiming(Math.max(0, fromBottom), { duration: 200 }));
+    });
+    const hidden = Keyboard.addListener('keyboardDidHide', () => {
+      android.set(withTiming(0, { duration: 200 }));
+    });
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, [android]);
+  return Platform.OS === 'android' ? android : animated.height;
+}
 
 // ---------- One scrim for stacked sheets ----------
 
@@ -281,7 +317,7 @@ export function Sheet({ visible, onDismiss, top, ...panel }: SheetProps) {
   const progress = useSharedValue(0);
   const drag = useSharedValue(0);
   const height = useSharedValue(1000);
-  const keyboard = useAnimatedKeyboard();
+  const keyboard = useSheetKeyboard();
   const covered = useScrimLayer(visible);
   const pad = sheetBottomPad(panel.bottom ?? 'home', insets);
 
@@ -320,7 +356,7 @@ export function Sheet({ visible, onDismiss, top, ...panel }: SheetProps) {
   });
 
   const panelStyle = useAnimatedStyle(() => {
-    const kb = keyboard.height.get();
+    const kb = keyboard.get();
     return {
       transform: [{ translateY: drag.get() + (1 - progress.get()) * height.get() }],
       marginBottom: kb > 0 ? Math.max(0, kb + KEYBOARD_GAP - pad) : 0,
