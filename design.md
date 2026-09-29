@@ -356,12 +356,12 @@ categories). Availability (`available`, or unavailable with the framework's
 reason: `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady`)
 is asked once per launch, so a model that becomes ready is used from the next
 launch. Add expense calls `prepareCategoryModel(groupId)` when it opens: it
-prewarms both models, so the first title is not a cold start, and points
-history at that group first. Android reports unavailable (`notBuilt`): ML
-Kit's Prompt API needs minSdk 26 (the app is on 24), brings ML Kit's usage
-logging, and is still beta. Custom adapters are not an option:
-`SystemLanguageModel.Adapter` is obsoleted in the iOS 27 SDK (deprecated since
-26.4).
+prewarms both models with the prompt's prefix (*Determinism*, below), so the
+first title is not a cold start, and points history at that group first.
+Android reports unavailable (`notBuilt`): ML Kit's Prompt API needs minSdk 26
+(the app is on 24), brings ML Kit's usage logging, and is still beta. Custom
+adapters are not an option: `SystemLanguageModel.Adapter` is obsoleted in the
+iOS 27 SDK (deprecated since 26.4).
 
 *Reading the logs.* On the phone, Settings › About › Diagnostics shows the
 model's availability and the last 20 outcomes since launch (never a title),
@@ -395,10 +395,16 @@ after two attempts, both models declined the title; `outcome=timeout` near
 `detail` naming the kind (`rateLimited`, `unsupportedLanguageOrLocale`, and
 on the JavaScript side `nativeCallFailed`, `malformedReply`, `notACategory`).
 
-*Measurements.* `packages/core/src/categories.eval.json` holds 221 labelled
+*Measurements.* `packages/core/src/categories.eval.json` holds 251 labelled
 titles: 133 `train` (the first 96 plus 37 long-tail ones) that prompts and
-rules may be tuned on, and 88 `heldout` that never are (the last seven put a
-common keyword inside a longer proper name, added for the gate below).
+rules may be tuned on, and 118 `heldout` that never are: 81 long-tail ones,
+seven that put a common keyword inside a longer proper name (added for the
+gate below), and the last thirty in the styles a phone sees from this owner
+(Canadian trip and household names, craft beer, coffee chains, ski resorts,
+hardware stores), added after the phone's "Hazy IPA" and written before any
+prompt change was scored (`--added 30` scores them on their own). The tables
+up to *Latency* were measured on the first 214 or 221 titles with the build
+119 and 120 prompt.
 `npm run eval:categories` adds each title's keyword guess, the keywords it
 matched (`keywordMatches`) and leave-one-out history recall from
 `packages/core`, then scores strategies with a plain Swift script compiled
@@ -423,9 +429,10 @@ titles with the 2.5 s timeout of build 119:
 | Tuned prompt with the hint | 92% | 72% | 1 | 214 | 258 ms |
 | Shipped to build 119: history, table, tuned model | 91% | 73% | 0 | 121 | 272 ms |
 
-The prompt was tuned once, on train misses only: rental now means a vehicle to
-drive and other names household services, which stopped dry cleaning, key
-cutting and storage units coming back as rental. The held-out split is the
+The build 119 prompt was tuned once, on train misses only: rental now means a
+vehicle to drive and other names household services, which stopped dry
+cleaning, key cutting and storage units coming back as rental (*A prompt for
+the smaller model*, below, is the second tuning). The held-out split is the
 long tail on purpose (the table places 13 of its 81 titles, 7 of them wrongly,
 several of them the ambiguous titles above), so it rewards overriding the
 table more than everyday titles ("Dinner", "Gas", "Groceries") would. With
@@ -483,15 +490,93 @@ long idle following heavy use, 0.76 to 1.6 s after three idle minutes (four
 runs), 0.3 s with the model warm. Prewarmed 1.5 s before the request: 288 and
 301 ms; 4 s before: 306 and 711 ms (`npm run eval:categories --
 --first-request cold|prewarmed`). A cold first request can pass the old 2.5 s
-timeout here, and a phone is slower. Prewarming also changes some greedy
-answers: on a prewarmed session the model differs from a fresh one on 8 of 221
-titles (one fixed, three broken, "Hazy IPA" coffee → drinks); only the first
-title after the sheet opens gets the prewarmed session.
+timeout here, and a phone is slower. Those prewarms named no prompt prefix,
+which changed some answers (*Determinism*, below); the prewarm that ships
+names one and costs more on a warm model: 355 to 368 ms for the first request
+after it, against about 280 ms for a prewarm without a prefix and 257 ms for
+no prewarm once the process has asked once (its first request without a
+prewarm took 760 ms). Later requests are unchanged. After three idle minutes,
+the first request took 842 and 1,755 ms with no prewarm, 420 and 2,007 ms
+after a prewarm without a prefix, and 392 and 392 ms after the prefix prewarm
+(two runs each).
 
-A phone may run a smaller variant ("AFM 3 Core"); its accuracy and its
-guardrails are checked on the phone. This Mac refused none of the refusal set
-with either model, while a phone gave "Hazy IPA" no answer; the logs
-(above) say whether that was a refusal or a cold start past the timeout.
+The phone runs a smaller variant. On the owner's iPhone 18 Pro Max, build 120,
+the model is "AFM 3 Core" and "Hazy IPA" came back Coffee (an earlier build
+gave it no answer; the logs above say whether a refusal or a cold start past
+the timeout). No API makes the smaller variant on a Mac
+(`SystemLanguageModel.Variant` names `core3` and `coreAdvanced3`, but a model
+cannot be made from one), so every number here is the Mac's "AFM 3 Core
+Advanced", a proxy; Diagnostics' "Check the model" scores the phone's own.
+This Mac refused none of the refusal set with either model.
+
+*A prompt for the smaller model.* The build 120 prompt never said "beer":
+drinks was "bars, pubs, breweries, alcohol and liquor stores", so "hazy" and
+an acronym read as a coffee order, and this Mac's model answered "Hazy IPA"
+coffee on a fresh session. The prompt is now written for a small model: one
+short line per category with at most five concrete words, then one plain
+sentence for each pair the eval set shows confused (drinks and coffee,
+groceries and shopping, lodging and rental, transit, fuel and parking), and no
+examples to generalise from. A minimal and a richer variant, and the two
+between them, were tuned on the train split and the refusal set only (leaving
+out the four refusal titles held out in the eval set), then scored once on
+held-out, the model on every title (`npm run eval:categories -- --strategy
+all-general,p-build120,p-lines,p-minimal,p-minimal-b --added 30`, and
+`--refusals`, general model):
+
+| Prompt | Tokens (chars) | Train | Held-out (88) | Added (30) | Held-out (118) | With a trailing newline: train, held-out (118) | Refusal set right, of 35 | "Hazy IPA" | p50 / p95 |
+|---|---|---|---|---|---|---|---|---|---|
+| Build 120: lists of up to eight | 334 (1,301) | 118 | 68 | 19 | 87, 74% | 119, 88 | 30 | coffee | 248 / 260 ms |
+| Minimal: three words a line | 227 (751) | 112 | 64 | 15 | 79, 67% | 112, 80 | 29 | drinks | 212 / 215 ms |
+| Minimal and the four sentences | 286 (994) | 120 | 66 | 16 | 82, 69% | 121, 80 | 28 | drinks | 231 / 233 ms |
+| Five words a line | 278 (971) | 115 | 69 | 18 | 87, 74% | 114, 83 | 29 | drinks | 230 / 236 ms |
+| **Five words a line and the four sentences (shipped)** | **337 (1,214)** | **115** | **68** | **20** | **88, 75%** | **120, 87** | **30** | **drinks** | **251 / 270 ms** |
+
+The same prompt with a newline added at the end, which says nothing new, moved
+train by up to five titles and held-out by up to four: differences of a few
+titles are noise, so each prompt was scored both ways. The rule was the
+shortest variant within a point of the best held-out, and only the shipped one
+is on both strings (88 and 87, against the build 120 prompt's 87 and 88): the
+five-word lines alone average 85 of 118, the minimal ones 79.5 and 81 (on the
+compiled string alone the five-word lines would have been within a point).
+Three words a line lose eight held-out titles against the build 120 prompt on
+this model, and the four sentences add more on train than the longer lines do.
+The shipped prompt is as long as the one it replaces (337 tokens against 334),
+so latency stays near 250 ms.
+
+What moved: the beer titles among the added ones ("Double IPA", which the
+build 120 prompt also called coffee, "Grizzly Paw", "Oatmeal porter") are now
+drinks, but unknown names lean to drinks too ("Blenz", "Second Cup" and "tims"
+coffee → drinks, "Mary Brown's" food → drinks), and the coffee chains,
+hardware stores and ski hill the Mac's model does not know ("49th Parallel",
+"RONA", "Nakiska") stay wrong either way, for history to learn after one tap.
+On the shipped path (history, the table, then the model), against the build
+120 prompt: train 118 (123), held-out 84 (84), added 20 (19), undone 3 (1:
+"Tip for the ski guide"; now also "Dry cleaning" and "Stamps", right Other
+chips the model moved) (`--strategy shipped,shipped-build120`). The refusal
+set, the general model through the module: 30 of 35 right and two `other`
+(build 120: 31 and one, its "Hazy IPA" answered on the prewarmed session), no
+refusals.
+
+*Determinism.* Greedy decoding gives the same answer for the same prompt on a
+fresh session: two passes over 160 titles (train and the refusal set) agreed
+on all 160. A session prewarmed with `prewarm()` and no prompt prefix did not:
+with the build 120 prompt it answered 7 of those 160 differently from a fresh
+session ("Hazy IPA" coffee → drinks, "Highway toll", "Surly's" and four other
+refusal-set titles), every run, with or without a wait before the request;
+with the shipped prompt, 21 of all 278 titles (the eval set and the refusal
+set). Its transcript was the same (instructions, prompt, response format), and
+leaving the schema out of the prompt changed nothing, so the difference sits
+in the framework's cached prefix, not in what the session carries. Prewarming
+with a prompt prefix (the prompt's own "Expense title: ", or even an empty
+one), or prewarming one session and answering on another, changed 0 of 160,
+and the prefix 0 of 278 with the shipped prompt. `ExpenseClassifier.prewarm`
+now names `promptPrefix`, the start of every request, so the first title after
+the sheet opens gets the answer any later title gets: `all-general-prewarmed`
+(each of the 251 titles on its own prewarmed session) scores exactly as
+`all-general`, and `--first-request cold` and `prewarmed` both answer "Hazy
+IPA" drinks (three runs each; build 120 answered coffee cold and drinks
+prewarmed). The cost is the first request after the prewarm (*Latency*,
+above).
 
 **Chip state machine.** The category chip holds `{ category, source }` with
 `source ∈ keyword | model | user`, and these rules prevent the model from
