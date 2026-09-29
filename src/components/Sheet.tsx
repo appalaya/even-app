@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Dimensions,
   Keyboard,
@@ -30,6 +30,7 @@ import { layout, radii, useTheme } from '@/theme';
 
 import { AppText } from './AppText';
 import { Icon } from './Icon';
+import { navTitlePlacement } from './sheetHeaderLogic';
 
 export interface SheetAction {
   label: string;
@@ -48,12 +49,9 @@ export interface SheetHeaderProps {
   title?: ReactNode;
   /**
    * A 17/22 semibold title centred in the action row ("New expense", "Split", "Record a payment", "Join with
-   * code", "New group").
+   * code", "New group"). At the largest text sizes it gives way to the actions (`NavTitle`).
    */
   navTitle?: string;
-  /** How far the centred title stays from each edge, as drawn: 110 (default), 100 for longer titles, 150 for
-   * "Split" between a back button and "Done". */
-  navTitleInset?: number;
   /** The round close button alone at the trailing edge (Join). */
   onClose?: () => void;
 }
@@ -186,9 +184,22 @@ export function SheetHeader({
   rightAction,
   title,
   navTitle,
-  navTitleInset = 110,
   onClose,
 }: SheetHeaderProps) {
+  // Where the actions are, measured, so the centred title keeps clear of them (`NavTitle`).
+  const [edges, setEdges] = useState<NavEdges>({ width: 0, leftEnd: 0, rightStart: null });
+  const onRowLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width } = e.nativeEvent.layout;
+    setEdges((prev) => (prev.width === width ? prev : { ...prev, width }));
+  }, []);
+  const onLeftLayout = useCallback((e: LayoutChangeEvent) => {
+    const { x, width } = e.nativeEvent.layout;
+    setEdges((prev) => (prev.leftEnd === x + width ? prev : { ...prev, leftEnd: x + width }));
+  }, []);
+  const onRightLayout = useCallback((e: LayoutChangeEvent) => {
+    const { x } = e.nativeEvent.layout;
+    setEdges((prev) => (prev.rightStart === x ? prev : { ...prev, rightStart: x }));
+  }, []);
   if (title !== undefined) {
     return (
       <View style={styles.titleRow}>
@@ -207,18 +218,29 @@ export function SheetHeader({
   }
   if (leftAction !== undefined || rightAction !== undefined || navTitle !== undefined) {
     const back = leftAction?.back === true;
+    const inset = back ? ROW_INSET_BACK : ROW_INSET_TEXT;
     return (
-      <View style={[styles.actionRow, back ? styles.actionRowBack : styles.actionRowText]}>
-        {leftAction !== undefined && <HeaderAction action={leftAction} side="left" />}
+      <View
+        onLayout={onRowLayout}
+        style={[styles.actionRow, back ? styles.actionRowBack : styles.actionRowText]}
+      >
+        {leftAction !== undefined && (
+          <HeaderAction action={leftAction} side="left" onLayout={onLeftLayout} />
+        )}
         {navTitle !== undefined && (
-          <View pointerEvents="none" style={[styles.navTitle, { marginHorizontal: navTitleInset }]}>
-            <AppText weight="semibold" numberOfLines={1} accessibilityRole="header">
-              {navTitle}
-            </AppText>
-          </View>
+          <NavTitle
+            title={navTitle}
+            rowWidth={edges.width}
+            clearLeft={leftAction === undefined ? inset.left : edges.leftEnd + NAV_TITLE_GAP}
+            clearRight={
+              rightAction === undefined || edges.rightStart === null
+                ? inset.right
+                : edges.width - edges.rightStart + NAV_TITLE_GAP
+            }
+          />
         )}
         {rightAction !== undefined && (
-          <HeaderAction action={rightAction} side="right" padded={back} />
+          <HeaderAction action={rightAction} side="right" padded={back} onLayout={onRightLayout} />
         )}
       </View>
     );
@@ -234,17 +256,88 @@ export function SheetHeader({
 }
 
 /**
+ * Where the action row's pieces are, from its layout: its width, where the leading action ends, and where the
+ * trailing one starts (null until measured).
+ */
+interface NavEdges {
+  width: number;
+  leftEnd: number;
+  rightStart: number | null;
+}
+
+/** The least space between the centred title and an action. */
+const NAV_TITLE_GAP = 8;
+/** The action row's horizontal padding: 16 each side in a text row, 4 and 8 in a back-button row (Split). */
+const ROW_INSET_TEXT = { left: 16, right: 16 } as const;
+const ROW_INSET_BACK = { left: 4, right: 8 } as const;
+
+/**
+ * The centred title, laid over the whole action row. At the default sizes every title fits between the actions and
+ * sits in the middle of the sheet, where the boards draw it. At the largest text sizes the actions keep their full
+ * width and the title gives way (`navTitlePlacement`): it moves off centre only as far as it must, into the room the
+ * actions leave, and ends in an ellipsis when even that is too narrow. Its uncut width is read from a hidden copy.
+ */
+function NavTitle({
+  title,
+  rowWidth,
+  clearLeft,
+  clearRight,
+}: {
+  title: string;
+  rowWidth: number;
+  clearLeft: number;
+  clearRight: number;
+}) {
+  const [titleWidth, setTitleWidth] = useState<number | null>(null);
+  const onMeasure = useCallback((e: LayoutChangeEvent) => {
+    setTitleWidth(e.nativeEvent.layout.width);
+  }, []);
+  const placement = navTitlePlacement(rowWidth, titleWidth, clearLeft, clearRight);
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        styles.navTitle,
+        placement !== 'center' && {
+          paddingLeft: clearLeft,
+          paddingRight: clearRight,
+          alignItems: placement === 'fill' ? 'center' : placement,
+        },
+      ]}
+    >
+      <AppText weight="semibold" numberOfLines={1} accessibilityRole="header">
+        {title}
+      </AppText>
+      <AppText
+        weight="semibold"
+        numberOfLines={1}
+        onLayout={onMeasure}
+        style={styles.navTitleMeasure}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {title}
+      </AppText>
+    </View>
+  );
+}
+
+/**
  * `padded`: the trailing action in Split's back-button row pads 12 at each side (20 from the edge, as drawn);
- * in a text row (Rename group, Date) it sits on the row's 16 pt inset.
+ * in a text row (Rename group, Date) it sits on the row's 16 pt inset. An action never shrinks or truncates: the
+ * title gives way instead.
  */
 function HeaderAction({
   action,
   side,
   padded = false,
+  onLayout,
 }: {
   action: SheetAction;
   side: 'left' | 'right';
   padded?: boolean;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }) {
   const { tokens } = useTheme();
   const disabled = action.disabled === true;
@@ -256,6 +349,7 @@ function HeaderAction({
       accessibilityLabel={action.back === true ? `Back to ${action.label}` : action.label}
       accessibilityState={{ disabled }}
       hitSlop={side === 'right' && !padded ? { left: 12, right: 12 } : undefined}
+      onLayout={onLayout}
       style={({ pressed }) => [
         styles.headerAction,
         side === 'right' && styles.headerActionRight,
@@ -443,11 +537,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  navTitleMeasure: { position: 'absolute', left: 0, top: 0, opacity: 0 },
   actionRowBack: { paddingLeft: 4, paddingRight: 8 },
   headerAction: {
     minHeight: layout.tapTarget,
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 0,
   },
   headerActionBack: { gap: 2, paddingRight: 8 },
   headerActionRight: { marginLeft: 'auto' },

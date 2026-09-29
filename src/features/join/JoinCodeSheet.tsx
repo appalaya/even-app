@@ -77,7 +77,6 @@ export function JoinCodeSheet({
       top={insets.top + 88}
       leftAction={{ label: 'Cancel', onPress: onCancel }}
       navTitle="Join with code"
-      navTitleInset={100}
       accessibilityLabel="Join with code"
     >
       <AppText variant="subheadLoose" color="textSecondary" style={styles.intro}>

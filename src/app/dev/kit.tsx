@@ -1285,7 +1285,6 @@ function SheetSection({ startOpen }: { startOpen: boolean }) {
           bottom="keypad"
           leftAction={{ label: 'New expense', back: true, onPress: () => {} }}
           navTitle="Split"
-          navTitleInset={150}
           rightAction={{ label: 'Done', disabled: true, onPress: () => {} }}
         >
           <AppText variant="subhead" color="textSecondary" align="center" tabular>
@@ -1298,7 +1297,6 @@ function SheetSection({ startOpen }: { startOpen: boolean }) {
           accessibilityLabel="Join with code"
           leftAction={{ label: 'Cancel', onPress: () => {} }}
           navTitle="Join with code"
-          navTitleInset={100}
         >
           <View style={styles.sheetBody}>
             <AppText variant="subheadLoose" color="textSecondary">

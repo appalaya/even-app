@@ -66,7 +66,6 @@ export function SettleSheet({ groupId, params, onClosed, dev }: SettleSheetProps
       accessibilityLabel="Record a payment"
       leftAction={{ label: 'Cancel', onPress: close }}
       navTitle="Record a payment"
-      navTitleInset={100}
       bottom="keypad"
     >
       {state !== null && currency !== null ? (

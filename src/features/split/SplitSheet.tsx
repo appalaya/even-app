@@ -110,7 +110,6 @@ export function SplitSheet({ groupId, draftId }: { groupId: string; draftId: str
         onPress: back,
       }}
       navTitle="Split"
-      navTitleInset={150}
       rightAction={{ label: 'Done', disabled: !valid, onPress: done }}
       bottom="keypad"
     >
