@@ -394,10 +394,14 @@ export function GroupScreen({
           onLayout={onScrollLayout}
           onContentSizeChange={onContentSize}
           refreshControl={
+            // `tintColor` is iOS; Android draws its spinner on a disc, so the disc takes `surface` and the arc the
+            // same `textMuted` (a white disc with a black arc otherwise, in dark mode too).
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
               tintColor={tokens.textMuted}
+              colors={[tokens.textMuted]}
+              progressBackgroundColor={tokens.surface}
             />
           }
         >
