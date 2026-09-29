@@ -11,6 +11,21 @@ import { StateError } from './errors';
 export type Appearance = 'system' | 'light' | 'dark';
 export type NotificationStatus = 'granted' | 'denied' | 'undetermined' | 'unavailable';
 
+/**
+ * What expo-notifications answers, as the Notifications switch reads it. iOS reports a permission it never asked for
+ * as `undetermined`; Android 13 and later report it as `denied` with `canAskAgain`, and still do after one refusal,
+ * when the OS will show its prompt again. Either way the app may ask, so both read as undetermined; `denied` is only a
+ * refusal the OS will not ask about again (on iOS every refusal).
+ */
+export function notificationStatusOf(response: {
+  granted: boolean;
+  status: string;
+  canAskAgain: boolean;
+}): NotificationStatus {
+  if (response.granted) return 'granted';
+  return response.status === 'denied' && !response.canAskAgain ? 'denied' : 'undetermined';
+}
+
 /** The OS notification permission. The app binds expo-notifications; tests pass a fake. */
 export interface NotificationPermission {
   status(): Promise<NotificationStatus>;

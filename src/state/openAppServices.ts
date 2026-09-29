@@ -12,24 +12,19 @@ import { openStore } from '../services/storage/openStore';
 import { HttpTransport } from '../services/sync/httpTransport';
 import { createInfoCache } from '../services/sync/info';
 import { setCategoryHistory, setOnDeviceModel } from './categories';
-import type { NotificationPermission, NotificationStatus } from './prefs';
+import { notificationStatusOf, type NotificationPermission } from './prefs';
 import { createAppServices, type AppServices } from './services';
 
 // The on-device model behind the category chip (design.md "Model refinement"); null in a build without the native
 // module, and then the chip keeps its keyword guess. Nothing is asked of it until a title pauses.
 setOnDeviceModel(EvenClassifier);
 
-function toStatus(response: { granted: boolean; status: string }): NotificationStatus {
-  if (response.granted) return 'granted';
-  return response.status === 'denied' ? 'denied' : 'undetermined';
-}
-
 const notifications: NotificationPermission = {
   async status() {
-    return toStatus(await Notifications.getPermissionsAsync());
+    return notificationStatusOf(await Notifications.getPermissionsAsync());
   },
   async request() {
-    return toStatus(await Notifications.requestPermissionsAsync());
+    return notificationStatusOf(await Notifications.requestPermissionsAsync());
   },
 };
 

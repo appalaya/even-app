@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { openTestStore, STORE_KINDS, type TestStore } from '../services/testing/testStore';
 import { isStateError } from './errors';
-import { PrefsService, type NotificationStatus } from './prefs';
+import { notificationStatusOf, PrefsService, type NotificationStatus } from './prefs';
 
 const opened: TestStore[] = [];
 afterEach(async () => {
@@ -95,5 +95,27 @@ describe.each(STORE_KINDS)('prefs on the %s store', (kind) => {
     expect(await store.getPref('notifications.asked')).toBe('1');
     expect(await prefs.claimNotificationAsk()).toBe(false);
     expect(await new PrefsService(store).claimNotificationAsk()).toBe(false);
+  });
+});
+
+describe('notificationStatusOf', () => {
+  it('reads a permission the OS can still ask for as undetermined, on either platform', () => {
+    // iOS, never asked.
+    expect(
+      notificationStatusOf({ granted: false, status: 'undetermined', canAskAgain: true }),
+    ).toBe('undetermined');
+    // Android 13+, never asked or refused once: denied, but the prompt can still show.
+    expect(notificationStatusOf({ granted: false, status: 'denied', canAskAgain: true })).toBe(
+      'undetermined',
+    );
+  });
+
+  it('reads a refusal the OS will not ask about again as denied, and a grant as granted', () => {
+    expect(notificationStatusOf({ granted: false, status: 'denied', canAskAgain: false })).toBe(
+      'denied',
+    );
+    expect(notificationStatusOf({ granted: true, status: 'granted', canAskAgain: true })).toBe(
+      'granted',
+    );
   });
 });

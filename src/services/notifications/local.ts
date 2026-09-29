@@ -15,7 +15,7 @@ import * as Notifications from 'expo-notifications';
 
 import { openAppServices } from '../../state/openAppServices';
 import type { AppServices } from '../../state/services';
-import type { NotificationStatus } from '../../state/prefs';
+import { notificationStatusOf, type NotificationStatus } from '../../state/prefs';
 import type { SyncResult } from '../sync/types';
 import { planActivityNotifications } from './activity';
 import {
@@ -104,8 +104,8 @@ export async function ensureNotificationPermission(
   } catch {
     return 'unavailable';
   }
-  if (current.granted) return 'granted';
-  if (current.status === 'denied' || !current.canAskAgain) return 'denied';
+  const status = notificationStatusOf(current);
+  if (status !== 'undetermined') return status;
   return (services ?? (await openAppServices())).prefs.requestNotifications();
 }
 
