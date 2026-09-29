@@ -363,8 +363,11 @@ logging, and is still beta. Custom adapters are not an option:
 `SystemLanguageModel.Adapter` is obsoleted in the iOS 27 SDK (deprecated since
 26.4).
 
-*Reading the logs.* Nothing on screen says why a chip got no suggestion; the
-device log does, and never with the title. Connect the phone to a Mac, open
+*Reading the logs.* On the phone, Settings › About › Diagnostics shows the
+model's availability and the last 20 outcomes since launch (never a title),
+and can run the labelled titles on the phone's own model. For the detail of
+each request, the device log says why a chip got no suggestion, and never
+with the title. Connect the phone to a Mac, open
 Console.app, pick the phone, press Start, and search for `category model`
 (the simulator: `xcrun simctl spawn booted log stream --predicate
 'subsystem == "com.appalaya.even"'`). Two sources write, one line each:
@@ -1366,9 +1369,55 @@ Deviating from the canvas in implementation is a no-go.
   switch, tied to the OS permission, with no sentence under it); Import group
   file ("Opens a group from a .even file."); Help ("Help and
   feedback" opens `/contact` in the in-app browser, captioned "Opens our
-  contact page. Nothing about your groups is sent."); About (Privacy, Terms,
-  Source code opening the public repository, Version). No background-sync
-  switch exists anywhere.
+  contact page. Nothing about your groups is sent."); and last, in a card of
+  its own 20 below that caption, one "About ›" row that pushes About. No
+  background-sync switch exists anywhere.
+- **About** (AppAbout, AppAboutDark; pushed from App settings): "‹ Settings"
+  with "About" centred; 28 below, the mark at 64 pt in the accent, "Even"
+  28/34 bold, and the version and build ("1.0 (120)", a zero patch dropped);
+  one card of Privacy, Terms and Source code (the public repository), each in
+  the in-app browser; then a card with "Diagnostics ›", captioned "What the
+  app knows about its model and sync. Nothing here leaves your phone." A
+  settings sub-page: the links and the version had outgrown App settings, and
+  Diagnostics needed a place out of everyday reach.
+- **Diagnostics** (AppDiagnostics, AppDiagnosticsDark, DiagnosticsStates;
+  pushed from About): read-only except one button, and everything on it is
+  already on the phone. Why it exists: a tester can say what the category
+  model and sync are doing without a Mac, a cable or Console.app, and it sits
+  two levels down, so the everyday screens pay nothing for it.
+  *Category model*: Status, asked afresh when the page opens ("Available",
+  "Unavailable: Apple Intelligence is off", "Unavailable: the model isn't
+  ready yet", and "Unavailable: this device can't run it" for every other
+  reason), Model ("System language model" while it can answer, else "—"),
+  and "Since Even opened": the last 20 replies to the chip (`refineCategory`),
+  newest first, as Outcome (Answered, No answer, Timed out, Refused, Error),
+  Category ("🍻 Drinks", or "—"), Time ("0.4 s") and Model (`general`,
+  `tagging`). They are kept in memory only, never a title, and are gone at the
+  next launch; a call that never reached the model (blank title, no model)
+  adds nothing. Empty: "Nothing yet. The model runs when a title doesn't match
+  a keyword." Caption: "Only outcomes are kept, never titles."
+  *Check on this phone*: "Check the model" runs every labelled title of
+  `categories.eval.json` (all splits, bundled) through the on-device model
+  one at a time, straight to the native module, so none of it reaches the
+  outcomes above, the chip's log lines or history. While it runs, "Checking…
+  37 of 221" over a progress bar and the button off; done, "178 of 221
+  right, 81%", "Median 0.4 s per title", and each category's right of total
+  with a bar as on Balances, the button on again (a second run starts over).
+  Leaving the page stops the run. The button is off while the model is
+  unavailable (not drawn; the Status row above says why). Caption: "Runs the
+  app's built-in test titles on this phone's model. About a minute. Nothing
+  leaves the phone."
+  *Sync*: one row per group on Groups (archived included): the name, "3
+  unsent", "Last synced 2 min ago" (or "1 hr ago", "3 days ago", "just
+  now"; "Never synced"), and after a failed cycle the error under a warning
+  glyph in the words Group's status line uses ("Can't reach this group's
+  server.", "Not synced since 2:10 PM"). The section is left out with no
+  groups (not drawn).
+  *This build*: Version ("1.0 (120)"), iOS (the system version), Device
+  (React Native knows only "iPhone" or "iPad" on iOS; the model name needs
+  `expo-device`), Apple Intelligence (On while the model is available or
+  getting ready, else Off), and the device id cut to its first and last four
+  characters in mono ("d91f…Kq2e").
 - **Group settings**: the group's name first (a row opening Rename group),
   invite (always visible, with the one-sentence warning, Share link, Copy code
   and the round Show QR code button, disabled with "Preparing your invite…"
