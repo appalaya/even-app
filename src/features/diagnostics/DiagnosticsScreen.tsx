@@ -9,7 +9,9 @@
  *   (`useModelCheck`): "Checking… 37 of 221" over a progress bar with the button off, then the score, the median
  *   time, and each category's right of total with a bar as on Balances. Off while the model is unavailable.
  * - Sync: per group, its name and unsent count, when it last synced, and the last error in Group's status line words.
- * - This build: version and build, the system version, the device, Apple Intelligence, and the device id shortened.
+ * - This build: version and build, the system version, the device, and Apple Intelligence. No device id: the page is
+ *   meant to be screenshotted, and the id is the one value on it that is stable across groups and reinstalls, while
+ *   nothing a tester or support has can be matched against it (the server never sees it).
  *
  * Spacing as drawn: the first section header 16 above, the rest 24, 6 below; info rows 48 min, padded 6 16, the
  * label `textSecondary`; separators 1 pt inset 16; every card inset 16, radius 16; captions 6 under their card.
@@ -31,7 +33,7 @@ import {
 import { useNow } from '@/features/group/hooks';
 import { hrefs } from '@/features/groups/routes';
 import { APP_VERSION } from '@/features/settings/appVersion';
-import { useApp, useCategoryModelLog, useGroups, type GroupListRow } from '@/state';
+import { useCategoryModelLog, useGroups, type GroupListRow } from '@/state';
 import { installedOnDeviceModel, type ModelOutcomeEntry } from '@/state/categories';
 import { layout, useTheme } from '@/theme';
 
@@ -50,7 +52,6 @@ import {
   outcomeLabel,
   percentOf,
   seconds,
-  shortDeviceId,
   syncErrorLine,
   systemRow,
   unsentLabel,
@@ -66,7 +67,6 @@ const PLATFORM: PlatformFacts = {
 };
 
 export function DiagnosticsScreen() {
-  const { deviceId } = useApp();
   const availability = useModelAvailability();
   const known = availability !== undefined;
   const outcomes = useCategoryModelLog();
@@ -158,44 +158,19 @@ export function DiagnosticsScreen() {
             value={known ? appleIntelligence(availability) : ''}
           />
         )}
-        <InfoRow
-          label="Device id"
-          value={shortDeviceId(deviceId)}
-          mono
-          accessibilityValue="Shortened device id"
-        />
       </Card>
     </Screen>
   );
 }
 
 /** A label in `textSecondary` and its value at the trailing edge (Status, Model, This build). */
-function InfoRow({
-  label,
-  value,
-  mono = false,
-  accessibilityValue,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  accessibilityValue?: string;
-}) {
+function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <View
-      style={styles.infoRow}
-      accessible
-      accessibilityLabel={`${label}, ${accessibilityValue === undefined ? value : `${accessibilityValue} ${value}`}`}
-    >
+    <View style={styles.infoRow} accessible accessibilityLabel={`${label}, ${value}`}>
       <AppText variant="callout" color="textSecondary" style={styles.infoLabel}>
         {label}
       </AppText>
-      <AppText
-        variant={mono ? 'monoValue' : 'callout'}
-        tabular
-        align="right"
-        style={styles.infoValue}
-      >
+      <AppText variant="callout" tabular align="right" style={styles.infoValue}>
         {value}
       </AppText>
     </View>

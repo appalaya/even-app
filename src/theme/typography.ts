@@ -85,8 +85,6 @@ export const typography = {
   mono: { fontSize: 14, lineHeight: 20, fontWeight: '400', fontFamily: monoFamily },
   /** 15/22 mono: the pasted code on Join with code. */
   monoLoose: { fontSize: 15, lineHeight: 22, fontWeight: '400', fontFamily: monoFamily },
-  /** 15/21 mono: the shortened device id on Diagnostics. */
-  monoValue: { fontSize: 15, lineHeight: 21, fontWeight: '400', fontFamily: monoFamily },
 } as const satisfies Record<string, TextStyle>;
 
 export type TypographyVariant = keyof typeof typography;

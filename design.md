@@ -1403,7 +1403,8 @@ Deviating from the canvas in implementation is a no-go.
   *Check on this phone*: "Check the model" runs every labelled title of
   `categories.eval.json` (all splits, bundled) through the on-device model
   one at a time, straight to the native module, so none of it reaches the
-  outcomes above, the chip's log lines or history. While it runs, "Checking…
+  outcomes above, the JavaScript log lines or history (the native `classify`
+  line is still written for each title, without it). While it runs, "Checking…
   37 of 221" over a progress bar and the button off; done, "178 of 221
   right, 81%", "Median 0.4 s per title", and each category's right of total
   with a bar as on Balances, the button on again (a second run starts over).
@@ -1419,9 +1420,13 @@ Deviating from the canvas in implementation is a no-go.
   groups (not drawn).
   *This build*: Version ("1.0 (120)"), iOS (the system version), Device
   (React Native knows only "iPhone" or "iPad" on iOS; the model name needs
-  `expo-device`), Apple Intelligence (On while the model is available or
-  getting ready, else Off), and the device id cut to its first and last four
-  characters in mono ("d91f…Kq2e").
+  `expo-device`), and Apple Intelligence (On while the model is available or
+  getting ready, else Off). No device id, not even shortened (the
+  AppDiagnostics boards still draw "d91f…Kq2e" and are to lose it): the page
+  is made to be screenshotted and sent, the id is the one value on it that is
+  the same in every group and survives a reinstall, and nothing a tester or
+  support holds can be matched against it (the server never sees it; group
+  members already see its short form in Activity).
 - **Group settings**: the group's name first (a row opening Rename group),
   invite (always visible, with the one-sentence warning, Share link, Copy code
   and the round Show QR code button, disabled with "Preparing your invite…"

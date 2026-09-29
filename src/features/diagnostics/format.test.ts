@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -15,7 +17,6 @@ import {
   outcomeLabel,
   percentOf,
   seconds,
-  shortDeviceId,
   syncErrorLine,
   systemRow,
   unsentLabel,
@@ -130,13 +131,6 @@ describe('diagnostics words', () => {
     );
   });
 
-  it('shortens the device id to its first and last four characters', () => {
-    expect(shortDeviceId('d91fAbCdEfGhIjKlMnKq2e')).toBe('d91f…Kq2e');
-    expect(shortDeviceId('abc')).toBe('abc');
-    expect(shortDeviceId('abcdefghi')).toBe('abcdefghi');
-    expect(shortDeviceId('abcdefghij')).toBe('abcd…ghij');
-  });
-
   it('words This build from what Platform reports', () => {
     const ios = { os: 'ios', version: '27.0', constants: { interfaceIdiom: 'phone' } };
     expect(systemRow(ios)).toEqual({ label: 'iOS', value: '27.0' });
@@ -147,5 +141,15 @@ describe('diagnostics words', () => {
     expect(deviceLabel(android)).toBe('Pixel 9');
     expect(systemRow({ ...android, constants: {} })).toEqual({ label: 'Android', value: '36' });
     expect(deviceLabel({ ...android, constants: {} })).toBe('Android');
+  });
+});
+
+describe('what Diagnostics shows (a page meant to be screenshotted)', () => {
+  it('reads no device id, server URL, secret, token or group id; the local id only as a key', () => {
+    const screen = readFileSync(new URL('./DiagnosticsScreen.tsx', import.meta.url), 'utf8');
+    expect(screen).not.toMatch(/deviceId|serverUrl|secret|authToken|groupId/i);
+    expect(screen.match(/localId/g)).toEqual(
+      screen.match(/key=\{row\.localId\}/g)?.map(() => 'localId'),
+    );
   });
 });

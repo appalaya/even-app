@@ -122,11 +122,6 @@ export function syncErrorLine(sync: StatusLineInput, now: number, locale?: strin
   return statusLineWords({ ...sync, syncing: false }, now, { locale }).label;
 }
 
-/** The device id, shortened to its first and last four characters: "d91f…Kq2e". */
-export function shortDeviceId(id: string): string {
-  return id.length <= 9 ? id : `${id.slice(0, 4)}…${id.slice(-4)}`;
-}
-
 /** What React Native's `Platform` says about the phone (the fields This build reads). */
 export interface PlatformFacts {
   os: string;
