@@ -8,12 +8,14 @@
  * - A user tap sets `source = user`, cancels any in-flight model request and drops any reply that arrives
  *   afterwards. Later title edits do not re-infer. `user` is sticky until the sheet is dismissed.
  * - While `source` is `keyword` or `model`, every keystroke runs the local guess (`guessCategory`: history first,
- *   then the keyword table). A guess that knows the title is applied immediately and `source` becomes `keyword`. A
- *   guess that knows nothing keeps the model's pick (`source` stays `model`, the sparkle stays) while the new title
- *   continues the title the model answered (`answeredTitle`; `continuesTitle`: one starts with the other after
- *   trimming and case folding, so the person is extending or backspacing it); otherwise it is applied (Other,
- *   `keyword`). So the chip does not bounce back to Other with the typing rhythm. After a 500 ms pause the
- *   controller issues a fresh model request if neither history nor the table knows the title (`shouldAskModel`).
+ *   then the keyword table). A guess that stands (history, or keywords of one category) is applied immediately and
+ *   `source` becomes `keyword`. A guess the model decides (`needsModel`: nothing known, or keywords of two
+ *   categories) keeps the model's pick (`source` stays `model`, the sparkle stays) while the new title continues the
+ *   title the model answered (`answeredTitle`; `continuesTitle`: one starts with the other after trimming and case
+ *   folding, so the person is extending or backspacing it); otherwise it is applied (`keyword`). So the chip does not
+ *   bounce back to the local guess with the typing rhythm. After a 500 ms pause the controller issues a fresh model
+ *   request if the local guess does not stand (`shouldAskModel`). The model's `other` never reaches the chip
+ *   (`refineCategory` returns null for it), so the sparkle never sits on Other.
  * - Each model request carries the exact title it was asked about. A reply is applied only if that title still
  *   matches the field and `source` is not `user`; otherwise it is discarded. A model result can be refined by a
  *   later model result (one that differs swaps the chip, one that agrees changes nothing the person sees), but
@@ -32,7 +34,7 @@
  */
 import type { Category } from '@even/core';
 
-import { continuesTitle, guessCategory, inferCategory } from '@/state/categories';
+import { continuesTitle, guessCategory, inferCategory, needsModel } from '@/state/categories';
 
 export type ChipSource = 'keyword' | 'model' | 'user';
 
@@ -89,12 +91,13 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
     case 'title': {
       if (state.source === 'user') return state;
       const guess = guessCategory(event.title);
-      // Neither history nor the table knows the title, and the person is extending or backspacing the title the model
-      // answered: the model's pick stands (the next pause asks about the new title) instead of bouncing to Other.
+      // The local guess does not stand (nothing known, or keywords of two categories), and the person is extending or
+      // backspacing the title the model answered: the model's pick stays (the next pause asks about the new title)
+      // instead of bouncing to the local guess.
       if (
         state.source === 'model' &&
         state.answeredTitle !== null &&
-        guess.from === 'none' &&
+        needsModel(guess) &&
         continuesTitle(state.answeredTitle, event.title)
       ) {
         return state;
@@ -148,14 +151,15 @@ export function chipReducer(state: ChipState, event: ChipEvent): ChipState {
 }
 
 /**
- * Whether a pause in typing on `title` should ask the model: only while neither history nor the keyword table knows
- * the title (`guessCategory(title).from === 'none'`, the chip showing Other), and never once Save or a tap has
- * settled the chip. A history hit is the person's own earlier choice, and a keyword hit stands because the model
- * overturns a right one about as often as it fixes a wrong one (design.md "Model refinement").
+ * Whether a pause in typing on `title` should ask the model: only while the local guess does not stand
+ * (`needsModel`: neither history nor the keyword table knows the title, the chip showing Other, or the table found
+ * keywords of two categories in it, as in "Hotel bar"), and never once Save or a tap has settled the chip. A history
+ * hit is the person's own earlier choice, and a keyword hit of one category stands because the model overturns a
+ * right one about as often as it fixes a wrong one (design.md "Model refinement").
  */
 export function shouldAskModel(state: ChipState, title: string): boolean {
   if (state.frozen || state.source === 'user' || title.trim() === '') return false;
-  return guessCategory(title).from === 'none';
+  return needsModel(guessCategory(title));
 }
 
 /** The pause after the last keystroke before the model is asked (design.md "Model refinement"). */

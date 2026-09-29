@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CATEGORIES, inferCategory as coreInfer, type Category, type GroupState } from '@even/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   carriesSparkle,
@@ -15,6 +15,8 @@ import {
   guessCategory,
   inferCategory,
   initialChip,
+  MODEL_LOG_PREFIX,
+  needsModel,
   prepareCategoryModel,
   refineCategory,
   setCategoryHistory,
@@ -24,9 +26,14 @@ import {
   type OnDeviceModel,
 } from './categories';
 
-/** A stub on-device model that records what it was asked. */
+/** The native reply for an answer: `said('drinks')`, or another outcome with no category. */
+function said(category: string | null, outcome = category === null ? 'error' : 'answered') {
+  return { category, outcome, ms: 250, model: 'general', detail: null };
+}
+
+/** A stub on-device model that records what it was asked; `answer` gives the raw native reply. */
 function stubModel(
-  answer: (title: string) => Promise<string | null>,
+  answer: (title: string) => Promise<unknown>,
   availability: OnDeviceModel['availability'] = async () => ({ status: 'available' }),
 ) {
   const asked: string[] = [];
@@ -281,11 +288,12 @@ describe('history first (the category saved with the same or a similar title ear
 
   it('recalls a saved title before the keyword table, and says where each guess came from', () => {
     setCategoryHistory(() => [groupWith(['Nourish Bistro', 'food'], ['Uber', 'food'])]);
-    expect(guessCategory('Nourish')).toEqual({ category: 'food', from: 'history' });
-    expect(guessCategory('uber')).toEqual({ category: 'food', from: 'history' }); // a saved choice beats the table
-    expect(guessCategory('Uber Eats')).toEqual({ category: 'food', from: 'table' });
-    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table' });
-    expect(guessCategory('Rundle')).toEqual({ category: 'other', from: 'none' });
+    expect(guessCategory('Nourish')).toEqual({ category: 'food', from: 'history', mixed: false });
+    // A saved choice beats the table.
+    expect(guessCategory('uber')).toEqual({ category: 'food', from: 'history', mixed: false });
+    expect(guessCategory('Uber Eats')).toEqual({ category: 'food', from: 'table', mixed: false });
+    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table', mixed: false });
+    expect(guessCategory('Rundle')).toEqual({ category: 'other', from: 'none', mixed: false });
     expect(inferCategory('Nourish Bistro')).toBe('food');
     expect(chipAfterTitle(initialChip(''), 'Nourish')).toEqual({
       category: 'food',
@@ -334,17 +342,18 @@ describe('history first (the category saved with the same or a similar title ear
   });
 
   it('falls back to the keyword table when there is no history or the source fails', () => {
-    expect(guessCategory('Nourish')).toEqual({ category: 'other', from: 'none' });
+    expect(guessCategory('Nourish')).toEqual({ category: 'other', from: 'none', mixed: false });
     setCategoryHistory(() => {
       throw new Error('not open yet');
     });
-    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table' });
+    expect(guessCategory('Gas')).toEqual({ category: 'fuel', from: 'table', mixed: false });
     setCategoryHistory(() => []);
     expect(inferCategory('Parkade')).toBe(coreInfer('Parkade'));
   });
 });
 
 describe('refineCategory (the on-device model)', () => {
+  const quiet = () => undefined;
   afterEach(() => setOnDeviceModel(null));
 
   it('has no answer while no model is installed', async () => {
@@ -352,15 +361,40 @@ describe('refineCategory (the on-device model)', () => {
   });
 
   it("returns the installed model's answer when it is one of the sixteen categories", async () => {
-    const stub = stubModel(async (title) => (title === "Surly's brewing" ? 'drinks' : 'lodging'));
-    setOnDeviceModel(stub.model);
+    const stub = stubModel(async (title) =>
+      said(title === "Surly's brewing" ? 'drinks' : 'lodging'),
+    );
+    setOnDeviceModel(stub.model, quiet);
     await expect(refineCategory("Surly's brewing")).resolves.toBe('drinks');
     await expect(refineCategory('Fairmont Banff Springs')).resolves.toBe('lodging');
     expect(stub.asked).toEqual(["Surly's brewing", 'Fairmont Banff Springs']);
   });
 
+  it("maps the model's other to null, so the chip keeps its local guess with no sparkle", async () => {
+    for (const reply of [said('other', 'other'), said('other'), said('other', 'answered')]) {
+      const { refine } = createCategoryRefiner(stubModel(async () => reply).model, quiet);
+      await expect(refine('Sur')).resolves.toBeNull();
+    }
+  });
+
+  it('maps a refusal, a timeout, an error or no model to null', async () => {
+    for (const outcome of ['refused', 'timeout', 'error', 'unavailable', 'blank']) {
+      const { refine } = createCategoryRefiner(
+        stubModel(async () => said(null, outcome)).model,
+        quiet,
+      );
+      await expect(refine('Hazy IPA')).resolves.toBeNull();
+    }
+    // A category next to an outcome that is not `answered` is not an answer either.
+    const { refine } = createCategoryRefiner(
+      stubModel(async () => ({ ...said('drinks'), outcome: 'refused' })).model,
+      quiet,
+    );
+    await expect(refine('Hazy IPA')).resolves.toBeNull();
+  });
+
   it('maps anything that is not a category id to null', async () => {
-    for (const answer of [
+    for (const category of [
       'Drinks',
       ' drinks',
       'brewing',
@@ -372,8 +406,20 @@ describe('refineCategory (the on-device model)', () => {
       { id: 'food' },
     ]) {
       const { refine } = createCategoryRefiner(
-        stubModel(async () => answer as string | null).model,
+        stubModel(async () => ({ ...said('drinks'), category })).model,
+        quiet,
       );
+      await expect(refine("Surly's brewing")).resolves.toBeNull();
+    }
+    // Malformed replies: a bare string (the old contract), nothing, a list, an unknown outcome.
+    for (const reply of [
+      'drinks',
+      null,
+      undefined,
+      ['drinks'],
+      { category: 'drinks', outcome: 'yes' },
+    ]) {
+      const { refine } = createCategoryRefiner(stubModel(async () => reply).model, quiet);
       await expect(refine("Surly's brewing")).resolves.toBeNull();
     }
   });
@@ -381,27 +427,29 @@ describe('refineCategory (the on-device model)', () => {
   it('treats a rejection or a throw as no answer', async () => {
     const { refine: rejects } = createCategoryRefiner(
       stubModel(() => Promise.reject(new Error('guardrail'))).model,
+      quiet,
     );
     await expect(rejects("Surly's brewing")).resolves.toBeNull();
     const { refine: throws } = createCategoryRefiner(
       stubModel(() => {
         throw new Error('native module gone');
       }).model,
+      quiet,
     );
     await expect(throws("Surly's brewing")).resolves.toBeNull();
   });
 
   it('does not ask about a blank title', async () => {
-    const stub = stubModel(async () => 'food');
-    const { refine } = createCategoryRefiner(stub.model);
+    const stub = stubModel(async () => said('food'));
+    const { refine } = createCategoryRefiner(stub.model, quiet);
     await expect(refine('   ')).resolves.toBeNull();
     expect(stub.asked).toEqual([]);
     expect(stub.availabilityCalls()).toBe(0);
   });
 
   it('asks for availability once per session and keeps the answer', async () => {
-    const stub = stubModel(async () => 'activities');
-    const { refine } = createCategoryRefiner(stub.model);
+    const stub = stubModel(async () => said('activities'));
+    const { refine } = createCategoryRefiner(stub.model, quiet);
     await Promise.all([
       refine('Sunshine'),
       refine('Sunshine Village'),
@@ -414,10 +462,10 @@ describe('refineCategory (the on-device model)', () => {
 
   it('never asks an unavailable model, for the rest of the session', async () => {
     const stub = stubModel(
-      async () => 'food',
+      async () => said('food'),
       async () => ({ status: 'unavailable', reason: 'appleIntelligenceNotEnabled' }),
     );
-    const { refine } = createCategoryRefiner(stub.model);
+    const { refine } = createCategoryRefiner(stub.model, quiet);
     await expect(refine('Nourish Bistro')).resolves.toBeNull();
     await expect(refine('Nourish Bistro dinner')).resolves.toBeNull();
     expect(stub.availabilityCalls()).toBe(1);
@@ -426,10 +474,10 @@ describe('refineCategory (the on-device model)', () => {
 
   it('treats a failed availability check as unavailable, without retrying', async () => {
     const stub = stubModel(
-      async () => 'food',
+      async () => said('food'),
       () => Promise.reject(new Error('no native module')),
     );
-    const { refine } = createCategoryRefiner(stub.model);
+    const { refine } = createCategoryRefiner(stub.model, quiet);
     await expect(refine('Nourish')).resolves.toBeNull();
     await expect(refine('Nourish Bistro')).resolves.toBeNull();
     expect(stub.availabilityCalls()).toBe(1);
@@ -438,24 +486,206 @@ describe('refineCategory (the on-device model)', () => {
 
   it('starts a fresh session when a model is installed again', async () => {
     const unavailable = stubModel(
-      async () => 'food',
+      async () => said('food'),
       async () => ({ status: 'unavailable', reason: 'modelNotReady' }),
     );
-    setOnDeviceModel(unavailable.model);
+    setOnDeviceModel(unavailable.model, quiet);
     await expect(refineCategory('Nourish')).resolves.toBeNull();
-    const ready = stubModel(async () => 'food');
-    setOnDeviceModel(ready.model);
+    const ready = stubModel(async () => said('food'));
+    setOnDeviceModel(ready.model, quiet);
     await expect(refineCategory('Nourish')).resolves.toBe('food');
   });
 });
 
+describe('the model diagnostics (design.md "Reading the logs")', () => {
+  /** A distinctive title, so a leak into any log line is unmistakable. */
+  const TITLE = 'Hazy IPA at Zorblax Taphouse';
+
+  function recorder() {
+    const lines: string[] = [];
+    return { lines, log: (line: string) => lines.push(line) };
+  }
+
+  it('logs availability once per session, with the reason when unavailable', async () => {
+    const available = recorder();
+    const { refine } = createCategoryRefiner(
+      stubModel(async () => said('drinks')).model,
+      available.log,
+    );
+    await refine(TITLE);
+    await refine(TITLE);
+    expect(available.lines.filter((l) => l.includes('availability'))).toEqual([
+      `${MODEL_LOG_PREFIX} availability available`,
+    ]);
+
+    const off = recorder();
+    const unavailable = createCategoryRefiner(
+      stubModel(
+        async () => said('drinks'),
+        async () => ({ status: 'unavailable', reason: 'appleIntelligenceNotEnabled' }),
+      ).model,
+      off.log,
+    );
+    await unavailable.refine(TITLE);
+    await unavailable.refine(TITLE);
+    expect(off.lines).toEqual([
+      `${MODEL_LOG_PREFIX} availability unavailable reason=appleIntelligenceNotEnabled`,
+    ]);
+
+    const failed = recorder();
+    await createCategoryRefiner(
+      stubModel(
+        async () => said('drinks'),
+        () => Promise.reject(new Error('gone')),
+      ).model,
+      failed.log,
+    ).refine(TITLE);
+    expect(failed.lines).toEqual([
+      `${MODEL_LOG_PREFIX} availability unavailable reason=checkFailed`,
+    ]);
+  });
+
+  it('logs each reply: outcome, category, milliseconds, model and the error kind', async () => {
+    const replies: unknown[] = [
+      said('drinks'),
+      said('other', 'other'),
+      {
+        category: null,
+        outcome: 'refused',
+        ms: 180,
+        model: 'contentTagging',
+        detail: 'guardrailViolation',
+      },
+      said(null, 'timeout'),
+      said('Drinks'),
+    ];
+    const { lines, log } = recorder();
+    const { refine } = createCategoryRefiner(stubModel(async () => replies.shift()).model, log);
+    for (let i = 0; i < 5; i += 1) await refine(TITLE);
+    const replyLines = lines.slice(1).map((l) => l.replace(/ms=\d+/, 'ms=N'));
+    expect(replyLines).toEqual([
+      `${MODEL_LOG_PREFIX} outcome=answered category=drinks ms=N model=general`,
+      `${MODEL_LOG_PREFIX} outcome=other category=- ms=N model=general`,
+      `${MODEL_LOG_PREFIX} outcome=refused category=- ms=N model=contentTagging detail=guardrailViolation`,
+      `${MODEL_LOG_PREFIX} outcome=timeout category=- ms=N model=general`,
+      `${MODEL_LOG_PREFIX} outcome=error category=- ms=N model=general detail=notACategory`,
+    ]);
+  });
+
+  it('never logs the title, even when the native side echoes it back', async () => {
+    const echoes: unknown[] = [
+      { category: TITLE, outcome: 'answered', ms: 1, model: TITLE, detail: TITLE },
+      {
+        category: null,
+        outcome: TITLE,
+        ms: TITLE,
+        model: 'general',
+        detail: `guardrail: ${TITLE}`,
+      },
+      TITLE,
+    ];
+    const { lines, log } = recorder();
+    const model = stubModel(async () => echoes.shift());
+    const { refine } = createCategoryRefiner(model.model, log);
+    for (let i = 0; i < 3; i += 1) await refine(TITLE);
+    await createCategoryRefiner(
+      stubModel(() => Promise.reject(new Error(TITLE))).model,
+      log,
+    ).refine(TITLE);
+    expect(lines.length).toBeGreaterThanOrEqual(5);
+    for (const line of lines) {
+      expect(line).not.toMatch(/Hazy|Zorblax|IPA|Taphouse/);
+      expect(line.startsWith(MODEL_LOG_PREFIX)).toBe(true);
+    }
+  });
+
+  it('a log that throws costs nothing: the answer still arrives', async () => {
+    const { refine } = createCategoryRefiner(stubModel(async () => said('drinks')).model, () => {
+      throw new Error('console gone');
+    });
+    await expect(refine(TITLE)).resolves.toBe('drinks');
+  });
+
+  it('logs to console.log by default', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      await createCategoryRefiner(stubModel(async () => said('drinks')).model).refine(TITLE);
+      expect(spy.mock.calls.map((call) => String(call[0]))).toEqual([
+        `${MODEL_LOG_PREFIX} availability available`,
+        expect.stringMatching(
+          /^\[even\] category model outcome=answered category=drinks ms=\d+ model=general$/,
+        ),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('the gate: which local guesses the model decides', () => {
+  it('a guess stands for a history hit or keywords of one category; the model decides nothing known or two categories', () => {
+    expect(guessCategory('Hotel bar')).toEqual({ category: 'lodging', from: 'table', mixed: true });
+    expect(guessCategory('Gas station snacks')).toMatchObject({ category: 'fuel', mixed: true });
+    expect(guessCategory('Tip for the ski guide')).toMatchObject({ category: 'fees', mixed: true });
+    // One category, however long the title: the table's hit stands (measured: asking undid right chips).
+    expect(guessCategory('Train and Co Drama Theater')).toMatchObject({
+      category: 'transit',
+      mixed: false,
+    });
+    expect(guessCategory('Banff Upper Hot Springs')).toMatchObject({ mixed: false });
+    // Keywords inside a longer one do not count ("bus" and "ticket" in "bus ticket").
+    expect(guessCategory('Bus ticket to Jasper')).toMatchObject({
+      category: 'transit',
+      mixed: false,
+    });
+    for (const [title, asks] of [
+      ['Hotel bar', true],
+      ['Rundle', true],
+      ['Fairmont Banff', false],
+      ['Train and Co Drama Theater', false],
+      ['Bus ticket to Jasper', false],
+    ] as const) {
+      expect([title, needsModel(guessCategory(title))]).toEqual([title, asks]);
+      expect([title, shouldRefine(initialChip(''), title)]).toEqual([title, asks]);
+    }
+    expect(shouldRefine(chipAfterTap(initialChip(''), 'drinks'), 'Hotel bar')).toBe(false);
+  });
+
+  it('a history hit stands even when the table would find two categories', () => {
+    setCategoryHistory(() => [groupWith(['Hotel bar', 'drinks'])]);
+    try {
+      expect(guessCategory('Hotel bar')).toEqual({
+        category: 'drinks',
+        from: 'history',
+        mixed: false,
+      });
+      expect(shouldRefine(initialChip(''), 'Hotel bar')).toBe(false);
+    } finally {
+      setCategoryHistory(null);
+    }
+  });
+
+  it("the model's pick holds while a two-category title goes on, and a title that stands replaces it", () => {
+    const model = chipAfterReply(chipAfterTitle(initialChip(''), 'Hotel bar'), 'Hotel bar', {
+      askedTitle: 'Hotel bar',
+      category: 'drinks',
+    });
+    expect(model).toEqual({ category: 'drinks', source: 'model', answeredTitle: 'Hotel bar' });
+    expect(chipAfterTitle(model, 'Hotel bar ')).toBe(model);
+    expect(chipAfterTitle(model, 'Hotel bar t')).toBe(model);
+    // Backspaced to "Hotel": the table's lodging stands, at once.
+    expect(chipAfterTitle(model, 'Hotel')).toEqual({ category: 'lodging', source: 'keyword' });
+  });
+});
+
 describe('prepareCategoryModel (Add expense opened)', () => {
+  const quiet = () => undefined;
   afterEach(() => setOnDeviceModel(null));
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   it('prewarms an available model, sharing the one availability check with refineCategory', async () => {
-    const stub = stubModel(async () => 'drinks');
-    setOnDeviceModel(stub.model);
+    const stub = stubModel(async () => said('drinks'));
+    setOnDeviceModel(stub.model, quiet);
     prepareCategoryModel();
     await settle();
     expect(stub.prewarms()).toBe(1);
@@ -465,10 +695,10 @@ describe('prepareCategoryModel (Add expense opened)', () => {
 
   it('does not prewarm an unavailable model, and nothing throws without a model or a prewarm', async () => {
     const stub = stubModel(
-      async () => 'food',
+      async () => said('food'),
       async () => ({ status: 'unavailable', reason: 'deviceNotEligible' }),
     );
-    setOnDeviceModel(stub.model);
+    setOnDeviceModel(stub.model, quiet);
     prepareCategoryModel();
     await settle();
     expect(stub.prewarms()).toBe(0);
@@ -476,12 +706,12 @@ describe('prepareCategoryModel (Add expense opened)', () => {
     setOnDeviceModel(null);
     expect(() => prepareCategoryModel()).not.toThrow();
 
-    const { prewarm: _, ...noPrewarm } = stubModel(async () => 'food').model;
-    setOnDeviceModel(noPrewarm);
+    const { prewarm: _, ...noPrewarm } = stubModel(async () => said('food')).model;
+    setOnDeviceModel(noPrewarm, quiet);
     expect(() => prepareCategoryModel()).not.toThrow();
 
-    const failing = stubModel(async () => 'food').model;
-    setOnDeviceModel({ ...failing, prewarm: () => Promise.reject(new Error('no model')) });
+    const failing = stubModel(async () => said('food')).model;
+    setOnDeviceModel({ ...failing, prewarm: () => Promise.reject(new Error('no model')) }, quiet);
     prepareCategoryModel();
     await settle();
     await expect(refineCategory('Nourish')).resolves.toBe('food');
@@ -501,13 +731,32 @@ describe('the native module (modules/even-classifier)', () => {
 
   it('only ever uses the on-device model: no Private Cloud Compute, no other model, no network', () => {
     const native = [...sources('ios', '.swift'), ...sources('android', '.kt')].join('\n');
-    expect(native).toContain('SystemLanguageModel.default');
+    // Sessions are made only from `systemModel`, which returns the on-device system model as is or made for content
+    // tagging, and nothing else.
+    const systemModel =
+      /static func systemModel\([^)]*\) -> SystemLanguageModel \{([\s\S]*?)\n {2}\}/.exec(native);
+    expect(systemModel).not.toBeNull();
+    const returned = [...(systemModel?.[1] ?? '').matchAll(/return ([^\n]+)/g)].map((m) => m[1]);
+    expect(returned).toEqual([
+      'SystemLanguageModel.default',
+      'SystemLanguageModel(useCase: .contentTagging)',
+    ]);
     for (const forbidden of [
       /PrivateCloudCompute/,
-      /LanguageModelSession\((?!model: SystemLanguageModel\.default,)/,
+      /LanguageModelSession\((?!model: systemModel\()/,
+      /SystemLanguageModel\((?!useCase: \.contentTagging\))/,
+      /: (any |some )?LanguageModel\b/,
       /URLSession|URLRequest|HttpURLConnection|OkHttp/,
     ]) {
       expect(native).not.toMatch(forbidden);
     }
+  });
+
+  it('never puts the title in a native log line', () => {
+    const swift = sources('ios', '.swift').join('\n');
+    const calls = [...swift.matchAll(/\blog\.\w+\(([\s\S]*?)\)\n/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThanOrEqual(4);
+    for (const call of calls) expect(call).not.toMatch(/title|trimmed|prompt|error\)/i);
+    expect(swift).not.toMatch(/\bprint\(|NSLog\(|os_log\(/);
   });
 });

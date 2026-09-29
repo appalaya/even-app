@@ -1,7 +1,7 @@
-// Experimental ways of asking the on-device model for a category, scored by scripts/eval-categories.swift against
-// the shipped one (ExpenseClassifier.classify). None of this ships: the app compiles only
-// modules/even-classifier/ios. Each asker answers one title in a fresh session, on the on-device system model only,
-// within the shipped timeout.
+// Ways of asking the on-device model for a category, scored by scripts/eval-categories.swift: the module's own
+// `ExpenseClassifier.classify` with each model arrangement (`arrangements`, `shipped` among them), and experimental
+// prompts and schemas. None of this ships: the app compiles only modules/even-classifier/ios. Each asker answers one
+// title in a fresh session, on the on-device system model only, within the shipped timeout.
 
 import Foundation
 
@@ -12,6 +12,10 @@ import FoundationModels
 /// One model reply as the harness records it.
 struct Answer: Sendable {
   var category: String?
+  /// What became of the request (`ExpenseClassifierOutcome`), for the askers that go through the module's `classify`.
+  var outcome: String? = nil
+  /// Each attempt as model:outcome:ms, for those askers.
+  var attempts: String? = nil
   /// "low", "medium" or "high" for the askers that report one; "3/3" style agreement for the vote.
   var confidence: String? = nil
   /// The merchant kind, for the two-step askers.
@@ -277,14 +281,47 @@ func prewarm(_ instructions: String) {
 
 #endif
 
-/// Every asker the harness knows. `shipped` is exactly what the app ships (ExpenseClassifier.classify); a hint is
-/// passed only if the shipped signature takes one.
+/// The module's own `classify` with a given model arrangement: the first model, then the second after a refusal or
+/// an error, within the shipped timeout.
+func classified(_ title: String, _ models: [ExpenseClassifierModel]) async -> Answer {
+  let result = await ExpenseClassifier.classify(title, models: models)
+  let attempts = result.attempts.map { "\($0.model.rawValue):\($0.outcome.rawValue):\($0.milliseconds)" }
+  return Answer(
+    category: result.category, outcome: result.outcome.rawValue, attempts: attempts.joined(separator: ","))
+}
+
+/// The model arrangements the module can ship, by asker name: which model first, and which retries a refusal or an
+/// error. `shipped` is `ExpenseClassifier.models`.
+let arrangements: [String: [ExpenseClassifierModel]] = [
+  "shipped": ExpenseClassifier.models,
+  "general": [.general],
+  "contentTagging": [.contentTagging],
+  "general+retry": [.general, .contentTagging],
+  "contentTagging+retry": [.contentTagging, .general],
+]
+
+/// The app's first request after Add expense opens: a session prewarmed `ExpenseClassifier.prewarm` style, then the
+/// title half a second later. The module's own path; used to check whether prewarming changes the answer.
+func classifiedPrewarmed(_ title: String, _ models: [ExpenseClassifierModel]) async -> Answer {
+  ExpenseClassifier.prewarm(models)
+  try? await Task.sleep(for: .milliseconds(500))
+  return await classified(title, models)
+}
+
+/// Every asker the harness knows. `shipped` is exactly what the app ships (ExpenseClassifier.classify with
+/// `ExpenseClassifier.models`), and the other arrangements are the same code with other models; a hint is passed only
+/// if the shipped signature takes one.
 func allAskers() -> [Asker] {
-  var askers: [Asker] = [
-    Asker(name: "shipped", summary: "the shipped classifier", usesHint: false) { title, _ in
-      Answer(category: await ExpenseClassifier.classify(title))
-    }
-  ]
+  var askers: [Asker] = arrangements.keys.sorted().map { name in
+    let models = arrangements[name] ?? []
+    return Asker(
+      name: name, summary: "the module's classify with " + models.map(\.rawValue).joined(separator: ", then "),
+      usesHint: false
+    ) { title, _ in await classified(title, models) }
+  }
+  askers.append(
+    Asker(name: "general-prewarmed", summary: "the module's classify, general, each title on a prewarmed session",
+          usesHint: false) { title, _ in await classifiedPrewarmed(title, [.general]) })
   #if canImport(FoundationModels)
   if #available(macOS 26.0, iOS 26.0, *) {
     let base = originalInstructions
@@ -314,6 +351,9 @@ func allAskers() -> [Asker] {
       Asker(name: "tuned", summary: "the shipped prompt (tuned on train), no hint", usesHint: false) { title, _ in
         await direct(ExpenseClassifier.instructions, "Expense title: \(title)")
       },
+      Asker(name: "tagging-tuned", summary: "the shipped prompt on the content-tagging use case", usesHint: false) {
+        title, _ in await direct(ExpenseClassifier.instructions, tagging: true, "Expense title: \(title)")
+      },
       Asker(name: "tuned+hint", summary: "the shipped prompt with the table's guess as a hint", usesHint: true) {
         title, hint in await direct(ExpenseClassifier.instructions, hintPrompt(title, hint))
       },
@@ -336,11 +376,16 @@ func allAskers() -> [Asker] {
 func prewarm(asker: String) {
   #if canImport(FoundationModels)
   if #available(macOS 26.0, iOS 26.0, *) {
+    if let models = arrangements[asker] {
+      ExpenseClassifier.prewarm(models)
+      return
+    }
     switch asker {
-    case "shipped": ExpenseClassifier.prewarm()
+    case "general-prewarmed": break  // each title prewarms its own session
     case "twostep": prewarm(kindInstructions); prewarm(originalInstructions)
     case let name where name.hasPrefix("fewshot"): prewarm(fewShotInstructions)
     case let name where name.hasPrefix("tuned"): prewarm(ExpenseClassifier.instructions)
+    case "tagging-tuned": session(ExpenseClassifier.instructions, tagging: true).prewarm()
     default: prewarm(originalInstructions)
     }
   }

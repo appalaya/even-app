@@ -1,7 +1,12 @@
 import { CATEGORIES, type Category, type GroupState } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { carriesSparkle, setCategoryHistory } from '@/state/categories';
+import {
+  carriesSparkle,
+  refineCategory,
+  setCategoryHistory,
+  setOnDeviceModel,
+} from '@/state/categories';
 
 import {
   ChipController,
@@ -328,6 +333,8 @@ describe('chipReducer', () => {
     expect(shouldAskModel(s, '  ')).toBe(false);
     expect(shouldAskModel(s, 'Rimrock')).toBe(true);
     expect(shouldAskModel(s, 'Fairmont')).toBe(false); // a keyword hit stands
+    expect(shouldAskModel(s, 'Hotel bar')).toBe(true); // unless it names two categories (hotel, bar)
+    expect(shouldAskModel(s, 'Train and Co Drama Theater')).toBe(false); // one category stands, however long
     expect(shouldAskModel(chipReducer(s, { type: 'tap', category: 'food' }), 'Rimrock')).toBe(
       false,
     );
@@ -499,7 +506,7 @@ describe('history first on the chip', () => {
 });
 
 describe('which titles reach the model', () => {
-  it('only titles neither history nor the keyword table knows: a keyword hit stands and is never swapped', async () => {
+  it('only titles neither history nor the keyword table knows: a keyword hit of one category stands and is never swapped', async () => {
     const { chip, clock, model } = controller();
     chip.setTitle('Banff parkade');
     clock.advance(MODEL_PAUSE_MS);
@@ -807,5 +814,117 @@ describe("the model's pick holds while the title goes on (the bounce seen on the
     expect(t.chip.getState()).toMatchObject({ category: 'coffee', source: 'user', tagged: false });
     await t.type(' co');
     expect(t.chip.getState()).toMatchObject({ category: 'coffee', source: 'user' });
+  });
+});
+
+describe('the gate on the chip: keywords of two categories go to the model', () => {
+  afterEach(() => setCategoryHistory(null));
+  const drinks = (title: string): Category | null =>
+    title.toLowerCase().startsWith('hotel bar') ? 'drinks' : null;
+
+  it('"Hotel bar" shows the table\'s Lodging as typed, then the model\'s Drinks with the sparkle', async () => {
+    const t = typist(drinks);
+    await t.type('Hotel bar');
+    expect(t.keys.at(-1)).toMatchObject({ category: 'lodging', source: 'keyword' });
+    await t.wait(PAUSE_MS);
+    expect(t.asked).toEqual(['Hotel bar']);
+    expect(t.chip.getState()).toMatchObject({
+      category: 'drinks',
+      source: 'model',
+      tagged: true,
+      swaps: 1,
+    });
+  });
+
+  it("the model's pick holds while the two-category title goes on, and the table's guess returns once it stands", async () => {
+    const t = typist(drinks);
+    await t.type('Hotel bar');
+    await t.wait(PAUSE_MS);
+    const shownBefore = t.shown.length;
+    await t.type(' tab');
+    // "Hotel bar t" … "Hotel bar tab" still name lodging and drinks: no bounce back to Lodging between keystrokes.
+    expect(t.shown.slice(shownBefore).every((s) => s.category === 'drinks')).toBe(true);
+    expect(t.keys.slice(-4).every((k) => k.category === 'drinks' && k.source === 'model')).toBe(
+      true,
+    );
+    await t.wait(PAUSE_MS);
+    expect(t.asked).toEqual(['Hotel bar', 'Hotel bar tab']);
+    expect(t.chip.getState()).toMatchObject({ category: 'drinks', source: 'model', swaps: 1 });
+    // Backspaced to "Hotel": one category, the table's guess stands at once.
+    await t.backspace(8);
+    expect(t.chip.getState()).toMatchObject({
+      category: 'lodging',
+      source: 'keyword',
+      tagged: false,
+    });
+  });
+
+  it('a keyword of one category stands in a long title and is never sent: "Train and Co Drama Theater"', async () => {
+    const t = typist(() => 'activities');
+    await t.type('Train and Co Drama Theater');
+    await t.wait(PAUSE_MS);
+    expect(t.asked).toEqual([]);
+    expect(t.chip.getState()).toMatchObject({ category: 'transit', source: 'keyword', swaps: 0 });
+  });
+});
+
+describe("the model's other is no answer (through refineCategory)", () => {
+  afterEach(() => setOnDeviceModel(null));
+  const settle = async () => {
+    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  function withModel(category: string) {
+    setOnDeviceModel(
+      {
+        availability: async () => ({ status: 'available' }),
+        classifyExpense: async () => ({
+          category,
+          outcome: category === 'other' ? 'other' : 'answered',
+          ms: 250,
+          model: 'general',
+        }),
+      },
+      () => undefined,
+    );
+    const clock = manualClock();
+    const chip = new ChipController('', initialChipState(''), {
+      refine: refineCategory,
+      schedule: clock.schedule,
+    });
+    return { chip, clock };
+  }
+
+  it('"Sur": the chip stays Other as the local guess, with no sparkle and no swap', async () => {
+    const { chip, clock } = withModel('other');
+    chip.setTitle('Sur');
+    clock.advance(MODEL_PAUSE_MS);
+    await settle();
+    expect(chip.getState()).toMatchObject({
+      category: 'other',
+      source: 'keyword',
+      tagged: false,
+      swaps: 0,
+    });
+  });
+
+  it("a two-category title keeps the table's guess when the model says other", async () => {
+    const { chip, clock } = withModel('other');
+    chip.setTitle('Hotel bar');
+    clock.advance(MODEL_PAUSE_MS);
+    await settle();
+    expect(chip.getState()).toMatchObject({
+      category: 'lodging',
+      source: 'keyword',
+      tagged: false,
+    });
+  });
+
+  it('any other answer still reaches the chip', async () => {
+    const { chip, clock } = withModel('drinks');
+    chip.setTitle('Sur');
+    clock.advance(MODEL_PAUSE_MS);
+    await settle();
+    expect(chip.getState()).toMatchObject({ category: 'drinks', source: 'model', tagged: true });
   });
 });

@@ -18,7 +18,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * - it runs only on AICore phones with Gemini Nano (Pixel 9 and later, recent Galaxy flagships) and a locked
  *   bootloader, and nothing here can test it.
  * When it lands: Generation.getClient(), checkStatus() == FeatureStatus.AVAILABLE for `available` (DOWNLOADABLE and
- * DOWNLOADING as reasons), generateContent with temperature 0 inside withTimeoutOrNull(2500), and never download().
+ * DOWNLOADING as reasons), generateContent with temperature 0 inside withTimeoutOrNull(6000), and never download().
  */
 class EvenClassifierModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -37,5 +37,7 @@ class EvenClassifierModule : Module() {
     }
   }
 
-  private fun noAnswer(@Suppress("UNUSED_PARAMETER") title: String): String? = null
+  /** The iOS reply's shape (EvenClassifier.types.ts, `ClassifierReply`): no model, so no category. */
+  private fun noAnswer(@Suppress("UNUSED_PARAMETER") title: String): Map<String, Any?> =
+    mapOf("category" to null, "outcome" to "unavailable", "ms" to 0, "model" to null, "detail" to "notBuilt")
 }

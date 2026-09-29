@@ -9,8 +9,12 @@
 //
 //   npm run eval:categories                          # the shipped strategy (default): history first, then
 //                                                    # the keyword table, then the model for titles neither knows
+//                                                    # or whose keywords name two categories (gate c)
 //   npm run eval:categories -- --strategy all        # every strategy
 //   npm run eval:categories -- --strategy b-fallback,c-hint --misses all
+//   npm run eval:categories -- --strategy gate-a,gate-b,gate-c,gate-d   # when the model is asked (design.md)
+//   npm run eval:categories -- --refusals            # the titles guardrails might refuse, per model arrangement
+//   npm run eval:categories -- --first-request cold  # one fresh process's first request (or `prewarmed`)
 //
 // which first runs scripts/eval-categories-keywords.mjs (the keyword table's guess for each title, from
 // packages/core) and then this script with `--cases <that file>`.
@@ -24,6 +28,13 @@
 //                         score only that split (tune prompts with `--split train`, so held-out stays unseen)
 //   --misses train|heldout|all|none
 //                         whose misses to list (default train: look at held-out misses only for the final report)
+//   --refusals            ask each model arrangement about packages/core/src/categories.refusals.json and count
+//                         what comes back: answered, other, refused (guardrail or refusal), error, timeout; with
+//                         `--arrangements a,b` for a subset (default: every arrangement)
+//   --first-request cold|prewarmed
+//                         time this process's first request (for `--title`, default "Hazy IPA"), either cold or after
+//                         `ExpenseClassifier.prewarm()` and `--wait-ms` (default 1500), as Add expense does; run it
+//                         in a loop for a distribution
 //
 // Titles stay on the Mac: every asker uses the on-device system model only.
 //
@@ -44,10 +55,26 @@ struct EvalCase: Decodable, Sendable {
   let keyword: String
   /// History first (`recallCategory`), as if every other title had been saved earlier with its label; nil: no match.
   let history: String?
+  /// How many words the table reads (`titleWords`), and the keywords it finds as [keyword, category], leaving out one
+  /// inside a longer match (`keywordMatches`).
+  var words: Int? = nil
+  var matches: [[String]]? = nil
+}
+
+/// A title from packages/core/src/categories.refusals.json.
+struct RefusalCase: Decodable, Sendable {
+  let title: String
+  /// The chip a person would expect; nil when no one category is.
+  let category: String?
+  let kind: String
+  let keyword: String
+  /// Also in the eval set, with this label.
+  let labelled: Bool
 }
 
 struct CasesFile: Decodable {
   let cases: [EvalCase]
+  var refusals: [RefusalCase]? = nil
 }
 
 /// How the keyword guess and a model answer combine into the chip after the pause.
@@ -60,6 +87,35 @@ enum Gate {
   case hint
   /// The model is always asked for an answer and a confidence; it replaces a keyword match only at high confidence.
   case confident
+  /// (b) As `fallback`, and also when the title has 3+ words and the table matched a single keyword in it.
+  case fallbackLong
+  /// (c) As `fallback`, and also when the table matched keywords of two different categories.
+  case fallbackConflict
+  /// (d) `fallbackLong` or `fallbackConflict`.
+  case fallbackEither
+  /// (b′) As `fallback`, and also when the title has 3+ words and the table matched a single one-word keyword.
+  case fallbackLongWord
+  /// (d′) `fallbackLongWord` or `fallbackConflict`.
+  case fallbackEitherWord
+}
+
+/// Whether `gate` asks the model about `c` (history aside): what `shouldAskModel` decides in the app for gate (a),
+/// and its variants.
+func asksModel(_ gate: Gate, _ c: EvalCase) -> Bool {
+  let none = c.keyword == "other"
+  let matches = c.matches ?? []
+  let long = (c.words ?? 0) >= 3 && matches.count == 1
+  let longWord = long && !(matches.first?.first ?? " ").contains(" ")
+  let conflict = Set(matches.map { $0.count > 1 ? $0[1] : "" }).count >= 2
+  switch gate {
+  case .always, .hint, .confident: return true
+  case .fallback: return none
+  case .fallbackLong: return none || long
+  case .fallbackConflict: return none || conflict
+  case .fallbackEither: return none || long || conflict
+  case .fallbackLongWord: return none || longWord
+  case .fallbackEitherWord: return none || longWord || conflict
+  }
 }
 
 struct Strategy {
@@ -69,12 +125,41 @@ struct Strategy {
   let gate: Gate
   /// History first: a recalled category is the chip at once, and the model is not asked.
   var history = false
+  /// The model's `other` is no answer and the local guess stands, as `refineCategory` does in the app.
+  var otherIsNoAnswer = false
 }
 
 let strategies: [Strategy] = [
   Strategy(name: "table", summary: "keyword table only", asker: nil, gate: .fallback),
-  Strategy(name: "shipped", summary: "what the app ships: history, then the table, then the model for the rest",
-           asker: "shipped", gate: .fallback, history: true),
+  Strategy(name: "shipped", summary: "what the app ships: history, then the table, then the model for the rest and "
+             + "for keywords of two categories (gate c); the model's other is no answer",
+           asker: "shipped", gate: .fallbackConflict, history: true, otherIsNoAnswer: true),
+  Strategy(name: "gate-a", summary: "gate (a): ask only when history and the table find nothing", asker: "shipped",
+           gate: .fallback, history: true, otherIsNoAnswer: true),
+  Strategy(name: "gate-b", summary: "gate (b): also when 3+ words and a single keyword", asker: "shipped",
+           gate: .fallbackLong, history: true, otherIsNoAnswer: true),
+  Strategy(name: "gate-c", summary: "gate (c): also when keywords of two categories match", asker: "shipped",
+           gate: .fallbackConflict, history: true, otherIsNoAnswer: true),
+  Strategy(name: "gate-d", summary: "gate (d): (b) or (c)", asker: "shipped", gate: .fallbackEither, history: true,
+           otherIsNoAnswer: true),
+  Strategy(name: "gate-b1", summary: "gate (b′): also when 3+ words and a single one-word keyword",
+           asker: "shipped", gate: .fallbackLongWord, history: true, otherIsNoAnswer: true),
+  Strategy(name: "gate-d1", summary: "gate (d′): (b′) or (c)", asker: "shipped", gate: .fallbackEitherWord,
+           history: true, otherIsNoAnswer: true),
+  Strategy(name: "arr-general", summary: "shipped path, the general model only", asker: "general",
+           gate: .fallback, history: true, otherIsNoAnswer: true),
+  Strategy(name: "arr-tagging", summary: "shipped path, the content-tagging model only", asker: "contentTagging",
+           gate: .fallback, history: true, otherIsNoAnswer: true),
+  Strategy(name: "arr-general+retry", summary: "shipped path, general, content tagging after a refusal or error",
+           asker: "general+retry", gate: .fallback, history: true, otherIsNoAnswer: true),
+  Strategy(name: "arr-tagging+retry", summary: "shipped path, content tagging, general after a refusal or error",
+           asker: "contentTagging+retry", gate: .fallback, history: true, otherIsNoAnswer: true),
+  Strategy(name: "all-general", summary: "the general model (module's classify) on every title", asker: "general",
+           gate: .always),
+  Strategy(name: "all-general-prewarmed", summary: "the general model on every title, each on a prewarmed session",
+           asker: "general-prewarmed", gate: .always),
+  Strategy(name: "all-tagging", summary: "the content-tagging model (module's classify) on every title",
+           asker: "contentTagging", gate: .always),
   Strategy(name: "a-model", summary: "(a) model always, original prompt", asker: "base", gate: .always),
   Strategy(name: "b-fallback", summary: "(b) model only when the table finds nothing", asker: "base", gate: .fallback),
   Strategy(name: "c-hint", summary: "(c) table's guess as a hint, model decides", asker: "base+hint", gate: .hint),
@@ -110,28 +195,43 @@ struct Record {
   let ms: Double
 }
 
-func parseArguments() -> (cases: String, strategies: [String], misses: String, split: String) {
+struct Options {
   var cases = "packages/core/src/categories.eval.json"
-  var names = ["shipped"]
+  var strategies = ["shipped"]
   var misses = "train"
   var split = "all"
+  var refusals = false
+  var arrangements: [String]? = nil
+  var firstRequest: String? = nil
+  var title = "Hazy IPA"
+  var waitMs = 1500
+}
+
+func parseArguments() -> Options {
+  var o = Options()
   var args = CommandLine.arguments.dropFirst().makeIterator()
   while let arg = args.next() {
     switch arg {
-    case "--cases": cases = args.next() ?? cases
-    case "--strategy", "--strategies": names = (args.next() ?? "shipped").split(separator: ",").map(String.init)
-    case "--misses": misses = args.next() ?? misses
-    case "--split": split = args.next() ?? split
+    case "--cases": o.cases = args.next() ?? o.cases
+    case "--strategy", "--strategies":
+      o.strategies = (args.next() ?? "shipped").split(separator: ",").map(String.init)
+    case "--misses": o.misses = args.next() ?? o.misses
+    case "--split": o.split = args.next() ?? o.split
+    case "--refusals": o.refusals = true
+    case "--arrangements": o.arrangements = (args.next() ?? "").split(separator: ",").map(String.init)
+    case "--first-request": o.firstRequest = args.next() ?? "cold"
+    case "--title": o.title = args.next() ?? o.title
+    case "--wait-ms": o.waitMs = Int(args.next() ?? "") ?? o.waitMs
     case "--list":
       for s in strategies { print("\(s.name.padding(toLength: 22, withPad: " ", startingAt: 0)) \(s.summary)") }
       exit(0)
     default:
-      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --split train|heldout|all --misses train|heldout|all|none --list")
+      print("Unknown argument \(arg). Flags: --cases <path> --strategy <names|all> --split train|heldout|all --misses train|heldout|all|none --refusals [--arrangements a,b] --first-request cold|prewarmed [--title t] [--wait-ms n] --list")
       exit(2)
     }
   }
-  if names == ["all"] { names = strategies.map(\.name) }
-  return (cases, names, misses, split)
+  if o.strategies == ["all"] { o.strategies = strategies.map(\.name) }
+  return o
 }
 
 func milliseconds(_ d: Duration) -> Double {
@@ -154,6 +254,10 @@ func pad(_ s: String, _ n: Int) -> String { s.padding(toLength: max(n, s.count),
 struct EvalCategories {
   static func main() async {
     let options = parseArguments()
+    if let mode = options.firstRequest {
+      await firstRequest(mode, title: options.title, waitMs: options.waitMs)
+      return
+    }
     var file: CasesFile
     do {
       file = try JSONDecoder().decode(CasesFile.self, from: Data(contentsOf: URL(fileURLWithPath: options.cases)))
@@ -177,7 +281,7 @@ struct EvalCategories {
     }
     if chosen.isEmpty { exit(2) }
 
-    let needsModel = chosen.contains { $0.asker != nil }
+    let needsModel = options.refusals || chosen.contains { $0.asker != nil }
     if needsModel {
       let availability = ExpenseClassifier.availability()
       guard availability == .available else {
@@ -185,11 +289,11 @@ struct EvalCategories {
         print("Turn on Apple Intelligence (System Settings) and wait for the model to download, or run the cases on a phone.")
         exit(3)
       }
-      #if canImport(FoundationModels)
-      if #available(macOS 27.0, iOS 27.0, *) {
-        print("Model: \(SystemLanguageModel.default.variant.displayName)")
-      }
-      #endif
+      printModels()
+    }
+    if options.refusals {
+      await scoreRefusals(file.refusals ?? [], arrangements: options.arrangements)
+      return
     }
     let train = file.cases.filter { $0.split == "train" }.count
     let heldout = file.cases.filter { $0.split == "heldout" }.count
@@ -204,7 +308,7 @@ struct EvalCategories {
       guard let name = strategy.asker, let asker = askers[name] else { continue }
       var pending: [(EvalCase, String?)] = []
       for c in file.cases {
-        if strategy.gate == .fallback && c.keyword != "other" { continue }
+        if !asksModel(strategy.gate, c) { continue }
         if strategy.history && c.history != nil { continue }
         let hint = asker.usesHint && c.keyword != "other" ? c.keyword : nil
         if records[name]?[key(c, hint)] == nil { pending.append((c, hint)) }
@@ -223,7 +327,8 @@ struct EvalCategories {
     struct Row {
       var right: [String: Int] = [:]
       var total: [String: Int] = [:]
-      var swaps = 0, undo = 0, fix = 0, calls = 0, noAnswer = 0
+      var swaps = 0, undo = 0, fix = 0, calls = 0, noAnswer = 0, agree = 0
+      var outcomes: [String: Int] = [:]
       var latencies: [Double] = []
       var misses: [(EvalCase, String, Answer?)] = []
       var undone: [(EvalCase, String)] = []
@@ -239,13 +344,16 @@ struct EvalCategories {
         let instant = recalled ?? c.keyword
         var final = instant
         var answer: Answer? = nil
-        if let name = strategy.asker, recalled == nil, !(strategy.gate == .fallback && matched) {
+        if let name = strategy.asker, recalled == nil, asksModel(strategy.gate, c) {
           let hint = (askers[name]?.usesHint ?? false) && matched ? c.keyword : nil
           let record = records[name]?[key(c, hint)]
           row.calls += 1
           if let ms = record?.ms { row.latencies.append(ms) }
           answer = record?.answer ?? nil
-          if let category = answer?.category {
+          if let outcome = answer?.outcome { row.outcomes[outcome, default: 0] += 1 }
+          // The model agreeing with a chip that is not Other makes it the model's pick: the sparkle, no swap.
+          if matched || recalled != nil, answer?.category == instant { row.agree += 1 }
+          if let category = answer?.category, !(strategy.otherIsNoAnswer && category == "other") {
             if strategy.gate == .confident && matched {
               if answer?.confidence == "high" { final = category }
             } else {
@@ -266,7 +374,7 @@ struct EvalCategories {
     }
 
     print("""
-      \(pad("strategy", 22)) \(pad("train", 12)) \(pad("held-out", 12)) \(pad("all", 12)) swaps  undo  fix  calls  p50 ms  p95 ms
+      \(pad("strategy", 22)) \(pad("train", 12)) \(pad("held-out", 12)) \(pad("all", 12)) swaps  undo  fix  agree  calls  p50 ms  p95 ms
       """)
     for (strategy, row) in rows {
       func cell(_ split: String?) -> String {
@@ -276,20 +384,26 @@ struct EvalCategories {
       }
       print(
         "\(pad(strategy.name, 22)) \(cell("train")) \(cell("heldout")) \(cell(nil)) \(pad(String(row.swaps), 6))"
-          + " \(pad(String(row.undo), 5)) \(pad(String(row.fix), 4)) \(pad(String(row.calls), 6))"
+          + " \(pad(String(row.undo), 5)) \(pad(String(row.fix), 4)) \(pad(String(row.agree), 6))"
+          + " \(pad(String(row.calls), 6))"
           + " \(pad(quantile(row.latencies, 0.5), 7)) \(quantile(row.latencies, 0.95))")
     }
     print("""
 
       swaps: chips that change after the pause (what showed as you typed → final); undo: swaps away from a right chip
-      (the cost you see); fix: swaps to the right answer. calls: model requests; latency is per request, prewarmed.
+      (the cost you see); fix: swaps to the right answer; agree: a keyword or history chip the model agreed with, which
+      gains the sparkle with no swap. calls: model requests; latency is per request, prewarmed.
       """)
 
     for (strategy, row) in rows {
       let shown = row.misses.filter { options.misses == "all" || $0.0.split == options.misses }
       if options.misses == "none" { break }
       print("\n\(strategy.name): \(strategy.summary)")
-      if row.noAnswer > 0 { print("  no answer (timeout, refusal or error): \(row.noAnswer)") }
+      if row.noAnswer > 0 {
+        let why = row.outcomes.filter { $0.key != "answered" }.sorted { $0.key < $1.key }
+          .map { "\($0.key) \($0.value)" }.joined(separator: ", ")
+        print("  no answer: \(row.noAnswer)" + (why.isEmpty ? " (other, timeout, refusal or error)" : " (\(why))"))
+      }
       var confusion: [String: Int] = [:]
       for (c, final, _) in shown { confusion["\(c.category) → \(final)", default: 0] += 1 }
       if !confusion.isEmpty {
@@ -312,5 +426,100 @@ struct EvalCategories {
         print("  undid a right keyword chip: " + undone.map { "\($0.0.title) → \($0.1)" }.joined(separator: "; "))
       }
     }
+  }
+}
+
+/// The model variants this Mac runs, and the arrangement the module ships.
+func printModels() {
+  #if canImport(FoundationModels)
+  if #available(macOS 27.0, iOS 27.0, *) {
+    let general = SystemLanguageModel.default.variant.displayName
+    let tagging = SystemLanguageModel(useCase: .contentTagging).variant.displayName
+    let shipped = ExpenseClassifier.models.map(\.rawValue).joined(separator: ", then ")
+    print("Model: \(general) (general), \(tagging) (content tagging); the module asks \(shipped)")
+  }
+  #endif
+}
+
+/// `--first-request`: this process's first request, cold or after the prewarm Add expense does when it opens.
+func firstRequest(_ mode: String, title: String, waitMs: Int) async {
+  if mode == "prewarmed" {
+    ExpenseClassifier.prewarm()
+    try? await Task.sleep(for: .milliseconds(waitMs))
+  }
+  let result = await ExpenseClassifier.classify(title)
+  let attempts = result.attempts.map { "\($0.model.rawValue):\($0.outcome.rawValue):\($0.milliseconds)" }
+  print(
+    "\(mode) ms=\(result.milliseconds) outcome=\(result.outcome.rawValue) category=\(result.category ?? "-")"
+      + " attempts=\(attempts.joined(separator: ","))")
+}
+
+/// `--refusals`: every title in the refusal set, asked of each model arrangement directly (no gate), counted by what
+/// came back, with accuracy on the labelled titles and on those also in the eval set.
+func scoreRefusals(_ titles: [RefusalCase], arrangements names: [String]?) async {
+  let order = ["general", "contentTagging", "general+retry", "contentTagging+retry"]
+  let chosen = (names ?? order).filter { arrangements[$0] != nil }
+  var results: [String: [ExpenseClassification]] = [:]
+  for name in chosen {
+    let models = arrangements[name] ?? []
+    ExpenseClassifier.prewarm(models)
+    try? await Task.sleep(for: .seconds(1))
+    FileHandle.standardError.write("asking \(name) about \(titles.count) titles…\n".data(using: .utf8)!)
+    var list: [ExpenseClassification] = []
+    for t in titles { list.append(await ExpenseClassifier.classify(t.title, models: models)) }
+    results[name] = list
+  }
+  let labelled = titles.filter { $0.category != nil }
+  let inEval = titles.filter(\.labelled)
+  print("Refusal set: \(titles.count) titles, \(labelled.count) labelled, \(inEval.count) also in the eval set;"
+    + " timeout \(ExpenseClassifier.timeout)\n")
+  print("""
+    \(pad("arrangement", 22)) answered  other  refused  error  timeout  retried  right       right (eval)  chip       p50 ms  p95 ms
+    """)
+  for name in chosen {
+    let list = results[name] ?? []
+    func count(_ outcome: ExpenseClassifierOutcome) -> Int { list.filter { $0.outcome == outcome }.count }
+    var right = 0, rightEval = 0, chip = 0
+    for (t, r) in zip(titles, list) {
+      guard let label = t.category else { continue }
+      if r.category == label { right += 1; if t.labelled { rightEval += 1 } }
+      // The chip on the shipped path: a keyword hit stands; otherwise the model's answer, `other` being no answer.
+      let shown = t.keyword != "other" ? t.keyword : (r.category.flatMap { $0 == "other" ? nil : $0 } ?? "other")
+      if shown == label { chip += 1 }
+    }
+    let retried = list.filter { $0.attempts.count > 1 }.count
+    let latencies = list.map { Double($0.milliseconds) }
+    print(
+      "\(pad(name, 22)) \(pad(String(count(.answered)), 9)) \(pad(String(count(.other)), 6))"
+        + " \(pad(String(count(.refused)), 8)) \(pad(String(count(.error)), 6)) \(pad(String(count(.timeout)), 8))"
+        + " \(pad(String(retried), 8)) \(pad("\(right)/\(labelled.count)", 11)) \(pad("\(rightEval)/\(inEval.count)", 13))"
+        + " \(pad("\(chip)/\(labelled.count)", 10)) \(pad(quantile(latencies, 0.5), 7)) \(quantile(latencies, 0.95))")
+  }
+  print("""
+
+    Each title is asked directly, whatever the gate. refused: a guardrail violation or refusal; retried: a second model
+    was asked after the first refused or failed. right: the answer equals the label (null labels skipped); right (eval):
+    the titles also in the eval set; chip: what the chip shows on the shipped path (the table's hit stands, the model's
+    `other` is no answer). Latency is per title, prewarmed, the retry included.
+
+    """)
+  let width = max(26, titles.map(\.title.count).max() ?? 0)
+  print(pad("title", width) + " " + pad("label", 11) + " " + pad("table", 11) + " "
+    + chosen.map { pad($0, 22) }.joined(separator: " "))
+  for (i, t) in titles.enumerated() {
+    let cells = chosen.map { name -> String in
+      guard let r = results[name]?[i] else { return pad("-", 22) }
+      let shown: String
+      switch r.outcome {
+      case .answered, .other: shown = r.category ?? "?"
+      default: shown = r.outcome.rawValue.uppercased() + (r.detail.map { " \($0)" } ?? "")
+      }
+      let mark = t.category == nil ? " " : (r.category == t.category ? " " : "✗")
+      let via = r.attempts.count > 1 ? " (retry)" : ""
+      return pad("\(mark)\(shown)\(via)", 22)
+    }
+    let table = t.keyword == "other" ? "-" : t.keyword
+    print(pad(t.title, width) + " " + pad(t.category ?? "(none)", 11) + " " + pad(table, 11) + " "
+      + cells.joined(separator: " "))
   }
 }
