@@ -40,12 +40,14 @@ import {
 
 const NOW = new Date(2026, 8, 26, 15, 0).getTime();
 const DEVICE = 'thisDeviceAAAAAAAAAAAA';
+/** The dev server as the iOS simulator reaches it, in the canonical form a group stores. */
+const DEV = 'https://127.0.0.1:8787';
 const money = (minor: number) => formatMinor(minor, 'CAD', 'en-US');
 
 function load(state: GroupScenario | Parameters<typeof buildCopyScenario>[0]) {
   const spec = (GROUP_SCENARIOS as readonly string[]).includes(state)
-    ? buildScenario(state as GroupScenario, DEVICE, NOW)
-    : buildCopyScenario(state as Parameters<typeof buildCopyScenario>[0], DEVICE, NOW);
+    ? buildScenario(state as GroupScenario, DEVICE, NOW, DEV)
+    : buildCopyScenario(state as Parameters<typeof buildCopyScenario>[0], DEVICE, NOW, DEV);
   const group = reduce(spec.entries, { format: money });
   const balances = nets(group);
   return { spec, group, balances, transfers: simplify(balances), me: spec.me.id };

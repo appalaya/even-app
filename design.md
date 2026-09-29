@@ -1074,9 +1074,13 @@ which is checked on a real device.
 Every request times out after 30 s as `network`. It never retries; retry,
 backoff and `Retry-After` belong to the engine. Error messages are fixed
 words: the route pattern (`/v1/groups/{groupId}/events`), the status and the
-code; never the path, and never text from the response body. Tests may
-allow `http://127.0.0.1` and `http://localhost` with an explicit option,
-still deriving keys for the `https` form; the app never sets it.
+code; never the path, and never text from the response body. An explicit
+option (`allowInsecureLocal`) accepts `http://` for a server on this machine or
+its local network (loopback; 10/8, which holds the Android emulator's
+`10.0.2.2`; 172.16/12; 192.168/16), still deriving keys for the `https` form.
+Tests set it, and so does a development build for such a server (the dev
+server, "Development" below); a release build never does, since `__DEV__` is
+false there. The group's server URL is always the canonical `https` form.
 
 ### Group file
 
@@ -1690,6 +1694,45 @@ plus entity schemas for groups and members, would be a v2 addition with no
 data-model impact. It stays out of v1 because it is native Swift with a
 config plugin and because the intent must resolve names against the local
 log without ever exposing content to anything but the on-device system.
+
+## Development: the dev seed and its server
+
+The dev seed (`src/dev/seed.ts`, opened by `even://dev/seed?state=<state>`)
+writes the canvas's data for every screen through the app's services, for
+screenshots. Its groups sync with the dev server and never with the production
+one:
+
+- `npm run dev:server` runs the Python reference server
+  (`../even-server/python`) on 127.0.0.1:8787: its venv made with Homebrew's
+  Python 3.14 and its pinned requirements on first use, an empty database in
+  `.dev/sync-server/` at each start, rates raised to 100,000 a minute so seeds
+  can create many groups from one address, and the public server's caps, so
+  Usage lines read as drawn. It logs only the server's own route-pattern line.
+- The seed's server is `http://127.0.0.1:8787` on the iOS simulator and
+  `http://10.0.2.2:8787` on the Android emulator (`Platform.OS`), or the link's
+  `server` for a phone on the local network. Groups store its canonical
+  `https://` form; a Debug build reaches it over http (Transport, above). iOS
+  needs nothing more (`NSAllowsLocalNetworking` is Expo's default) and neither
+  does Android (the debug manifest already sets `usesCleartextTraffic`; the
+  main one does not).
+- The seed refuses `PROTOCOL.defaultServer` and every host under
+  appalaya.com, at its entry and in each writer, and `seed.guard.test.ts` runs
+  every state against the fake servers to check that production receives
+  nothing. It also refuses to run while the phone holds a group on production,
+  since its wipe would drop the secret that `even://dev/cleanup` needs: that
+  page leaves such groups with their production copy deleted, and deletes the
+  production copy of every fixed seed key, past and present (a fixed key is the
+  same group id on every phone). It sends production nothing but those DELETEs.
+- Each state leaves its groups with their dev server copy deleted, and a group
+  with a fixed key has that copy deleted again before it is written, so an old
+  run's log is never pulled into a new one.
+- The seed page waits, saying so, until the dev server answers. Screens that
+  name the group's server now name the dev server where the boards draw
+  `sync.even.appalaya.com`: Group settings' Host, "Moved from", Leave's
+  checkbox, Move server, Report (the other-operator sheet, as the group is not
+  on Appalaya's server), and the recovery sheet. The Join preview keeps the
+  board's code, which names the default server; joining it would reach
+  production, so screenshots stop at the preview.
 
 ## Build order
 

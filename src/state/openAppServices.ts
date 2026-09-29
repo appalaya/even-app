@@ -2,6 +2,10 @@
  * The device wiring: expo-sqlite store, expo-secure-store secrets, `HttpTransport` per server origin, expo file
  * sharing, expo-notifications' permission, and the category chip's on-device model and history. One instance per
  * process (the background task, a later step, reuses it). Never imported by Node tests.
+ *
+ * A development build reaches a server on this machine or its local network over plain http (the dev server,
+ * `npm run dev:server`, that the dev seed syncs with), still deriving keys for the https form. A release build
+ * never does: `__DEV__` is false there and every transport refuses http.
  */
 import * as Notifications from 'expo-notifications';
 
@@ -9,7 +13,7 @@ import EvenClassifier from '../../modules/even-classifier';
 import { expoFileIO } from '../services/groupFile/expoFileIO';
 import { secrets } from '../services/secrets/secureStore';
 import { openStore } from '../services/storage/openStore';
-import { HttpTransport } from '../services/sync/httpTransport';
+import { HttpTransport, localHttpUrl } from '../services/sync/httpTransport';
 import { createInfoCache } from '../services/sync/info';
 import { setCategoryHistory, setOnDeviceModel } from './categories';
 import { notificationStatusOf, type NotificationPermission } from './prefs';
@@ -37,7 +41,11 @@ export function openAppServices(): Promise<AppServices> {
     const transportFor = (serverUrl: string): HttpTransport => {
       let transport = transports.get(serverUrl);
       if (transport === undefined) {
-        transport = new HttpTransport(serverUrl);
+        const local = __DEV__ ? localHttpUrl(serverUrl) : null;
+        transport =
+          local === null
+            ? new HttpTransport(serverUrl)
+            : new HttpTransport(local, { allowInsecureLocal: true });
         transports.set(serverUrl, transport);
       }
       return transport;

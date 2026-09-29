@@ -3,14 +3,20 @@
  * screen reads it exactly as it reads a real group. One route opens it: `src/app/dev/seed.tsx`
  * (`even://dev/seed?state=<state>`, or `com.appalaya.even://dev/seed?state=…`); `SEED_STATES` lists them all.
  *
- * Every state first removes all groups (rows and secrets) and orphaned keychain entries, then writes what it needs
- * and says where to go (`SeedResult.steps`). Offline is fine: the default server is not reachable from the
- * simulator, so every sync fails silently. Dev-only shortcuts stand in for a server, and nothing outside this file
- * uses them:
+ * Every seeded group syncs with the dev server (`npm run dev:server`; src/dev/devServer.ts), never with the
+ * production one: `seed` refuses `PROTOCOL.defaultServer` and every host under appalaya.com (`assertNotProduction`,
+ * checked again by each writer), and refuses to run while this phone still holds a group on production (open
+ * `even://dev/cleanup` first). The states about a server that does not answer keep theirs: a non-routable address,
+ * a refused port, home.example.net.
+ *
+ * Every state first removes all groups (rows, secrets, and each one's copy on the dev server) and orphaned keychain
+ * entries, then writes what it needs and says where to go (`SeedResult.steps`). A group with a fixed key is the
+ * same server group every run, so its dev server copy is deleted again before it is written. Dev-only shortcuts
+ * stand in for a server, and nothing outside this file uses them:
  * - `markSynced` acknowledges a group's events and stamps a last sync (what a successful push would do);
  * - other members' events are staged the way a sync delivers them: sealed with the group key for the group's server
  *   and inserted as `remote`, acknowledged rows; this device's own as `local`;
- * - `/v1/info` is primed into the info cache (`infoOnly`) for the servers a board names;
+ * - `/v1/info` is primed into the info cache (`infoOnly`) for home.example.net, which is not there to ask;
  * - the name-pick seed clears this phone's claimed seat, and the `unclaimed` states write their row with none; the
  *   recovery seed deletes rows but keeps their secrets, as a reinstall would.
  * Member ids are drawn until their avatar colour lands on the boards' slots (Sam violet, Maya clay, Nathan steel…),
@@ -50,6 +56,7 @@ import {
 } from '@/features/split/draft';
 
 import { refineCategory } from '../state/categories';
+import { assertNotProduction, productionHoldings, seedServerOrigin } from './devServer';
 import type { NewEventRow } from '../services/storage/types';
 import type { ServerInfo, SyncResult, Transport } from '../services/sync/types';
 import type { AppServices } from '../state';
@@ -158,6 +165,11 @@ export function isSeedState(value: string | undefined): value is SeedState {
 }
 
 export interface SeedOptions {
+  /**
+   * The dev server every seeded group syncs with, as this phone reaches it (`devServerUrl`, or the link's
+   * `server`): `http://` for this Mac or the local network, https for anything else. Never the production server.
+   */
+  server: string;
   /** App settings' avatar: the light board draws initials, the dark one 🌲. */
   emoji?: string | null;
   /** Hold the empty-state motion at this time (ms). */
@@ -535,12 +547,13 @@ function scenario(
   key: string,
   b: { log: Log; sam: SeedMember },
   now: number,
+  server: string,
   overrides: Partial<Omit<Scenario, 'key' | 'entries'>> = {},
 ): Scenario {
   return {
     key,
     name: 'Banff 2026',
-    serverUrl: PROTOCOL.defaultServer,
+    serverUrl: server,
     me: b.sam,
     entries: b.log.entries,
     acked: true,
@@ -568,11 +581,12 @@ function banffMain(
   key: string,
   myDevice: string,
   now: number,
+  server: string,
   overrides: Partial<Scenario> = {},
 ): Scenario {
   const b = banffBase(myDevice, 'activity');
   banffRecent(b, now);
-  return scenario(key, b, now, overrides);
+  return scenario(key, b, now, server, overrides);
 }
 
 /** Group, everyone done: you mark yourself done after this morning's items. */
@@ -818,38 +832,46 @@ function banffNoSeat(myDevice: string, twoSeats: boolean): { log: Log; sam: Seed
   return { log, sam: twoSeats ? maya : sam };
 }
 
-/** The scenario for a seed state. `myDevice` is this install's device id; `now` pins "Today". */
-export function buildScenario(state: GroupScenario, myDevice: string, now: number): Scenario {
+/**
+ * The scenario for a seed state. `myDevice` is this install's device id; `now` pins "Today"; `server` is the dev
+ * server's canonical URL (`seedServerOrigin`), which every scenario syncs with unless its board is about another.
+ */
+export function buildScenario(
+  state: GroupScenario,
+  myDevice: string,
+  now: number,
+  server: string,
+): Scenario {
   switch (state) {
     case 'group':
     case 'balances':
     case 'activity':
-      return banffMain('banff', myDevice, now, {
+      return banffMain('banff', myDevice, now, server, {
         open: state === 'group' ? {} : { tab: state, stuck: true },
       });
     case 'unreadable':
-      return banffMain('banff-unreadable', myDevice, now, {
+      return banffMain('banff-unreadable', myDevice, now, server, {
         extraRows: [junkRow('undecryptable'), junkRow('undecryptable')],
       });
     case 'syncing':
-      return banffMain('banff-syncing', myDevice, now, {
+      return banffMain('banff-syncing', myDevice, now, server, {
         serverUrl: SILENT_SERVER,
         syncOnOpen: true,
       });
     case 'stale':
-      return banffMain('banff-stale', myDevice, now, {
+      return banffMain('banff-stale', myDevice, now, server, {
         lastSyncedAt: day(0, 14, 10, now),
         lastSyncError: 'network',
       });
     case 'update':
-      return banffMain('banff-update', myDevice, now, {
+      return banffMain('banff-update', myDevice, now, server, {
         extraRows: [junkRow('unsupported_envelope')],
       });
     case 'closed': {
       const b = banffBase(myDevice, 'activity');
       banffRecent(b, now);
       b.log.add(day(0, 10, 30, now), b.maya, { type: 'group.closed', reason: 'rotated' });
-      return scenario('banff-closed', b, now);
+      return scenario('banff-closed', b, now, server);
     }
     case 'moved': {
       const b = banffBase(myDevice, 'activity');
@@ -858,10 +880,10 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
         type: 'group.moved',
         server: 'https://sync.example.net',
       });
-      return scenario('banff-moved', b, now);
+      return scenario('banff-moved', b, now, server);
     }
     case 'alldone':
-      return scenario('banff-alldone', banffAllDone(myDevice, now), now, {
+      return scenario('banff-alldone', banffAllDone(myDevice, now), now, server, {
         lastSyncedAt: now - 10_000,
       });
     case 'even': {
@@ -869,17 +891,19 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
       b.log.add(day(0, 10, 10, now), b.nathan, payment(b.nathan, b.maya, 12800, '2026-09-26'));
       b.log.add(day(0, 10, 12, now), b.sam, payment(b.sam, b.maya, 4400, '2026-09-26'));
       b.log.add(day(0, 10, 13, now), b.sam, payment(b.sam, b.jordan, 800, '2026-09-26'));
-      return scenario('banff-even', b, now, { lastSyncedAt: now - 10_000 });
+      return scenario('banff-even', b, now, server, { lastSyncedAt: now - 10_000 });
     }
     case 'group-archived':
-      return scenario('banff-archived', banffArchived(myDevice, now), now, {
+      return scenario('banff-archived', banffArchived(myDevice, now), now, server, {
         lastSyncedAt: now - 10_000,
         open: { tab: 'activity' },
       });
     case 'many':
     case 'done-sheet':
       return {
-        ...scenario('whistler', whistler(myDevice, now), now, { lastSyncedAt: now - 10_000 }),
+        ...scenario('whistler', whistler(myDevice, now), now, server, {
+          lastSyncedAt: now - 10_000,
+        }),
         name: 'Whistler 2027',
         open: state === 'done-sheet' ? { sheet: 'done' } : {},
       };
@@ -890,6 +914,7 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
         state === 'invite' ? 'banff-invite' : 'banff-new',
         banffNew(myDevice, now),
         now,
+        server,
         {
           acked: state !== 'invite',
           lastSyncedAt: state === 'invite' ? null : now - 10_000,
@@ -897,7 +922,7 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
         },
       );
     case 'newWithExpenses':
-      return scenario('banff-new-expenses', banffNew(myDevice, now, true), now);
+      return scenario('banff-new-expenses', banffNew(myDevice, now, true), now, server);
     // A group held by a phone with no seat in it. `unclaimed`: Sam created it on another phone, so no member carries
     // this device and Group offers "Which name is yours?" as offered again (SeatPick; closed, GroupNoSeat).
     // `unclaimed-own`: this phone created it as Sam and the row lost the seat (a reinstall's keychain recovery), so
@@ -905,17 +930,21 @@ export function buildScenario(state: GroupScenario, myDevice: string, now: numbe
     // `unclaimed-two`: this phone claimed both Maya and Maya K., so it cannot tell which is its own and asks, marking
     // both "this phone" (SeatSameDevice, once Maya is tapped).
     case 'unclaimed':
-      return scenario('banff-unclaimed', banffNoSeat(myDevice, false), now, { claimed: false });
+      return scenario('banff-unclaimed', banffNoSeat(myDevice, false), now, server, {
+        claimed: false,
+      });
     case 'unclaimed-own':
-      return scenario('banff-unclaimed-own', banffNew(myDevice, now), now, { claimed: false });
+      return scenario('banff-unclaimed-own', banffNew(myDevice, now), now, server, {
+        claimed: false,
+      });
     case 'unclaimed-two':
-      return scenario('banff-unclaimed-two', banffNoSeat(myDevice, true), now, {
+      return scenario('banff-unclaimed-two', banffNoSeat(myDevice, true), now, server, {
         claimed: false,
       });
     case 'expense-detail': {
       const b = banffBase(myDevice, 'detail');
       banffRecent(b, now);
-      return scenario('banff-detail', b, now, { open: { expenseId: b.dinnerId } });
+      return scenario('banff-detail', b, now, server, { open: { expenseId: b.dinnerId } });
     }
   }
 }
@@ -994,16 +1023,38 @@ function sealRows(
   }));
 }
 
+/**
+ * Makes room for a group with a fixed key: this phone's copy goes (rows and secret), the secret is written for
+ * `serverUrl`, and on the dev server the copy an earlier run left is deleted. A fixed key is the same server group
+ * every run, so without that the first pull would bring the old run's log into the new one. A group on one of the
+ * unreachable servers is not asked for.
+ */
+async function makeRoom(
+  s: AppServices,
+  secret: Uint8Array,
+  serverUrl: string,
+  devServer: string,
+): Promise<void> {
+  assertNotProduction(serverUrl);
+  const { localId } = deriveLocal(secret);
+  if ((await s.store.getGroup(localId)) !== null) await s.groups.leaveGroup(localId);
+  await s.secrets.setSecret(localId, secret, serverUrl);
+  if (serverUrl === devServer) await s.groups.deleteServerCopy(localId, serverUrl);
+}
+
 /** Writes a scenario's group (replacing an earlier seed of the same key). Returns its local id. */
-export async function seedGroup(services: AppServices, spec: Scenario): Promise<string> {
-  const { store, secrets, groups, groupState, deviceId } = services;
+export async function seedGroup(
+  services: AppServices,
+  spec: Scenario,
+  devServer: string,
+): Promise<string> {
+  const { store, groupState, deviceId } = services;
   const secret = seedSecret(spec.key);
   const { localId, encryptionKey } = deriveLocal(secret);
-  if ((await store.getGroup(localId)) !== null) await groups.leaveGroup(localId);
+  await makeRoom(services, secret, spec.serverUrl, devServer);
   const { groupId } = deriveServer(secret, spec.serverUrl);
   const rows = [...sealRows(spec, encryptionKey, groupId, deviceId), ...spec.extraRows];
   const createdAt = Math.min(...spec.entries.map((e) => e.event.at));
-  await secrets.setSecret(localId, secret, spec.serverUrl);
   await store.transaction(async (tx) => {
     await tx.upsertGroup({
       localId,
@@ -1029,7 +1080,11 @@ export async function seedGroup(services: AppServices, spec: Scenario): Promise<
 
 // ---------- Groups, Create, Join, App settings ----------
 
-/** The JoinCodePreview board's code: a complete invite to "Banff 2026", CAD, on the default server. */
+/**
+ * The JoinCodePreview board's code: a complete invite to "Banff 2026", CAD, on the default server, as drawn. The
+ * preview reads it without asking any server; tapping Join would reach production, so screenshots stop at the
+ * preview.
+ */
 export const BOARD_CODE =
   'eyJ2IjoxLCJzIjoiaHR0cHM6Ly9zeW5jLmV2ZW4uYXBwYWxheWEuY29tIiwiayI6IkJ3Z0pDZ3NNRFE0UEVCRVNFeFFWRmhjWUdSb2JIQjBlSHlBaElpTWtKU1kiLCJoIjoiemtQek9RIiwiZyI6IkJhbmZmIDIwMjYiLCJjdXIiOiJDQUQifQ';
 /** The JoinCodeError board's code: the same, cut short. */
@@ -1040,13 +1095,21 @@ function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Removes every group (rows and secrets) and any keychain entry left without a row. */
-export async function wipe(s: AppServices): Promise<void> {
+/**
+ * Removes every group (rows and secrets) and any keychain entry left without a row, deleting each one's copy on
+ * the dev server as it goes (Leave's "Also delete the copy"). Groups on any other server are only removed here.
+ */
+export async function wipe(s: AppServices, devServer: string): Promise<void> {
   for (const row of await s.store.listGroups()) {
-    await s.groups.leaveGroup(row.localId).catch(() => undefined);
+    await s.groups
+      .leaveGroup(row.localId, { deleteServerCopy: row.serverUrl === devServer })
+      .catch(() => undefined);
   }
   for (const entry of await s.secrets.listGroups()) {
     if ((await s.store.getGroup(entry.localId)) === null) {
+      if (entry.serverUrl === devServer) {
+        await s.groups.deleteServerCopy(entry.localId, devServer).catch(() => undefined);
+      }
       await s.secrets.deleteSecret(entry.localId).catch(() => undefined);
     }
   }
@@ -1074,12 +1137,13 @@ interface GroupSpec {
   spends?: Spend[];
   archived?: boolean;
   synced: boolean;
-  /** The group's server; the default one when omitted. */
-  serverUrl?: string;
+  /** The group's server: always named, so no seed falls back to the default (production) one. */
+  serverUrl: string;
 }
 
 /** Creates a group as Sam (or `myName`), adds its expenses split equally among everyone, archives it if asked. */
 async function createAs(s: AppServices, spec: GroupSpec): Promise<string> {
+  assertNotProduction(spec.serverUrl);
   const myName = spec.myName ?? 'Sam';
   const { localId, memberId } = await s.groups.createGroup({
     name: spec.name,
@@ -1087,7 +1151,7 @@ async function createAs(s: AppServices, spec: GroupSpec): Promise<string> {
     myName,
     myId: spec.myId,
     people: spec.people,
-    ...(spec.serverUrl === undefined ? {} : { serverUrl: spec.serverUrl }),
+    serverUrl: spec.serverUrl,
   });
   const derived = await s.groupState.get(localId);
   const ids = new Map<string, string>();
@@ -1121,47 +1185,53 @@ async function markSynced(s: AppServices, localId: string): Promise<void> {
 }
 
 /** The Main board: four active groups, newest activity first, and two archived. */
-async function mainGroups(s: AppServices): Promise<void> {
+async function mainGroups(s: AppServices, server: string): Promise<void> {
   // Groups, extra states (Archived, expanded): Jasper 2025 (4 people) over Lisbon 2024 (3 people), both settled.
   await createAs(s, {
     name: 'Lisbon 2024',
     people: ['Maya', 'Priya'],
     archived: true,
     synced: true,
+    serverUrl: server,
   });
   await createAs(s, {
     name: 'Jasper 2025',
     people: ['Maya', 'Jordan', 'Nathan'],
     archived: true,
     synced: true,
+    serverUrl: server,
   });
-  await otherGroups(s);
+  await otherGroups(s, server);
   await createAs(s, {
     name: 'Banff 2026',
     people: ['Maya', 'Jordan', 'Nathan'],
     spends: [{ payer: 'Maya', amount: 20800, title: 'Cabin', category: 'lodging' }],
     synced: true,
+    serverUrl: server,
   });
 }
 
 /** Tofino weekend (settled), Friday dinners (you owe $12.00, unsent), Oak Street house (you're owed $44.00). */
-async function otherGroups(s: AppServices): Promise<void> {
+async function otherGroups(s: AppServices, server: string): Promise<void> {
   await createAs(s, {
     name: 'Tofino weekend',
     people: ['Maya', 'Jordan', 'Nathan', 'Priya'],
     synced: true,
+    serverUrl: server,
   });
   await createAs(s, {
     name: 'Friday dinners',
     people: ['Maya', 'Jordan', 'Nathan', 'Priya', 'Leo'],
     spends: [{ payer: 'Jordan', amount: 7200, title: 'Ramen', category: 'food' }],
     synced: false,
+    serverUrl: server,
   });
   await createAs(s, {
     name: 'Oak Street house',
     people: ['Maya', 'Priya'],
     spends: [{ payer: 'Sam', amount: 6600, title: 'Internet', category: 'fees' }],
     synced: true,
+    serverUrl: server,
   });
 }
 
@@ -1172,11 +1242,12 @@ async function otherGroups(s: AppServices): Promise<void> {
  * the error are written once the syncs the new groups started have finished, so the list reads as drawn (until the
  * engine's own retry of Friday dinners, 30 s later, words its error as the network one).
  */
-async function diagnosticsGroups(s: AppServices): Promise<void> {
+async function diagnosticsGroups(s: AppServices, server: string): Promise<void> {
   const tofino = await createAs(s, {
     name: 'Tofino weekend',
     people: ['Maya', 'Jordan', 'Nathan', 'Priya'],
     synced: true,
+    serverUrl: server,
   });
   const friday = await createAs(s, {
     name: 'Friday dinners',
@@ -1190,12 +1261,14 @@ async function diagnosticsGroups(s: AppServices): Promise<void> {
     people: ['Maya', 'Priya'],
     spends: [{ payer: 'Sam', amount: 6600, title: 'Internet', category: 'fees' }],
     synced: true,
+    serverUrl: server,
   });
   const banff = await createAs(s, {
     name: 'Banff 2026',
     people: ['Maya', 'Jordan', 'Nathan'],
     spends: [{ payer: 'Maya', amount: 20800, title: 'Cabin', category: 'lodging' }],
     synced: true,
+    serverUrl: server,
   });
   await askTheModel();
   for (let waited = 0; waited < 8000; waited += 200) {
@@ -1233,7 +1306,7 @@ async function askTheModel(): Promise<void> {
  * The Join board: "Banff 2026" where Maya and Jordan (🏂) have joined and Nathan has not, and this phone has no
  * seat yet. Seeded first so its activity sorts below the three groups the board shows behind the sheet.
  */
-async function pickGroup(s: AppServices): Promise<string> {
+async function pickGroup(s: AppServices, server: string): Promise<string> {
   const localId = await createAs(s, {
     name: 'Banff 2026',
     myName: 'Maya',
@@ -1243,6 +1316,7 @@ async function pickGroup(s: AppServices): Promise<string> {
       { name: 'Nathan', id: memberIdFor(STEEL) },
     ],
     synced: false,
+    serverUrl: server,
   });
   const derived = await s.groupState.get(localId);
   const jordan = [...(derived?.state?.members.values() ?? [])].find((m) => m.name === 'Jordan');
@@ -1258,9 +1332,19 @@ async function pickGroup(s: AppServices): Promise<string> {
 }
 
 /** Two groups whose rows are gone but whose secrets remain: "Recover 2 groups?" */
-async function reinstalled(s: AppServices): Promise<void> {
-  const a = await createAs(s, { name: 'Banff 2026', people: ['Maya'], synced: false });
-  const b = await createAs(s, { name: 'Oak Street house', people: ['Priya'], synced: false });
+async function reinstalled(s: AppServices, server: string): Promise<void> {
+  const a = await createAs(s, {
+    name: 'Banff 2026',
+    people: ['Maya'],
+    synced: false,
+    serverUrl: server,
+  });
+  const b = await createAs(s, {
+    name: 'Oak Street house',
+    people: ['Priya'],
+    synced: false,
+    serverUrl: server,
+  });
   for (const localId of [a, b]) {
     await s.store.deleteGroup(localId);
     s.groupState.evict(localId);
@@ -1285,13 +1369,13 @@ function sheetSecret(key: string): Uint8Array {
   return bytes;
 }
 
-/** Writes Banff 2026 as the Add expense, Split and Settle boards draw it. */
-export async function seedBanff(services: AppServices): Promise<BanffC> {
-  const { store, secrets, groups, groupState, deviceId } = services;
-  const serverUrl = PROTOCOL.defaultServer;
+/** Writes Banff 2026 as the Add expense, Split and Settle boards draw it, on the dev server. */
+export async function seedBanff(services: AppServices, devServer: string): Promise<BanffC> {
+  const { store, groupState, deviceId } = services;
+  const serverUrl = devServer;
   const secret = sheetSecret('banff');
   const { localId, encryptionKey } = deriveLocal(secret);
-  if ((await store.getGroup(localId)) !== null) await groups.leaveGroup(localId);
+  await makeRoom(services, secret, serverUrl, devServer);
   const { groupId } = deriveServer(secret, serverUrl);
 
   const sam = memberIdFor(VIOLET);
@@ -1382,7 +1466,6 @@ export async function seedBanff(services: AppServices): Promise<BanffC> {
     ),
   );
 
-  await secrets.setSecret(localId, secret, serverUrl);
   await store.transaction(async (tx) => {
     await tx.upsertGroup({
       localId,
@@ -1617,7 +1700,7 @@ const TARGET_BYTES_FULLISH = 0.85 * 2_097_152;
 /** The server the extra states move the group to. */
 const HOME_SERVER = 'https://home.example.net';
 
-/** PROTOCOL.md §6.1, the default server's published `/v1/info`. */
+/** PROTOCOL.md §6.1, the default server's published `/v1/info` (what home.example.net's differs from). */
 export const DEFAULT_SERVER_INFO: ServerInfo = {
   protocol: [1],
   limits: {
@@ -1704,16 +1787,17 @@ function isoDate(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Writes the board's group (replacing an earlier seed). */
+/** Writes the board's group (replacing an earlier seed): on the dev server, or moved from it to home.example.net. */
 export async function seedGroupSettings(
   services: AppServices,
-  variant: SeedVariant = 'board',
+  variant: SeedVariant,
+  devServer: string,
 ): Promise<SeededGroup> {
-  const { store, secrets, groups, groupState, infoCache, deviceId } = services;
-  const serverUrl = variant === 'moved' ? HOME_SERVER : PROTOCOL.defaultServer;
+  const { store, groupState, infoCache, deviceId } = services;
+  const serverUrl = variant === 'moved' ? HOME_SERVER : devServer;
   const secret = settingsSecret();
   const { localId, encryptionKey: key } = deriveLocal(secret);
-  if ((await store.getGroup(localId)) !== null) await groups.leaveGroup(localId);
+  await makeRoom(services, secret, serverUrl, devServer);
   const { groupId } = deriveServer(secret, serverUrl);
 
   const sam = memberIdFor(VIOLET);
@@ -1799,7 +1883,6 @@ export async function seedGroupSettings(
   if (variant === 'moved') add({ type: 'group.moved', server: HOME_SERVER }, sam, deviceId);
   if (variant === 'unsent') for (let k = 0; k < 3; k += 1) expenseBy(i + k, true);
 
-  await secrets.setSecret(localId, secret, serverUrl);
   await store.transaction(async (tx) => {
     await tx.upsertGroup({
       localId,
@@ -1817,7 +1900,7 @@ export async function seedGroupSettings(
     });
     await tx.insertEvents(localId, rows);
   });
-  await infoCache.refresh(PROTOCOL.defaultServer, infoOnly(DEFAULT_SERVER_INFO));
+  // The dev server answers its own /v1/info; home.example.net is not there to ask.
   await infoCache.refresh(HOME_SERVER, infoOnly(HOME_SERVER_INFO));
   groupState.invalidate(localId);
   groupState.groupsChanged();
@@ -1928,25 +2011,28 @@ export function buildCopyScenario(
   state: 'owed' | 'settled-member' | 'collision' | 'expense-currency',
   myDevice: string,
   now: number,
+  server: string,
 ): Scenario {
   switch (state) {
     case 'owed': {
       // Maya's phone: "You're owed $172.00", Nathan and Sam pay her.
       const b = banffBase(myDevice, 'activity', 'maya');
       banffRecent(b, now);
-      return scenario('banff-owed', b, now, { me: b.maya });
+      return scenario('banff-owed', b, now, server, { me: b.maya });
     }
     case 'settled-member': {
       const b = banffBase(myDevice, 'activity');
       banffRecent(b, now);
       b.log.add(day(0, 10, 15, now), b.nathan, payment(b.nathan, b.maya, 12800, '2026-09-26'));
-      return scenario('banff-settled', b, now, { open: { tab: 'balances', stuck: true } });
+      return scenario('banff-settled', b, now, server, {
+        open: { tab: 'balances', stuck: true },
+      });
     }
     case 'collision':
-      return scenario('banff-collision', banffCollision(myDevice, now), now);
+      return scenario('banff-collision', banffCollision(myDevice, now), now, server);
     case 'expense-currency': {
       const { b, expenseId } = banffCurrency(myDevice, now);
-      return scenario('banff-currency', b, now, { open: { expenseId } });
+      return scenario('banff-currency', b, now, server, { open: { expenseId } });
     }
   }
 }
@@ -1980,13 +2066,24 @@ const push = (path: string, wait?: number): SeedStep => ({
 });
 const replace = (path: string): SeedStep => ({ path, mode: 'replace' });
 
-/** Writes what `state` needs (after removing every group) and says where to go. */
+/**
+ * Writes what `state` needs (after removing every group) and says where to go. Throws before touching anything
+ * for a production `server`, and while this phone still holds a group on the production server: removing it here
+ * would lose the secret that `even://dev/cleanup` needs to delete its copy there.
+ */
 export async function seed(
   s: AppServices,
   state: SeedState,
-  options: SeedOptions = {},
+  options: SeedOptions,
 ): Promise<SeedResult> {
-  await wipe(s);
+  const server = seedServerOrigin(options.server);
+  const held = await productionHoldings(s);
+  if (held.length > 0) {
+    throw new Error(
+      `this phone still holds ${held.length} ${held.length === 1 ? 'group' : 'groups'} on the production server from older seeds. Open even://dev/cleanup to delete ${held.length === 1 ? 'its copy' : 'their copies'} there, then seed again.`,
+    );
+  }
+  await wipe(s, server);
   // The chips' colours as the CreateGroup board draws them: Maya clay, Jordan ochre, Nathan steel.
   const people = `Maya:${memberIdFor(CLAY)},Jordan:${memberIdFor(OCHRE)},Nathan:${memberIdFor(STEEL)}`;
   const createPrefill = `name=${q('Banff 2026')}&currency=CAD&people=${q(people)}&me=Sam&emoji=${q('🌲')}`;
@@ -2000,17 +2097,17 @@ export async function seed(
   switch (state) {
     // ----- Groups, Create, Join, App settings -----
     case 'groups':
-      await mainGroups(s);
+      await mainGroups(s, server);
       return { steps: [replace('/')] };
     case 'groups-archived':
-      await mainGroups(s);
+      await mainGroups(s, server);
       return { steps: [replace('/?archived=open')] };
     case 'groups-empty':
       return {
         steps: [replace(options.motionAt === undefined ? '/' : `/?motionAt=${options.motionAt}`)],
       };
     case 'recovery':
-      await reinstalled(s);
+      await reinstalled(s, server);
       return { steps: [replace('/')], recoveryOffer: true };
     case 'create':
       return { steps: [push(`/create?${createPrefill}`)] };
@@ -2033,8 +2130,8 @@ export async function seed(
     case 'join-pick':
     case 'join-not-listed':
     case 'join-same-name': {
-      const localId = await pickGroup(s);
-      await otherGroups(s);
+      const localId = await pickGroup(s, server);
+      await otherGroups(s, server);
       const extra =
         state === 'join-not-listed'
           ? '&notListed=1'
@@ -2044,11 +2141,12 @@ export async function seed(
       return { steps: [push(`/join?localId=${q(localId)}${extra}`)] };
     }
     case 'join-move': {
-      await otherGroups(s);
+      await otherGroups(s, server);
       const localId = await createAs(s, {
         name: 'Banff 2026',
         people: ['Maya', 'Jordan', 'Nathan'],
         synced: true,
+        serverUrl: server,
       });
       return { steps: [push(`/join?code=${await moveCode(s, localId, 'Banff 2026')}&auto=1`)] };
     }
@@ -2063,7 +2161,7 @@ export async function seed(
       return { steps: [push('/settings'), push('/about', 400)] };
     case 'diagnostics':
     case 'diagnostics-check': {
-      await diagnosticsGroups(s);
+      await diagnosticsGroups(s, server);
       const query = [
         ...(state === 'diagnostics-check' ? ['check=1'] : []),
         ...(options.y === undefined ? [] : [`y=${options.y}`]),
@@ -2084,7 +2182,7 @@ export async function seed(
     case 'settled-member':
     case 'collision':
     case 'expense-currency':
-      return openScenario(s, buildCopyScenario(state, s.deviceId, Date.now()));
+      return openScenario(s, buildCopyScenario(state, s.deviceId, Date.now(), server), server);
     case 'group':
     case 'balances':
     case 'activity':
@@ -2107,7 +2205,7 @@ export async function seed(
     case 'unclaimed-own':
     case 'unclaimed-two':
     case 'expense-detail':
-      return openScenario(s, buildScenario(state, s.deviceId, Date.now()));
+      return openScenario(s, buildScenario(state, s.deviceId, Date.now(), server), server);
 
     // ----- Group settings -----
     case 'group-settings':
@@ -2135,7 +2233,7 @@ export async function seed(
                 : state === 'settings-moved' || state === 'settings-report-other'
                   ? 'moved'
                   : 'board';
-      const seeded = await seedGroupSettings(s, variant);
+      const seeded = await seedGroupSettings(s, variant, server);
       if (state === 'settings-report-other') {
         await s.infoCache.refresh(HOME_SERVER, infoOnly(HOME_SERVER_INFO_WITH_TERMS));
       }
@@ -2175,7 +2273,7 @@ export async function seed(
       if (state === 'settings-report' || state === 'settings-report-other') {
         params.set('open', 'report');
       }
-      if (state === 'settings-moved') params.set('movedFrom', PROTOCOL.defaultServer);
+      if (state === 'settings-moved') params.set('movedFrom', server);
       const query = params.toString();
       return {
         steps: [
@@ -2189,13 +2287,13 @@ export async function seed(
     case 'task':
     case 'notify':
     case 'notify-quiet': {
-      const seeded = await seedGroupSettings(s, 'board');
+      const seeded = await seedGroupSettings(s, 'board', server);
       return { steps: [], lines: [`Seeded Banff 2026 (${seeded.localId.slice(0, 8)}…)`] };
     }
 
     // ----- Add expense, Split, Settle -----
     default: {
-      const banff = await seedBanff(s);
+      const banff = await seedBanff(s, server);
       await s.groupState.get(banff.localId);
       return { steps: sheetSteps(banff.localId, planFor(banff, state)) };
     }
@@ -2203,8 +2301,12 @@ export async function seed(
 }
 
 /** A Group scenario: written, then opened where its board is (a tab, the Done adding sheet, an expense). */
-async function openScenario(s: AppServices, spec: Scenario): Promise<SeedResult> {
-  const localId = await seedGroup(s, spec);
+async function openScenario(
+  s: AppServices,
+  spec: Scenario,
+  devServer: string,
+): Promise<SeedResult> {
+  const localId = await seedGroup(s, spec, devServer);
   const { tab, stuck, sheet, expenseId } = spec.open;
   const group = `/group/${q(localId)}`;
   if (expenseId !== undefined) {

@@ -6,7 +6,7 @@ import { groupKeys, groupRow, sealFor, Events, writeLocal } from '../testing/fix
 import { openTestStore } from '../testing/testStore';
 import { createSyncEngine } from './engine';
 import { isSyncError, SyncError } from './errors';
-import { HttpTransport, parseRetryAfter } from './httpTransport';
+import { HttpTransport, isLocalHost, localHttpUrl, parseRetryAfter } from './httpTransport';
 
 interface Call {
   url: string;
@@ -67,7 +67,7 @@ describe('HttpTransport construction', () => {
     expect(t.origin).toBe('https://sync.example.com');
   });
 
-  it('refuses http, and allows loopback http only with the explicit test option', () => {
+  it('refuses http, and allows local http only with the explicit option', () => {
     const fetch = stubFetch(() => json(200, {})).fetch;
     expect(() => new HttpTransport('http://sync.example.com', { fetch })).toThrow(
       InvalidServerUrlError,
@@ -76,17 +76,59 @@ describe('HttpTransport construction', () => {
       InvalidServerUrlError,
     );
     expect(
-      () => new HttpTransport('http://sync.example.com', { fetch, allowInsecureLocalhost: true }),
+      () => new HttpTransport('http://sync.example.com', { fetch, allowInsecureLocal: true }),
     ).toThrow(InvalidServerUrlError);
     const local = new HttpTransport('http://127.0.0.1:8787', {
       fetch,
-      allowInsecureLocalhost: true,
+      allowInsecureLocal: true,
     });
     expect(local.origin).toBe('https://127.0.0.1:8787');
     expect(
-      new HttpTransport('http://localhost:8787/even/', { fetch, allowInsecureLocalhost: true })
-        .origin,
+      new HttpTransport('http://localhost:8787/even/', { fetch, allowInsecureLocal: true }).origin,
     ).toBe('https://localhost:8787/even');
+    // The Android emulator's address for its host, and a Mac on the local network.
+    expect(
+      new HttpTransport('http://10.0.2.2:8787', { fetch, allowInsecureLocal: true }).origin,
+    ).toBe('https://10.0.2.2:8787');
+    expect(
+      new HttpTransport('http://192.168.1.20:8787', { fetch, allowInsecureLocal: true }).origin,
+    ).toBe('https://192.168.1.20:8787');
+    for (const url of [
+      'http://8.8.8.8:8787',
+      'http://172.32.0.1',
+      'http://sync.even.appalaya.com',
+    ]) {
+      expect(() => new HttpTransport(url, { fetch, allowInsecureLocal: true })).toThrow(
+        InvalidServerUrlError,
+      );
+    }
+  });
+
+  it('names the local hosts, and the http form of a local server URL', () => {
+    for (const host of [
+      '127.0.0.1',
+      'localhost',
+      '10.0.2.2',
+      '172.16.0.5',
+      '172.31.9.9',
+      '192.168.1.20',
+    ]) {
+      expect(isLocalHost(host)).toBe(true);
+    }
+    for (const host of [
+      '8.8.8.8',
+      '172.32.0.1',
+      '192.169.0.1',
+      '127.0.0.2',
+      'sync.even.appalaya.com',
+    ]) {
+      expect(isLocalHost(host)).toBe(false);
+    }
+    expect(localHttpUrl('https://127.0.0.1:8787')).toBe('http://127.0.0.1:8787');
+    expect(localHttpUrl('https://10.0.2.2:8787')).toBe('http://10.0.2.2:8787');
+    expect(localHttpUrl('https://sync.even.appalaya.com')).toBeNull();
+    expect(localHttpUrl('https://home.example.net')).toBeNull();
+    expect(localHttpUrl('not a url')).toBeNull();
   });
 });
 
@@ -106,7 +148,7 @@ describe('HttpTransport requests', () => {
     const { fetch, calls } = stubFetch(() =>
       json(200, { accepted: 1, duplicates: 0, seq: 7, epoch: 'k3JdAAAAAAAAAAAAAAAAAA' }),
     );
-    const t = new HttpTransport('http://127.0.0.1:8787', { fetch, allowInsecureLocalhost: true });
+    const t = new HttpTransport('http://127.0.0.1:8787', { fetch, allowInsecureLocal: true });
 
     const response = await t.push(keys.groupId, keys.token, [envelope]);
 

@@ -1,6 +1,7 @@
 /**
  * `Transport` over `fetch` (design.md "Transport"; PROTOCOL.md §5–§7). One instance per canonical server URL.
- * Refuses non-HTTPS URLs at construction; there are no certificate options. Every failure rejects with a
+ * Refuses non-HTTPS URLs at construction (a local `http://` server only with `allowInsecureLocal`, which tests and
+ * development builds set); there are no certificate options. Every failure rejects with a
  * `SyncError` carrying the protocol `error` code, `index`, `reason`, and `Retry-After` in ms.
  *
  * No retries here: the engine owns retry, backoff, and `Retry-After`. Every request times out after 30 s (the body
@@ -24,10 +25,12 @@ import type {
 
 export interface HttpTransportOptions {
   /**
-   * Tests only: also accept `http://127.0.0.1[:port][/path]` and `http://localhost[:port][/path]`, so the
-   * engine can be run against a local reference server. Never set in the app (PROTOCOL.md §5, §10).
+   * Also accept `http://` for a server on this machine or its local network (`isLocalHost`), so the engine can
+   * run against a local reference server; keys are still derived for the `https` form. Set by tests, and by a
+   * development build for the dev server (`openAppServices`, only when `__DEV__`); never in a release build
+   * (PROTOCOL.md §5, §10).
    */
-  allowInsecureLocalhost?: boolean;
+  allowInsecureLocal?: boolean;
   /** Defaults to the global `fetch`. */
   fetch?: typeof fetch;
   /** Per-request timeout; a timeout is a `network` error. Default 30 s. */
@@ -85,19 +88,49 @@ export function parseRetryAfter(value: string | null, nowMs: number): number | u
   return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost']);
+/**
+ * A host on this machine or its local network: loopback (`127.0.0.1`, `localhost`) or a private IPv4 address
+ * (10/8, which holds the Android emulator's `10.0.2.2` for its host; 172.16/12; 192.168/16). Takes the host as
+ * `canonicalOrigin` writes it.
+ */
+export function isLocalHost(host: string): boolean {
+  if (host === 'localhost' || host === '127.0.0.1') return true;
+  const octets = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host)?.slice(1).map(Number);
+  if (octets === undefined) return false;
+  const [a = -1, b = -1] = octets;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function hostOfOrigin(origin: string): string {
+  return origin.slice('https://'.length).split(/[:/]/)[0] ?? '';
+}
+
+/**
+ * The `http://` form of a canonical server URL whose host `isLocalHost`, for a transport built with
+ * `allowInsecureLocal`; null for any other URL, or one that has no canonical form.
+ */
+export function localHttpUrl(serverUrl: string): string | null {
+  let origin: string;
+  try {
+    origin = canonicalOrigin(serverUrl);
+  } catch {
+    return null;
+  }
+  return isLocalHost(hostOfOrigin(origin)) ? `http://${origin.slice('https://'.length)}` : null;
+}
 
 /**
  * Resolves the constructor's URL to `{ origin, base }`: `origin` is the canonical `https` form (what keys are
- * derived from), `base` is what requests go to. They differ only for the test-only insecure loopback case.
+ * derived from), `base` is what requests go to. They differ only for the insecure local case.
  */
 function resolveServer(url: string, allowInsecure: boolean): { origin: string; base: string } {
   const text = url.trim();
   if (allowInsecure && /^http:\/\//i.test(text)) {
     const origin = canonicalOrigin(`https://${text.slice('http://'.length)}`);
-    const host = origin.slice('https://'.length).split(/[:/]/)[0] ?? '';
-    if (!LOOPBACK_HOSTS.has(host)) {
-      throw new InvalidServerUrlError(`http:// is allowed only for 127.0.0.1 or localhost: ${url}`);
+    if (!isLocalHost(hostOfOrigin(origin))) {
+      throw new InvalidServerUrlError(
+        `http:// is allowed only for this machine or a private network address: ${url}`,
+      );
     }
     return { origin, base: `http://${origin.slice('https://'.length)}` };
   }
@@ -183,7 +216,7 @@ export class HttpTransport implements Transport {
   private readonly now: () => number;
 
   constructor(serverUrl: string, options: HttpTransportOptions = {}) {
-    const { origin, base } = resolveServer(serverUrl, options.allowInsecureLocalhost === true);
+    const { origin, base } = resolveServer(serverUrl, options.allowInsecureLocal === true);
     this.origin = origin;
     this.base = base;
     const fetchFn = options.fetch ?? globalThis.fetch;

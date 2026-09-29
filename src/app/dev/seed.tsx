@@ -1,18 +1,24 @@
 /**
  * Dev only: seeds the canvas's data for one screen or state and opens it, for simulator screenshots
  * (`even://dev/seed?state=<state>`; `SEED_STATES` in src/dev/seed.ts lists them). Parameters: `state`, `emoji` (App
- * settings' avatar), `t` (hold the empty-state motion at this time, ms), `y` (Group settings' scroll offset).
+ * settings' avatar), `t` (hold the empty-state motion at this time, ms), `y` (Group settings' scroll offset),
+ * `server` (the dev server, for a phone on the local network: `http://<the Mac's address>:8787`).
  * `task`, `notify` and `notify-quiet` stay here and log what the background task and a notification did.
  * Production builds redirect home.
+ *
+ * Seeded groups sync with the dev server (`npm run dev:server`): the simulator reaches it at 127.0.0.1:8787, the
+ * Android emulator at 10.0.2.2:8787. When it does not answer, the seed waits here and says so, rather than open
+ * screens whose groups can only show sync errors, and goes on once it answers.
  */
 import * as BackgroundTask from 'expo-background-task';
 import * as Notifications from 'expo-notifications';
 import { Redirect, router, useLocalSearchParams, type Href } from 'expo-router';
 import * as TaskManager from 'expo-task-manager';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { LogBox, StyleSheet, View } from 'react-native';
+import { LogBox, Platform, StyleSheet, View } from 'react-native';
 
 import { AppText, Screen } from '@/components';
+import { devServerUrl, seedServerOrigin } from '@/dev/devServer';
 import {
   arriveFromMaya,
   flaggedPreview,
@@ -35,6 +41,7 @@ import {
   ensureNotificationPermission,
   scheduleActivityNotifications,
 } from '@/services/notifications/local';
+import { HttpTransport, localHttpUrl } from '@/services/sync/httpTransport';
 import { useApp, type AppServices } from '@/state';
 import { layout } from '@/theme';
 
@@ -47,11 +54,36 @@ export default function SeedRoute() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Whether the dev server answers `/v1/info` within a couple of seconds. */
+async function reachable(server: string): Promise<boolean> {
+  try {
+    const url = localHttpUrl(server) ?? server;
+    await new HttpTransport(url, { allowInsecureLocal: true, timeoutMs: 2500 }).info();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function Seeder() {
   const services = useApp();
-  const params = useLocalSearchParams<{ state?: string; emoji?: string; t?: string; y?: string }>();
+  const params = useLocalSearchParams<{
+    state?: string;
+    emoji?: string;
+    t?: string;
+    y?: string;
+    server?: string;
+  }>();
   const [lines, setLines] = useState<string[]>(['Seeding…']);
   const started = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (started.current) return;
@@ -65,7 +97,19 @@ function Seeder() {
       setLines((current) => [...current, line]);
     };
     void (async () => {
+      const server = seedServerOrigin(params.server ?? devServerUrl(Platform.OS));
+      const host = server.replace(/^https:\/\//, '');
+      if (!(await reachable(server))) {
+        log(`The dev server at ${host} is not answering.`);
+        log('Start it with npm run dev:server; the seed goes on once it answers.');
+        while (!(await reachable(server))) {
+          if (!mounted.current) return;
+          await wait(1500);
+        }
+      }
+      log(`Dev server: ${host}`);
       const result = await seed(services, state, {
+        server,
         emoji: params.emoji ?? null,
         ...(params.t === undefined ? {} : { motionAt: Number(params.t) }),
         ...(params.y === undefined ? {} : { y: Number(params.y) }),
@@ -73,7 +117,7 @@ function Seeder() {
       for (const line of result.lines ?? []) log(line);
       if (state === 'task') await checkTask(services, log);
       if (state === 'notify' || state === 'notify-quiet') {
-        await checkNotify(services, state === 'notify-quiet', log);
+        await checkNotify(services, state === 'notify-quiet', server, log);
       }
       await navigate(services, result);
     })().catch((error: unknown) => {
@@ -149,6 +193,7 @@ async function checkTask(services: AppServices, log: (line: string) => void): Pr
 async function checkNotify(
   services: AppServices,
   quiet: boolean,
+  server: string,
   log: (line: string) => void,
 ): Promise<void> {
   // Shown while the app is open too, so the simulator can show it without backgrounding the app.
@@ -169,7 +214,7 @@ async function checkNotify(
   } else {
     log(`Permission: ${await ensureNotificationPermission(services)}`);
   }
-  const seeded = await seedGroupSettings(services, 'board');
+  const seeded = await seedGroupSettings(services, 'board', server);
   const arrived = await arriveFromMaya(services, seeded);
   const posted = await scheduleActivityNotifications([arrived], { services });
   log(`Posted: ${posted.map((p) => `${p.title} / ${p.body}`).join('; ') || 'nothing'}`);

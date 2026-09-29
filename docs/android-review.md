@@ -23,9 +23,11 @@ the safe area doing its job and is not listed below.
 
 Two things about the environment shaped what the screenshots show:
 
-- The default server is live, and the seed assumes it is not. After the first Groups run pushed one seeded group
+- The default server is live, and the seed assumed it was not. After the first Groups run pushed one seeded group
   ("Friday dinners", encrypted) to `sync.even.appalaya.com`, the emulator's DNS was blocked (Private DNS set to a
   host that does not resolve), so later screens show offline states ("waiting to sync", "Not synced since…").
+  Seeds now sync with the dev server instead (`npm run dev:server`, reached from the emulator at `10.0.2.2:8787`;
+  README "Development"), so a new pass needs neither the DNS block nor offline states.
 - Offline, the seed for Group settings and Report sometimes fails with "GET /v1/info: no response" when the previous
   run left groups behind (it looks like the seed's primed `/v1/info` meets the app's own request for it, which fails
   offline). Starting from an empty store (`state=groups-empty`) first avoids it. This is the dev seed, not the app.
@@ -157,6 +159,7 @@ $ANDROID_HOME/emulator/emulator -avd even_pixel10_api37 -no-window -gpu swiftsha
 
 (cd android && ./gradlew app:assembleDebug -PreactNativeArchitectures=arm64-v8a)
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+npm run dev:server            # in its own shell: the seed's sync server, 127.0.0.1:8787 (10.0.2.2:8787 here)
 npx expo start --port 8081
 ```
 
@@ -164,6 +167,8 @@ npx expo start --port 8081
   drops `adb reverse`. So the app reads Metro at `10.0.2.2:8081` (`debug_http_host` in its default shared
   preferences, written with `run-as`), and every adb call first restarts the server if it is gone.
 - Debug builds only: `adb shell pm grant com.appalaya.even android.permission.ACCESS_LOCAL_NETWORK`.
+- Before the first seed on an emulator that ran seeds before the dev server, open `even://dev/cleanup` once: the seed
+  refuses to run while the emulator still holds groups on production, and that page deletes their copies there.
 - Seed states: `adb shell am force-stop com.appalaya.even` then
   `adb shell am start -a android.intent.action.VIEW -d "even://dev/seed?state=<state>" com.appalaya.even`. A cold
   start each time; a warm deep link can leave an earlier sheet route under the new one.

@@ -10,6 +10,7 @@
     "start": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
+    "dev:server": "bash scripts/dev-server.sh",
     "lint": "expo lint src web/worker",
     "typecheck": "tsc --noEmit && tsc -p web/worker",
     "test": "npm test -w @even/core && npm run test:app",

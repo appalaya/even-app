@@ -31,7 +31,7 @@ afterEach(async () => {
 
 function transportFor(origin: string): HttpTransport {
   return new HttpTransport(origin.replace(/^https:/, 'http:'), {
-    allowInsecureLocalhost: true,
+    allowInsecureLocal: true,
     timeoutMs: 10_000,
   });
 }
@@ -64,7 +64,7 @@ describe.skipIf(SERVER === undefined).each(STORE_KINDS)(
       'create, join on a second phone, add expenses, converge; then rotate and follow',
       { timeout: 60_000 },
       async () => {
-        const origin = new HttpTransport(SERVER ?? '', { allowInsecureLocalhost: true }).origin;
+        const origin = new HttpTransport(SERVER ?? '', { allowInsecureLocal: true }).origin;
         const a = await phone(kind);
         const b = await phone(kind);
 

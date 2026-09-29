@@ -70,3 +70,6 @@ yarn-debug.*
 yarn-error.*
 node_modules/
 coverage/
+
+# The dev seed's sync server (npm run dev:server): its throwaway database
+.dev/

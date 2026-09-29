@@ -65,6 +65,34 @@ configuration changes (see `RELEASE.md`). On SDK 58 beta, npm needs
 the `overrides` in `package.json` because Reanimated's peer range excludes the
 React Native release candidate; remove them when SDK 58 goes stable.
 
+## Development
+
+The dev seed (`even://dev/seed?state=<state>`, `src/dev/seed.ts`) fills the app
+with the design canvas's data for simulator screenshots. Its groups sync with a
+server on this Mac, never with `sync.even.appalaya.com`, so start that first:
+
+```bash
+npm run dev:server        # the Python reference server (../even-server/python) on 127.0.0.1:8787
+```
+
+The first run creates the server's venv with Homebrew's Python 3.14 and
+installs its pinned requirements. Every start begins on an empty database in
+`.dev/sync-server/` (git-ignored), with the rate limits raised and the caps of
+the public server; it logs one line per request with the route pattern only.
+Stop it with Ctrl-C.
+
+- The iOS simulator reaches it at `127.0.0.1:8787`, the Android emulator at
+  `10.0.2.2:8787`. A phone on the local network needs
+  `EVEN_DEV_SERVER_HOST=0.0.0.0 npm run dev:server` and
+  `&server=http://<the Mac's address>:8787` on the seed link.
+- Only Debug builds talk plain http, and only to this Mac or the local
+  network; the group's server URL stays `https://…` and release builds refuse
+  http.
+- Until the server answers, the seed waits on its page and says so. It refuses
+  the production server, and refuses to run on a phone that still holds groups
+  on production from older seeds: open `even://dev/cleanup` once there, which
+  deletes their copies on production.
+
 ## Repository layout
 
 ```

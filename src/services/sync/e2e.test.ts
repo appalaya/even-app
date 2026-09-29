@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 function transport(url = SERVER ?? ''): HttpTransport {
-  return new HttpTransport(url, { allowInsecureLocalhost: true, timeoutMs: 10_000 });
+  return new HttpTransport(url, { allowInsecureLocal: true, timeoutMs: 10_000 });
 }
 
 /** The engine asks for a canonical https origin; reach the same loopback server over http. */
