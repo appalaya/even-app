@@ -1416,10 +1416,14 @@ Deviating from the canvas in implementation is a no-go.
   37 of 221" over a progress bar and the button off; done, "178 of 221
   right, 81%", "Median 0.4 s per title", and each category's right of total
   with a bar as on Balances, the button on again (a second run starts over).
-  Leaving the page stops the run. The button is off while the model is
-  unavailable (not drawn; the Status row above says why). Caption: "Runs the
-  app's built-in test titles on this phone's model. About a minute. Nothing
-  leaves the phone."
+  Leaving the page stops the run, and so does the app going to the
+  background: the titles scored by then are kept as a stopped run, never
+  shown as done (no board draws it, so the page shows the button as before a
+  run). A title with no reply after 8 s (the native side gives up at 6 s)
+  counts as wrong, timed out, and the run moves on. The button is off while
+  the model is unavailable (not drawn; the Status row above says why).
+  Caption: "Runs the app's built-in test titles on this phone's model. About
+  a minute. Nothing leaves the phone."
   *Sync*: one row per group on Groups (archived included): the name, "3
   unsent", "Last synced 2 min ago" (or "1 hr ago", "3 days ago", "just
   now"; "Never synced"), and after a failed cycle the error under a warning
