@@ -21,7 +21,7 @@ including the parts the server never sees.
 - **State**: React Context + hooks over a memoised per-group derived state; SQLite is the source of truth
 - **Background**: expo-background-task, expo-notifications (local only)
 - **Camera and QR**: expo-camera for reading invite QR codes only (permission text "Even uses the camera only to read invite QR codes."; no microphone; Android blocks `RECORD_AUDIO` and `WRITE_SETTINGS`), `uqr` to encode the invite link (`jsqr` in tests only), expo-brightness to lift the screen while a code is shown
-- **In-app browser**: expo-web-browser for the contact page (Help and feedback, Report this group)
+- **In-app browser**: expo-web-browser for the contact page (Help and feedback, Report this group) and About's Privacy, Terms and Source code. On Android it is a Chrome Custom Tab, accepted as it is: it closes with an ✕ instead of Done, adds Chrome's minimise, share and ⋮ menu, and shows Chrome's own first-run screen the first time a Custom Tab opens on the phone; its bar takes `surface`, and Back returns to the app
 - **Tests**: Vitest for `packages/core`; the app has no simulator-based test suite in v1
 
 ## Architecture Overview
@@ -1207,6 +1207,14 @@ takedown is a server-side blocklist, not a client action.
   `expo-notifications`: title is the group name, body is the activity summary
   ("Maya added Dinner · 90.00"). Coalesce multiple events per group into one
   notification ("3 new changes"; the title already names the group).
+- On Android every activity notification is posted in the app's one
+  notification channel, "Group activity" (id `group-activity`, description
+  "New expenses and payments in your groups."), which people see and can turn
+  off in Settings › Apps › Even › Notifications. The app creates it at launch
+  and again before the task posts (`ensureActivityChannel`); creating it asks
+  for nothing. Its importance is the one expo-notifications' fallback channel
+  ("Miscellaneous") had: high, which Settings shows as Default with Pop on
+  screen. An app can lower a channel's importance later, never raise it.
 - iOS runs background tasks at its discretion, often only when the phone is
   idle or charging, and never after the user force-quits the app. Android has
   a 15-minute floor. App settings makes no promise about timing (the
@@ -1519,15 +1527,22 @@ Deviating from the canvas in implementation is a no-go.
   glyph in the words Group's status line uses ("Can't reach this group's
   server.", "Not synced since 2:10 PM"). The section is left out with no
   groups (not drawn).
-  *This build*: Version ("1.0 (120)"), iOS (the system version), Device
-  (React Native knows only "iPhone" or "iPad" on iOS; the model name needs
+  *This build*: Version ("1.0 (120)"), iOS (the system version), Device (React
+  Native knows only "iPhone" or "iPad" on iOS; the model name needs
   `expo-device`), and Apple Intelligence (On while the model is available or
-  getting ready, else Off). No device id, not even shortened (the
-  AppDiagnostics boards still draw "d91f…Kq2e" and are to lose it): the page
-  is made to be screenshotted and sent, the id is the one value on it that is
-  the same in every group and survives a reinstall, and nothing a tester or
-  support holds can be matched against it (the server never sees it; group
-  members already see its short form in Activity).
+  getting ready, else Off); on Android, Android (the release, "17") and Device
+  (the model React Native reports), with no Apple Intelligence row. No device
+  id, not even shortened (the AppDiagnostics boards still draw "d91f…Kq2e" and
+  are to lose it): the page is made to be screenshotted and sent, the id is
+  the one value on it that is the same in every group and survives a
+  reinstall, and nothing a tester or support holds can be matched against it
+  (the server never sees it; group members already see its short form in
+  Activity).
+  *On Android* (no board; the owner's call): the on-device model is iOS only,
+  so the page leaves out Category model and Check on this phone altogether
+  (`diagnosticsSections`) rather than show "Unavailable" and a button that can
+  never turn on. It opens on Sync, 16 below the nav bar as the first section
+  is on iOS, or on This build with no groups. iOS draws the boards unchanged.
 - **Group settings**: the group's name first (a row opening Rename group),
   invite (always visible, with the one-sentence warning, Share link, Copy code
   and the round Show QR code button, disabled with "Preparing your invite…"
@@ -1605,6 +1620,12 @@ straight apostrophes in the app, typographic ones on the site); the same
 error is worded the same way everywhere. A sweep with an inventory of every
 user-visible string is part of review before a release.
 
+Copy no board draws, shown by the system:
+
+- Android's notification channel (Settings › Apps › Even › Notifications):
+  name "Group activity", description "New expenses and payments in your
+  groups."
+
 ## Key patterns
 
 **Minor units, always.** Integers below the formatting layer.
@@ -1625,7 +1646,15 @@ spinner that blocks.
 prefixed with `'` so a spreadsheet does not execute another member's title.
 
 **Platform conventions.** Expo Router gives back gestures and the Android back
-button. Respect safe areas, dark mode, dynamic type.
+button. Respect safe areas, dark mode, dynamic type. On Android, three-button
+navigation shows the canvas behind its buttons (the system's contrast scrim is
+off; the buttons are dark in light and light in dark), and `Alert.alert` stays
+the system's dialog, in Even's theme: `surface`, `text` and `textSecondary`,
+28 dp corners (the sheets' radius), Inter, sentence-case buttons in the
+accent. Both buttons take the accent, because Android cannot make only Delete
+red without a native module. At the largest text sizes a sheet header's
+actions keep their full width and never truncate; its centred title gives way,
+moving off centre only as far as it must and then ending in an ellipsis.
 
 ## On-device capture (designed for, not in v1)
 

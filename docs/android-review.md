@@ -47,7 +47,7 @@ area. Differences that come from the seed's data or from shared code, and so wou
 | Activity | both | Matches. The seed's titles are longer than the board's ("Nathan's Sunshine Village lift tickets"), so lines wrap differently (not Android). |
 | Add expense (AddExpense, AddExpenseStates) | both | Matches, keyboard state included: Save sits 12 above the keyboard. |
 | Split | both | Matches. The board's check glyph is Chrome's HTML checkbox; the app draws its own (not Android). |
-| Expense detail | both | Matches. **Deviates:** "Delete this expense?" is Android's AppCompat dialog (square corners, CANCEL and DELETE in capitals, AppCompat's teal, Delete not red). No board draws this dialog; see the questions. |
+| Expense detail | both | Matches. "Delete this expense?" is Android's AppCompat dialog, themed since the owner's decision 2 (below): the surface colour, 28 dp corners, Inter, sentence-case Cancel and Delete in the accent. Delete is not red. No board draws this dialog. |
 | Settle | both | Matches. |
 | Category picker | both | Matches. Emoji are Android's (Noto), here and everywhere. |
 | Date sheet (AddExpenseStates 6) | light | Matches; the app's own calendar, so no native date picker is involved. |
@@ -62,21 +62,22 @@ area. Differences that come from the seed's data or from shared code, and so wou
 | Name pick and no seat (SeatPick, SeatSameDevice, GroupNoSeat) | both | Matches. On SeatSameDevice the board darkens the screen behind both sheets more than the app does (one scrim, as `Sheet` documents) (not Android). |
 | App settings (AppSettings) | both | Matches. **Bug fixed:** the Notifications switch sent people to the Settings app instead of asking; Android reports a never-asked permission as denied (see below). |
 | About (AppAbout) | both | Matches. A local build reads "1.0 (1)". |
-| Diagnostics (AppDiagnostics) | both | **Deviates:** Android has no on-device model, so Status reads "Unavailable: this device can't run it", Model "—" and Check the model is off; This build reads Android 17 and the device model, with no Apple Intelligence row. No board draws Android; see the questions. |
-| In-app browser (ReportInBrowser) | both | **Deviates:** a Chrome Custom Tab. Its bar takes `surface` in both modes, but it closes with an ✕ (a "Done" text button is iOS only) and Chrome adds minimise, share and menu buttons. Back returns to the app. |
+| Diagnostics (AppDiagnostics) | both | Android has no on-device model, so since the owner's decision 4 (below) it leaves out Category model and Check on this phone: the page opens on Sync, then This build (Android 17 and the device model, no Apple Intelligence row). No board draws Android. |
+| In-app browser (ReportInBrowser) | both | A Chrome Custom Tab, accepted as it is (the owner's decision 3, below). Its bar takes `surface` in both modes; it closes with an ✕ (a "Done" text button is iOS only), Chrome adds minimise, share and menu buttons, and Chrome shows its own first-run screen the first time. Back returns to the app. |
 | Splash | both | Matches: the mark on the canvas colour in each mode. |
 
 ### Across every screen
 
 - **Font.** Inter everywhere on Android (Display from 24 pt), with tabular figures. It is a little wider than SF, so
-  some lines wrap one word earlier. At 130 % font size everything holds (the back label truncates, as on iOS); at
-  200 % the sheet header's "Cancel" runs into its centred title (see the questions).
+  some lines wrap one word earlier. At 130 % font size everything holds (the back label truncates, as on iOS). At
+  200 % the sheet header's "Cancel" ran into its centred title; since the owner's decision 6 (below) Cancel keeps its
+  width and the title gives way.
 - **Status bar.** Dark icons in light, light in dark, and over sheets and the camera prompt; they follow App
   settings' Appearance too.
 - **Navigation bar.** Gesture navigation: transparent, content scrolls under it. Three-button navigation: the
-  system draws its translucent contrast scrim, a band a shade off the canvas colour (see the questions). **Bug
-  fixed:** after the phone's theme or App settings' Appearance changed with Even open, that bar kept the old light or
-  dark.
+  system drew its translucent contrast scrim, a band a shade off the canvas colour; since the owner's decision 1
+  (below) the canvas shows through, with dark buttons in light and light in dark. **Bug fixed:** after the phone's
+  theme or App settings' Appearance changed with Even open, that bar kept the old light or dark.
 - **Back.** The back gesture and button close sheets and the share menu, close Create and Join, return from Split
   to Add expense and from Group to Groups.
 - **Pressed states.** The app's own (`rowPressed`, `accentPressed`, opacity), as the States board draws; no ripple.
@@ -86,7 +87,8 @@ area. Differences that come from the seed's data or from shared code, and so wou
   `canAskAgain`; the app read that as a refusal, so neither the switch nor the group screen's one-time ask ever
   showed the prompt, and notifications could only be turned on in the Settings app. With the fix the prompt shows, the
   switch turns on, and a posted activity notification reads "Banff 2026 / Maya added Dinner · $90.00" with the mark
-  as its icon. It sits in Android's "Miscellaneous" channel (see the questions).
+  as its icon. It sat in expo-notifications' fallback channel, "Miscellaneous"; since the owner's decision 5
+  (below) it is posted in "Group activity".
 - **Debug builds only.** React Native's debug manifest asks for local network access on Android 17, so a Debug
   build shows a nearby-devices prompt at first launch. The release manifest does not declare it; nothing asks for
   a permission at launch there.
@@ -112,23 +114,68 @@ license), app.json's `expo-font` entry for Android, and `src/theme/typography.ts
 android --no-clean` added `res/font` (the eight files and two family XMLs) and two lines registering them in
 `MainApplication.kt`; run again after the `MainActivity.kt` edit, it changed nothing.
 
-## Questions for the owner
+## The owner's decisions
 
-1. **Three-button navigation.** Android puts a translucent scrim behind the three buttons, a band slightly off the
-   canvas colour under every footer and sheet. Keep the system's scrim, or draw the canvas colour through it? The
-   second needs a native theme setting (`enforceNavigationBarContrast` off) and the app then owns the buttons'
-   contrast.
-2. **System dialogs.** "Delete this expense?" and the error alerts are Android's AppCompat dialog, not drawn
-   anywhere on the canvas. Leave them as the platform's, theme them with the accent, or draw a confirm sheet?
-3. **In-app browser.** A Custom Tab cannot show "Done"; it has an ✕, and Chrome's minimise, share and menu. Is that
-   acceptable for Help, Privacy, Terms, Source code and Report?
-4. **Diagnostics on Android.** The category model and "Check on this phone" describe an iOS-only feature. On Android
-   they read "Unavailable: this device can't run it" with the button off. Hide those sections on Android, or write
-   Android copy for them?
-5. **Notification channel.** Android files Even's notifications under "Miscellaneous", the library's fallback
-   channel, which people see in system settings. Should the app create a named channel, and what is it called?
-6. **Largest text sizes.** At 200 % on Android, a sheet's "Cancel" runs into its centred title ("CancelNew
-   expens…"). The layout is shared, so iOS's accessibility sizes likely do the same. Which gives way?
+These six questions went to the owner on 29 September 2026, who took every recommendation as it was. Each is built
+and was checked on the Pixel 10 emulator, and where the change is shared with iOS, on the iPhone 17 simulator too.
+
+1. **Three-button navigation: the canvas shows through.** Android put a translucent scrim behind the three buttons,
+   a band a shade off the canvas under every footer and sheet (#FEFEFE over #F6F5F1 in light, #141619 over #0E100F in
+   dark). AppTheme now sets `android:enforceNavigationBarContrast` to false (API 29 and later). With the scrim off
+   React Native leaves the buttons to the app, so AppTheme also sets `android:windowLightNavigationBar` from
+   `@bool/even_light_navigation_bar` (dark buttons in light, light in dark, from `values` and `values-night`), and
+   `MainActivity.onConfigurationChanged` still follows a theme change with Even open. Sheets are dialogs whose theme
+   is built on AppTheme, so they follow too. Checked with three-button navigation: under the buttons Group reads
+   #F6F5F1 in light and #0E100F in dark, Add expense and Join with code read the sheet's surface, and the buttons
+   stay readable with the phone dark and Appearance Light, the phone light and Appearance Dark, and on a cold start
+   in each. Both are hand edits that `prebuild --no-clean` keeps (RELEASE-android.md).
+2. **System dialogs: the AppCompat dialog, themed.** "Delete this expense?" and the error alerts stay Android's
+   dialog, with no new board and no sheet, dressed in Even's theme (`res/values/even_dialog.xml` and its night twin):
+   the `surface` colour with 28 dp corners (the sheets' radius), the title 20 sp Inter SemiBold in `text`, the
+   message in `textSecondary`, and sentence-case buttons (no capitals) in the accent, #1F6B5A in light and #74C1AB
+   in dark, Inter SemiBold 16 sp. React Native builds the title with the activity's theme, so AppTheme's
+   `android:windowTitleStyle` carries it, over `res/font/even_inter.xml` (the family expo-font writes names its fonts
+   for AppCompat only, and that title is a framework TextView). Checked in light and dark, from a cold start and
+   after the phone's theme changed with Even open. **Not done exactly: Delete is not red.** React Native's
+   `style: 'destructive'` is iOS only, and a theme can colour only the positive button, which is also the OK of
+   every one-button alert; a red Delete needs a native module, so both buttons take the accent. The message style
+   is set but was not seen: no seeded screen raises an alert with a message (only "Couldn't move to …" has one). An
+   alert that is already open when the phone's theme changes keeps its colours until it closes; the next one
+   follows. React Native's alerts are not closed by Back on Android (its `cancelable` defaults to false), as before.
+3. **In-app browser: the Chrome Custom Tab, as it is.** No code change. Help and feedback, Privacy, Terms, Source
+   code and Report open in a Custom Tab, which closes with an ✕ instead of Done, adds Chrome's minimise, share and ⋮
+   menu, and shows Chrome's own first-run screen ("Stay signed out") the first time any Custom Tab opens on the
+   phone; the app cannot skip it. It is the Android norm, keeps cookies, autofill and the contact page's Turnstile
+   working, and Back returns to the app. design.md's In-app browser note records it.
+4. **Diagnostics on Android: no model sections.** `diagnosticsSections(os, groupCount)` lists the page's sections:
+   Category model and Check on this phone on iOS only, Sync with a group, This build always. On Android the page
+   opens on Sync, 16 below the nav bar as the first section is on iOS, or on This build with no groups. iOS is
+   unchanged: the simulator's page matched a screenshot from before the change pixel for pixel, apart from the
+   clock and one live model timing. Tests cover both platforms' lists. **Left:** About's caption for the Diagnostics
+   row still reads "What the app knows about its model and sync." on Android too; changing it needs Android copy,
+   which the decision did not include.
+5. **Notification channel: "Group activity".** At launch, and before the background task posts, the app creates
+   one channel: id `group-activity`, name "Group activity", description "New expenses and payments in your
+   groups." Every activity notification is posted in it (expo-notifications takes the channel on the trigger, as
+   `{ channelId }`). It is delivered as "Miscellaneous" was: that fallback channel is importance high (read on the
+   emulator: 4, with vibration and the badge on), which Settings shows as "Default" with "Pop on screen" on, so
+   "Group activity" is created the same way. An app can lower a channel's importance later but never raise it.
+   Creating a channel asks for no permission. Checked: a fresh install lists only "Group activity", with its
+   description, in Settings › Apps › Even › Notifications, and the dev seed's notification ("Banff 2026 / Maya added
+   Dinner · $90.00") was posted in it. Installed over an older build, "Miscellaneous" stays beside it: Android
+   keeps a channel until the app deletes it or is uninstalled, so only a phone that ran an earlier build shows both.
+6. **Largest text sizes: the title gives way.** In the shared sheet header the actions keep their full width and
+   never truncate; the centred title takes the room between them on one line. `navTitlePlacement` keeps it centred
+   in the sheet while it clears both actions by 8, moves it off centre only as far as it must, and ends it in an
+   ellipsis when even that room is too narrow. At 200 % on Android, Join with code, New expense and Record a
+   payment fit whole beside Cancel, and Split ends "Spl…" between "‹ New expense" and Done. At iOS's largest
+   accessibility size, Cancel stays whole and the titles are cut ("Join…", "New…", "Reco…"). At the default sizes
+   the titles sit where they did: Add expense's header matches this review's screenshot pixel for pixel, Join with
+   code's title sits 1 px (0.4 dp) left from rounding, and on iOS the Join with code header matches an earlier
+   screenshot exactly. **Left:** at iOS's largest size Split's back button ("‹ New expense") fills the row and
+   pushes Done past the right edge. It did before this change too (the actions never shrank), and the rule the
+   owner chose covers Cancel; letting the back label truncate, as the full-screen back button already does, would
+   keep Done reachable. That is a question for the owner.
 
 ## Not verified
 
@@ -173,4 +220,9 @@ npx expo start --port 8081
   `adb shell am start -a android.intent.action.VIEW -d "even://dev/seed?state=<state>" com.appalaya.even`. A cold
   start each time; a warm deep link can leave an earlier sheet route under the new one.
 - Light and dark: `adb shell cmd uimode night no|yes`. Three-button navigation:
-  `adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`.
+  `adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton` (and
+  `…navbar.gestural` to go back). Font size: `adb shell settings put system font_scale 2.0` (1.0 to go back).
+- Status bar at 9:41: `adb shell settings put global sysui_demo_allowed 1`, then
+  `adb shell am broadcast -a com.android.systemui.demo -e command enter` and `… -e command clock -e hhmm 0941`.
+- An `Alert.alert` dialog is not closed by Back; tap its Cancel. A Back sent while it is open does nothing, so the
+  dialog in the next screenshot is the same one.
