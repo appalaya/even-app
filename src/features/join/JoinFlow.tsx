@@ -1,10 +1,13 @@
 /**
- * The Join flow (design.md "Invites" → Paste, Join screen, Already have it): the code sheet with its preview (a code
- * typed, pasted, or read by the Scan pill's scanner, `ScanSheet`, which hands it back to the code sheet), Join
- * through the GroupService, then "Which name is yours?" (`PickNameStep`: `claimMember` / `joinAsNewMember`), or, for
- * an invite naming a group this phone holds on another server, "Move Banff 2026 from <old> to <new>?"
- * (`acceptInviteMove`). Closing any of its sheets (`onClose`) leaves the Join route for Groups; the group a join
- * created stays, unclaimed, and Group offers the name pick again when it is opened.
+ * The Join flow (design.md "Invites" → Paste, Join screen, Already in, Already have it): the code sheet with its
+ * preview (a code typed, pasted, opened as a link, or read by the Scan pill's scanner, `ScanSheet`, which hands it back
+ * to the code sheet), Join through the GroupService, then "Which name is yours?" (`PickNameStep`: `claimMember` /
+ * `joinAsNewMember`), or, for an invite naming a group this phone holds on another server, "Move Banff 2026 from <old>
+ * to <new>?" (`acceptInviteMove`). For a group this phone already holds on the invite's server the preview says
+ * "You're already in" and its button reads Open (JoinCodeHeld, from the preview's `fit`, decided locally); Open is the
+ * same Join, whose `already` opens the group, where Group offers the name pick while this phone has no seat.
+ * Closing any of its sheets (`onClose`) leaves the Join route for Groups; the group a join created stays, unclaimed,
+ * and Group offers the name pick again when it is opened.
  *
  * A join whose server cannot be reached goes on as "Joined, waiting for first sync". One the server refuses (the group
  * blocked there, not an Even server, a server that needs updating) is undone, since nothing of this phone's is in
@@ -177,6 +180,7 @@ export function JoinFlow({
           else onDone(hrefs.group(result.localId));
           break;
         case 'already':
+          // Open on JoinCodeHeld. Group itself offers "Which name is yours?" while this phone has no seat.
           onDone(hrefs.group(result.localId));
           break;
         case 'move':

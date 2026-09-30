@@ -24,7 +24,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
 import { isStateError, type StateErrorCode } from './errors';
-import type { GroupService } from './groups';
+import { inviteFit, type GroupService } from './groups';
 import {
   createWorld,
   expectSynced,
@@ -132,6 +132,20 @@ async function twoDevices(w: World) {
     priya: memberId((await derived(a, localId)).state, 'Priya'),
   };
 }
+
+describe('inviteFit: what Join does with an invite, decided from this phone alone', () => {
+  it("held on the invite's server is already in, held on another is a move, unknown is a join", () => {
+    expect(inviteFit(SERVER, { state: 'active', serverUrl: SERVER })).toBe('already');
+    expect(inviteFit(OTHER_SERVER, { state: 'active', serverUrl: SERVER })).toBe('move');
+    expect(inviteFit(SERVER, null)).toBe('join');
+  });
+
+  it('a group closed or hidden here is refused whatever the server; a blocked one is already in', () => {
+    expect(inviteFit(SERVER, { state: 'closed', serverUrl: SERVER })).toBe('closed');
+    expect(inviteFit(OTHER_SERVER, { state: 'hidden', serverUrl: SERVER })).toBe('closed');
+    expect(inviteFit(SERVER, { state: 'blocked', serverUrl: SERVER })).toBe('already');
+  });
+});
 
 describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
   describe('create', () => {
@@ -300,11 +314,15 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
           serverUrl: SERVER,
           host: 'sync.test',
           local: null,
+          fit: 'join',
         },
       });
       expect(await g(a).previewInvite(code)).toMatchObject({
         ok: true,
-        invite: { local: { state: 'active', serverUrl: SERVER } },
+        invite: {
+          local: { state: 'active', serverUrl: SERVER, name: 'Banff 2026' },
+          fit: 'already',
+        },
       });
 
       const payload = JSON.parse(Buffer.from(code, 'base64url').toString('utf8')) as Record<
@@ -406,6 +424,56 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
       );
       const types = (await bodies(b, localId)).map((r) => r.event.type);
       expect(types).not.toContain('group.moved');
+    });
+
+    it('the preview says what Join will do, looked up on this phone with no request to any server', async () => {
+      const w = await setup(kind);
+      const { a, b, localId } = await twoDevices(w);
+      const { code } = await g(a).inviteFor(localId);
+      const elsewhere = encodeInvite(
+        makeInvite(await secretOn(a, localId), OTHER_SERVER, { g: 'Banff 2026', cur: 'CAD' }),
+      );
+      const c = await w.device('C');
+      const requests = () => [w.server().requests.length, w.server(OTHER_SERVER).requests.length];
+
+      const before = requests();
+      const held = await g(b).previewInvite(code);
+      const moved = await g(b).previewInvite(elsewhere);
+      const fresh = await g(c).previewInvite(code);
+      expect(requests()).toEqual(before);
+
+      expect(held).toMatchObject({
+        ok: true,
+        invite: {
+          localId,
+          fit: 'already',
+          local: { state: 'active', serverUrl: SERVER, name: 'Banff 2026' },
+        },
+      });
+      expect(moved).toMatchObject({
+        ok: true,
+        invite: { localId, fit: 'move', serverUrl: OTHER_SERVER, local: { serverUrl: SERVER } },
+      });
+      expect(fresh).toMatchObject({ ok: true, invite: { localId, fit: 'join', local: null } });
+
+      // Join does what each preview said.
+      expect(await g(b).joinInvite(code)).toEqual({ kind: 'already', localId });
+      expect((await g(b).joinInvite(elsewhere)).kind).toBe('move');
+      expect((await g(c).joinInvite(code)).kind).toBe('joined');
+
+      // Archived is still held: already in, and Open lands on the group, read-only with its Unarchive banner.
+      await g(b).archiveGroup(localId);
+      expect(await g(b).previewInvite(code)).toMatchObject({
+        ok: true,
+        invite: { fit: 'already' },
+      });
+      expect(await g(b).joinInvite(code)).toEqual({ kind: 'already', localId });
+      expect((await derived(b, localId)).readOnly).toBe('archived');
+
+      // Closed here: the preview reads as any invite, and Join says the invite was regenerated.
+      await b.store.setGroupState(localId, 'closed');
+      expect(await g(b).previewInvite(code)).toMatchObject({ ok: true, invite: { fit: 'closed' } });
+      expect((await g(b).joinInvite(code)).kind).toBe('closedGroupInvite');
     });
 
     it('joins offline: the group exists, the first sync failed, and the name pick waits for members', async () => {

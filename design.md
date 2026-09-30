@@ -1293,9 +1293,27 @@ checksum, and canonicalises the server URL.
   fails outright says "Couldn't join. Try again." Closing the name pick leaves
   the Join route for Groups and keeps the group, unclaimed; Group offers the
   pick again when it is opened (see "Group").
+- **Already in** (boards JoinCodeHeld, JoinCodeHeldDark): a code, pasted,
+  scanned or opened as a link, that names a group this phone holds on the
+  invite's server says so before any tap. The preview card reads "You're
+  already in" in the check line in place of "Code complete", the group's name
+  alone as its title (the name this phone knows it by, else the invite's), the
+  currency and server rows as they are, and Open in place of Join. Open runs
+  Join, whose `already` opens the group; Group then offers "Which name is
+  yours?" (SeatPick) while this phone has no seat. The check never reaches a
+  server: the group's `localId` derives from the invite's key as Join derives
+  it, and `inviteFit` (`state/groups.ts`) reads only that row; `joinInvite`
+  acts on the same decision, so the preview says what the tap does. An
+  archived group is still held and reads the same: archiving is an event in
+  the group's log, reversible and still syncing, not the end of this phone's
+  hold on it, so Open lands on the group, read-only with its Unarchive banner,
+  and the invite does not unarchive it. A group closed or hidden here (rotated
+  away) keeps the plain preview; Join then says "This group's invite was
+  regenerated. Ask a member for the new one."
 - **Already have it**: an invite whose `localId` matches a local group and
   whose server differs is treated as a move (above), with confirmation, not as
-  a duplicate.
+  a duplicate. Its preview reads as any invite's (JoinCodePreview); the
+  confirmation comes after Join.
 - **Create**: name, currency, an optional "People" section to pre-add names
   (chips; they pick their name when they join), then your name and avatar
   ("You in this group", after People, as drawn), and an "Advanced: sync
@@ -1635,6 +1653,14 @@ word, in the app's voice (short, plain, no "please", no exclamation marks,
 straight apostrophes in the app, typographic ones on the site); the same
 error is worded the same way everywhere. A sweep with an inventory of every
 user-visible string is part of review before a release.
+
+Copy boards share, word for word, with one meaning each:
+
+- "You're already in": said only of a group this phone holds. The Join
+  preview for such a group on the invite's server (JoinCodeHeld, over the
+  group's name alone) and the name pick offered again (SeatPick).
+- "Open": JoinCodeHeld's button, in place of Join. It opens the group, or its
+  name pick while this phone has no seat, and joins nothing.
 
 Copy no board draws:
 

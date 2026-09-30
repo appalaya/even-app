@@ -12,6 +12,7 @@ import {
   joinFailureOf,
   moveQuestion,
   payloadFromUrl,
+  previewCopy,
   problemMessage,
   recoverQuestion,
   routeForSystemUrl,
@@ -78,6 +79,37 @@ describe('join invite helpers', () => {
       '/settings',
     ]) {
       expect(routeForSystemUrl(url)).toBe(url);
+    }
+  });
+
+  it('words the preview card for a group this phone is already in (JoinCodeHeld) and for any other invite', () => {
+    const held = { state: 'active' as const, serverUrl: 'https://sync.even.appalaya.com' };
+    // Held on the invite's server: "You're already in", the name alone, Open.
+    expect(
+      previewCopy({ name: 'Banff 2026', local: { ...held, name: 'Banff 2026' }, fit: 'already' }),
+    ).toEqual({ status: "You're already in", title: 'Banff 2026', action: 'Open' });
+    // The name this phone knows the group by, then the invite's, then "a group".
+    expect(
+      previewCopy({ name: 'Banff', local: { ...held, name: 'Banff 2026' }, fit: 'already' }).title,
+    ).toBe('Banff 2026');
+    expect(
+      previewCopy({ name: 'Banff', local: { ...held, name: null }, fit: 'already' }).title,
+    ).toBe('Banff');
+    expect(previewCopy({ name: null, local: { ...held, name: ' ' }, fit: 'already' }).title).toBe(
+      'a group',
+    );
+    // Not held: a new invite, as JoinCodePreview draws it.
+    expect(previewCopy({ name: 'Banff 2026', local: null, fit: 'join' })).toEqual({
+      status: 'Code complete',
+      title: 'Join Banff 2026?',
+      action: 'Join',
+    });
+    expect(previewCopy({ name: null, local: null, fit: 'join' }).title).toBe('Join a group?');
+    // Held on another server (a move, asked after Join) or closed here (refused after Join): as any invite.
+    for (const fit of ['move', 'closed'] as const) {
+      expect(
+        previewCopy({ name: 'Banff 2026', local: { ...held, name: 'Banff 2026' }, fit }),
+      ).toEqual({ status: 'Code complete', title: 'Join Banff 2026?', action: 'Join' });
     }
   });
 

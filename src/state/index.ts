@@ -20,6 +20,7 @@ export type {
   ExpenseDraft,
   ExpenseEdit,
   GroupService,
+  InviteFit,
   InviteInfo,
   InvitePreview,
   JoinResult,

@@ -127,8 +127,30 @@ export interface InvitePreview {
   serverUrl: string;
   /** The server's host, for "on sync.even.appalaya.com". */
   host: string;
-  /** This phone already holds the group. */
-  local: { state: GroupLifecycle; serverUrl: string } | null;
+  /** This phone already holds the group: its row's lifecycle, server, and the name it knows the group by. */
+  local: { state: GroupLifecycle; serverUrl: string; name: string | null } | null;
+  /** What Join does with this invite on this phone (`inviteFit`): the preview says so before the tap. */
+  fit: InviteFit;
+}
+
+/**
+ * What joining an invite does on this phone, decided from the group row its code names and nothing else: the local
+ * id derives from the invite's key (`deriveLocal`), so the answer needs no network. `joinInvite` acts on it and the
+ * Join preview shows it (design.md "Invites"):
+ * - `join`: this phone does not hold the group; a fresh join ("Join Banff 2026?").
+ * - `already`: held, on the invite's server; Join opens it ("You're already in", Open).
+ * - `move`: held on another server; a move to confirm ("Already have it").
+ * - `closed`: held but closed or hidden here (rotated away); refused ("This group's invite was regenerated.").
+ */
+export type InviteFit = 'join' | 'already' | 'move' | 'closed';
+
+export function inviteFit(
+  serverUrl: string,
+  held: { state: GroupLifecycle; serverUrl: string } | null,
+): InviteFit {
+  if (held === null) return 'join';
+  if (held.state === 'closed' || held.state === 'hidden') return 'closed';
+  return held.serverUrl === serverUrl ? 'already' : 'move';
 }
 
 export type PreviewResult =
@@ -472,7 +494,10 @@ export class GroupService {
     return { code, link: inviteLink(code), ready: derived.inviteReady };
   }
 
-  /** Decodes a pasted code or link for the Join screen. Never throws for bad input. */
+  /**
+   * Decodes a pasted code or link for the Join screen, and looks the group up on this phone by the local id its key
+   * derives (no network). Never throws for bad input.
+   */
   async previewInvite(text: string): Promise<PreviewResult> {
     let invite: ReturnType<typeof decodeInvite>;
     let localId: string;
@@ -491,7 +516,9 @@ export class GroupService {
         currency: invite.cur ?? null,
         serverUrl: invite.s,
         host: hostOf(invite.s),
-        local: row === null ? null : { state: row.state, serverUrl: row.serverUrl },
+        local:
+          row === null ? null : { state: row.state, serverUrl: row.serverUrl, name: row.nameCache },
+        fit: inviteFit(invite.s, row),
       },
     };
   }
@@ -512,15 +539,21 @@ export class GroupService {
     }
     const { localId } = deriveLocal(secret);
     const existing = await this.store.getGroup(localId);
+    // The same decision the preview showed (`inviteFit`).
+    const fit = inviteFit(invite.s, existing);
     if (existing !== null) {
-      if (existing.state === 'closed' || existing.state === 'hidden') {
-        return { kind: 'closedGroupInvite', localId, state: existing.state };
+      if (fit === 'closed') {
+        return {
+          kind: 'closedGroupInvite',
+          localId,
+          state: existing.state === 'hidden' ? 'hidden' : 'closed',
+        };
       }
       // A re-shared invite is also the recovery path for a row whose secret is missing (an Android restore).
       const hadSecret = (await this.secrets.getSecret(localId)) !== null;
       // The row's server, not the invite's: a different one is a move the caller confirms first.
       await this.secrets.setSecret(localId, secret, existing.serverUrl);
-      if (existing.serverUrl !== invite.s) {
+      if (fit === 'move') {
         return { kind: 'move', localId, fromServer: existing.serverUrl, toServer: invite.s };
       }
       if (!hadSecret) {

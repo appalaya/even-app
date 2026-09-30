@@ -1,6 +1,6 @@
 /**
- * Join with code (JoinCode, JoinCodePreview, JoinCodeError and their dark twins): a sheet 150 pt from the top (the
- * safe area + 88) over Groups, Cancel and "Join with code" in its header (title inset 100), then:
+ * Join with code (JoinCode, JoinCodePreview, JoinCodeHeld, JoinCodeError and their dark twins): a sheet 150 pt from
+ * the top (the safe area + 88) over Groups, Cancel and "Join with code" in its header (title inset 100), then:
  * - "Paste the code or link someone sent you, or scan it from their phone." 15/21 `textSecondary`, 8 below, inset
  *   20;
  * - the 208 pt code field with its Scan and Paste pills, 16 below, inset 16 (Scan opens `ScanSheet`);
@@ -8,6 +8,9 @@
  * - read: an outlined card 16 below (padding 16 18, gap 4): "Code complete" with a 13 pt check, "Join Banff 2026?"
  *   24/30 bold, "Canadian dollar · CAD" 15/20 `textSecondary`, the server host with a 13 pt lock 4 further down;
  *   Join enabled;
+ * - read, for a group this phone already holds on that server (JoinCodeHeld): the same card and button with three
+ *   strings changed, "You're already in", the group's name alone ("Banff 2026") and Open (`previewCopy`); Open runs
+ *   Join, which opens the group, or its name pick while this phone has no seat;
  * - incomplete: the field ringed and "That code isn't complete. Copy it again." under it; Join disabled;
  * - a newer version: "This invite needs a newer Even." and an Update button to the store (error-copy panel).
  * Join sits at the foot, inset 16. When Join could not go through (JoinCodeRefused), the reason sits
@@ -24,6 +27,8 @@ import { FieldError } from '@/features/groups/FieldError';
 import type { InvitePreview } from '@/state';
 import { useTheme } from '@/theme';
 import { LINKS } from '@/features/settings/about';
+
+import { previewCopy, type PreviewCopy } from './invite';
 
 export type CodeState =
   | { kind: 'empty' }
@@ -60,6 +65,7 @@ export function JoinCodeSheet({
   failure,
 }: JoinCodeSheetProps) {
   const insets = useSafeAreaInsets();
+  const copy = state.kind === 'read' ? previewCopy(state.invite) : null;
 
   const paste = async () => {
     try {
@@ -96,7 +102,7 @@ export function JoinCodeSheet({
         error={state.kind === 'error' ? state.message : undefined}
         containerStyle={styles.field}
       />
-      {state.kind === 'read' && <InviteCard invite={state.invite} />}
+      {state.kind === 'read' && copy !== null && <InviteCard invite={state.invite} copy={copy} />}
       {state.kind === 'error' && state.update === true && (
         <Button
           label="Update"
@@ -109,7 +115,7 @@ export function JoinCodeSheet({
       )}
       <View style={styles.flex} />
       <Button
-        label="Join"
+        label={copy?.action ?? 'Join'}
         onPress={onJoin}
         disabled={state.kind !== 'read' || busy}
         style={styles.join}
@@ -119,18 +125,18 @@ export function JoinCodeSheet({
   );
 }
 
-function InviteCard({ invite }: { invite: InvitePreview }) {
+function InviteCard({ invite, copy }: { invite: InvitePreview; copy: PreviewCopy }) {
   const { tokens } = useTheme();
   return (
     <Card tone="outline" style={styles.card}>
       <View style={styles.line}>
         <Icon name="check" size={13} color={tokens.textMuted} strokeWidth={2.8} />
         <AppText variant="caption" color="textMuted">
-          Code complete
+          {copy.status}
         </AppText>
       </View>
       <AppText variant="title2" accessibilityRole="header">
-        {`Join ${invite.name ?? 'a group'}?`}
+        {copy.title}
       </AppText>
       {invite.currency !== null && (
         <AppText variant="subhead" color="textSecondary">

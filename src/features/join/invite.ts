@@ -1,12 +1,13 @@
 /**
- * Invite plumbing for the Join flow (design.md "Invites"): where an opened invite link goes, the copy for a code that
- * cannot be used, the line under Join when a usable invite still cannot be joined, and the confirmation for an invite
- * that names a group this phone holds on another server. Pure.
+ * Invite plumbing for the Join flow (design.md "Invites"): where an opened invite link goes, the preview card's words
+ * (a new group, or one this phone is already in), the copy for a code that cannot be used, the line under Join when a
+ * usable invite still cannot be joined, and the confirmation for an invite that names a group this phone holds on
+ * another server. Pure.
  */
 import { PROTOCOL } from '@even/core';
 
 import { hrefs } from '@/features/groups/routes';
-import type { InviteProblem, JoinResult } from '@/state';
+import type { InvitePreview, InviteProblem, JoinResult } from '@/state';
 
 import type { SyncErrorCode } from '../../services/sync/types';
 
@@ -53,6 +54,35 @@ export function payloadFromUrl(url: string | null | undefined): string | null {
 export function routeForSystemUrl(url: string): string {
   const code = payloadFromUrl(url);
   return code === null ? url : (hrefs.joinWithCode(code) as string);
+}
+
+/** The preview card's words and its button (JoinCodePreview, JoinCodeHeld). */
+export interface PreviewCopy {
+  /** The small line with the check: "Code complete" or "You're already in". */
+  status: string;
+  /** "Join Banff 2026?", or the group's name alone when this phone is already in it. */
+  title: string;
+  /** The button at the foot: "Join" or "Open". */
+  action: string;
+}
+
+/**
+ * What the preview card says for an invite that reads. A group this phone already holds on the invite's server
+ * (`fit` `already`, JoinCodeHeld): "You're already in", the group's name as this phone knows it, and Open, which goes
+ * where Join goes for it (the group, or the name pick while this phone has no seat). Anything else reads as a new
+ * invite (JoinCodePreview): a held group on another server asks to move after Join ("Already have it"), one closed
+ * here says after Join that its invite was regenerated.
+ */
+export function previewCopy(invite: Pick<InvitePreview, 'name' | 'local' | 'fit'>): PreviewCopy {
+  if (invite.fit === 'already') {
+    const known = invite.local?.name?.trim() ? invite.local.name : null;
+    return {
+      status: "You're already in",
+      title: known ?? invite.name ?? 'a group',
+      action: 'Open',
+    };
+  }
+  return { status: 'Code complete', title: `Join ${invite.name ?? 'a group'}?`, action: 'Join' };
 }
 
 /**
