@@ -22,8 +22,8 @@ import { ThemeProvider, useTheme } from '@/theme';
 if (__DEV__) runStartupSelfCheck();
 
 /**
- * Groups is always the bottom of the stack, so a cold start from a link (`/i#…`, `even://join`) still has Groups
- * under the Join sheet and Cancel lands there.
+ * Groups is always the bottom of the stack, so a cold start from a link (an invite link, which `+native-intent.ts`
+ * sends to `/join?code=…`, or `even://join`) still has Groups under the Join sheet and Cancel lands there.
  */
 export const unstable_settings = { anchor: 'index' };
 

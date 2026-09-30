@@ -9,7 +9,9 @@
  * A code shaped like an invite that still cannot be used (a newer invite version, a checksum or server problem) counts
  * as found: Join with code then names the problem as it does for a pasted code ("This invite needs a newer Even.").
  */
-import { decodeInvite, InviteError, isB64url, PROTOCOL } from '@even/core';
+import { decodeInvite, InviteError, isB64url } from '@even/core';
+
+import { inviteLinkFragment } from './invite';
 
 export type ScanVerdict =
   /**
@@ -22,13 +24,9 @@ const NOT_INVITE: ScanVerdict = { kind: 'notInvite' };
 
 /** The code in a scanned text: the fragment of an invite link on the invite host, or the text itself if bare. */
 function codeOf(text: string): string | null {
-  const hash = text.indexOf('#');
-  if (hash === -1) return isB64url(text) ? text : null;
-  const base = text.slice(0, hash).toLowerCase();
-  const link = `${PROTOCOL.inviteHost}${PROTOCOL.invitePath}`.toLowerCase();
-  if (base !== link && base !== `${link}/`) return null;
-  const code = text.slice(hash + 1);
-  return isB64url(code) ? code : null;
+  if (!text.includes('#')) return isB64url(text) ? text : null;
+  const code = inviteLinkFragment(text);
+  return code !== null && isB64url(code) ? code : null;
 }
 
 /** Whether a scanned QR code's text is an Even invite. */

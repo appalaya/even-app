@@ -1242,13 +1242,27 @@ checksum, and canonicalises the server URL.
   after Share link and Copy code on the invite card and in Group settings'
   invite section, and from the share menu. Their camera opens Even through the
   universal link, or the invite page if Even is not installed.
-- **Open**: the universal link and App Link route to `/i`. The app reads the
-  full URL via `Linking.useURL()` and parses the fragment itself, since the
-  router may not surface fragments. The custom scheme `even://` is registered
-  for the landing page's "open app" button only and never carries a payload;
-  `even://join` opens the Groups screen with "Join with code" expanded, so the
-  user pastes the code they just copied. `canonicalOrigin` uses a small
-  pure-TypeScript URL parser in `core`, not Hermes's incomplete `URL`.
+- **Open**: expo-router hands every URL the system opens the app with to
+  `src/app/+native-intent.ts` (`redirectSystemPath`) before it routes it, at
+  launch and when a link reaches the running app. The universal link and App
+  Link with a payload (`https://even.appalaya.com/i#<payload>`, also `/i/#`)
+  leave there as `/join?code=<payload>` (`routeForSystemUrl` in
+  `features/join/invite.ts`), so the code travels in the route and the Join
+  preview opens whether Even was closed, in the background or on screen, with
+  or without groups. Nothing listens for the link after a screen mounts: `/i`
+  used to (`Linking.useURL()`), and missed every link that reached a running
+  app, which arrives as one `url` event that had passed by the time `/i`
+  mounted. `redirectSystemPath` also clears expo-linking's launch URL
+  (`clearInitialURL`), which the router reads whenever its root mounts: iOS can
+  mount it again while the process lives (a new scene connection, which shows
+  the splash) and records a universal link there only while it is empty, so a
+  link already routed must not stay there. `/i` without a payload goes to
+  Groups. Another invite opened while Join shows replaces its code. The custom
+  scheme `even://` is registered for the landing page's "open app" button only
+  and never carries a payload (`even://i#…` goes to Groups); `even://join`
+  opens the Groups screen with "Join with code" expanded, so the user pastes
+  the code they just copied. `canonicalOrigin` uses a small pure-TypeScript URL
+  parser in `core`, not Hermes's incomplete `URL`.
 - **Paste**: the Groups screen has "Join with code." It accepts the bare
   payload or a full link and strips the URL. A checksum failure says "That
   code isn't complete. Copy it again."
@@ -1361,7 +1375,8 @@ group, and everything hangs off it.
 src/app/
 ├── _layout.tsx              → Root stack, providers, deep-link handling
 ├── index.tsx                → Groups list (+ Create, + Join with code)
-├── i.tsx                    → Invite route: decodes, redirects to join
+├── +native-intent.ts        → Invite links (/i#<code>) → /join?code=<code>
+├── i.tsx                    → /i without a code: redirects to Groups
 ├── join.tsx                 → Join confirmation + pick your name
 ├── group/[id]/
 │   ├── _layout.tsx          → Group stack

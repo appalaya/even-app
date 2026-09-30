@@ -188,7 +188,10 @@ and was checked on the Pixel 10 emulator, and where the change is shared with iO
   background work. Only the stock Pixel system was checked.
 - Scanning a real QR code with a real camera (the emulator shows a virtual scene; the scan was injected).
 - Background refresh and notifications arriving from it; App Links (`even.appalaya.com/i`) verification; both need a
-  real device and, for links, the published asset links.
+  real device and, for links, the published asset links. An App Link takes the iOS universal link's path through the
+  router: `src/app/+native-intent.ts` turns `https://even.appalaya.com/i#<code>` into `/join?code=<code>`, for the
+  launch intent and for one that reaches the running app (`onNewIntent`, a `url` event). That is the fix for a link
+  that reached a running app and landed on Groups (found on iOS); it has not been run on Android.
 - A release (R8) build on the device. Only its merged manifest was checked.
 - Android 12 and earlier (a different notification permission model) and Android 8 and earlier (no 500 and 600
   weights before Android 9: Inter falls back to Regular or Bold).

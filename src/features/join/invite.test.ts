@@ -1,3 +1,4 @@
+import { decodeInvite, encodeInvite, inviteLink, makeInvite } from '@even/core';
 import { describe, expect, it } from 'vitest';
 
 import type { JoinResult } from '@/state';
@@ -6,13 +7,22 @@ import type { SyncErrorCode } from '../../services/sync/types';
 
 import {
   hostOf,
+  inviteLinkFragment,
   joinFailureMessage,
   joinFailureOf,
   moveQuestion,
   payloadFromUrl,
   problemMessage,
   recoverQuestion,
+  routeForSystemUrl,
 } from './invite';
+
+const code = encodeInvite(
+  makeInvite(new Uint8Array(32).fill(7), 'https://sync.example.net', {
+    g: 'Banff 2026',
+    cur: 'CAD',
+  }),
+);
 
 describe('join invite helpers', () => {
   it('takes the payload from an invite link', () => {
@@ -21,6 +31,54 @@ describe('join invite helpers', () => {
     expect(payloadFromUrl('https://even.appalaya.com/i')).toBeNull();
     expect(payloadFromUrl('https://even.appalaya.com/i#')).toBeNull();
     expect(payloadFromUrl(null)).toBeNull();
+  });
+
+  it('reads a payload only from an invite link on the invite host, never from even://', () => {
+    expect(payloadFromUrl(inviteLink(code))).toBe(code);
+    expect(payloadFromUrl(`HTTPS://EVEN.APPALAYA.COM/i#${code}`)).toBe(code);
+    expect(payloadFromUrl(` https://even.appalaya.com/i# ${code}\n`)).toBe(code);
+    expect(payloadFromUrl(`https://even.appalaya.com/i#${encodeURIComponent('a b')}`)).toBe('a b');
+    expect(payloadFromUrl(`https://example.com/i#${code}`)).toBeNull();
+    expect(payloadFromUrl(`https://even.appalaya.com/join#${code}`)).toBeNull();
+    expect(payloadFromUrl(`http://even.appalaya.com/i#${code}`)).toBeNull();
+    expect(payloadFromUrl(`even://i#${code}`)).toBeNull();
+    expect(payloadFromUrl(`even://join#${code}`)).toBeNull();
+    expect(payloadFromUrl('even://join')).toBeNull();
+  });
+
+  it('gives the fragment of an invite link as written', () => {
+    expect(inviteLinkFragment(`https://even.appalaya.com/i#${code}`)).toBe(code);
+    expect(inviteLinkFragment('https://even.appalaya.com/i/#%20x ')).toBe('%20x ');
+    expect(inviteLinkFragment('https://even.appalaya.com/i#')).toBe('');
+    expect(inviteLinkFragment('https://even.appalaya.com/i')).toBeNull();
+    expect(inviteLinkFragment(code)).toBeNull();
+  });
+
+  it('sends an opened invite link straight to Join with its code, and leaves every other URL to the router', () => {
+    const route = routeForSystemUrl(inviteLink(code));
+    expect(route).toBe(`/join?code=${code}`);
+    // The code survives the trip through the route's query intact.
+    const param = new URLSearchParams(route.slice(route.indexOf('?'))).get('code');
+    expect(param).toBe(code);
+    expect(decodeInvite(param ?? '')).toEqual(decodeInvite(code));
+    expect(routeForSystemUrl(`https://even.appalaya.com/i/#${code}`)).toBe(`/join?code=${code}`);
+    // A payload with characters a query cannot carry as they are is encoded for it.
+    expect(routeForSystemUrl('https://even.appalaya.com/i#a&b=c')).toBe('/join?code=a%26b%3Dc');
+
+    // Payload-less, not an invite link, or even:// (which never carries a payload): unchanged.
+    for (const url of [
+      'https://even.appalaya.com/i',
+      'https://even.appalaya.com/i#',
+      'https://even.appalaya.com/i/',
+      `https://example.com/i#${code}`,
+      'even://join',
+      `even://i#${code}`,
+      'even:///',
+      'even://dev/seed?state=groups',
+      '/settings',
+    ]) {
+      expect(routeForSystemUrl(url)).toBe(url);
+    }
   });
 
   it('words the checksum problem as the board does', () => {

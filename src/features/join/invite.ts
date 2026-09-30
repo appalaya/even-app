@@ -1,28 +1,58 @@
 /**
- * Invite plumbing for the Join flow (design.md "Invites"): the `/i` route's fragment, the copy for a code that cannot
- * be used, the line under Join when a usable invite still cannot be joined, and the confirmation for an invite that
- * names a group this phone holds on another server. Pure.
+ * Invite plumbing for the Join flow (design.md "Invites"): where an opened invite link goes, the copy for a code that
+ * cannot be used, the line under Join when a usable invite still cannot be joined, and the confirmation for an invite
+ * that names a group this phone holds on another server. Pure.
  */
+import { PROTOCOL } from '@even/core';
+
+import { hrefs } from '@/features/groups/routes';
 import type { InviteProblem, JoinResult } from '@/state';
 
 import type { SyncErrorCode } from '../../services/sync/types';
 
+/** `https://even.appalaya.com/i`, lower case: an invite link up to its `#`, which may also end in `/`. */
+const INVITE_LINK = `${PROTOCOL.inviteHost}${PROTOCOL.invitePath}`.toLowerCase();
+
 /**
- * The payload of an invite link: everything after the first `#` of `https://even.appalaya.com/i#<payload>` (also
- * `/i/#`), or null when the URL carries none. The router may not surface fragments, so `/i` parses the full URL
- * itself (`Linking.useURL()`); `even://` never carries a payload.
+ * The fragment of an invite link on the invite host, as written: the text after the `#` of
+ * `https://even.appalaya.com/i#<code>` or `/i/#<code>` (scheme and host in any case), or null for any other text,
+ * `even://` links included, since they never carry a payload (design.md "Invites"). The scanner and an opened link
+ * both read links with this.
+ */
+export function inviteLinkFragment(text: string): string | null {
+  const hash = text.indexOf('#');
+  if (hash === -1) return null;
+  const base = text.slice(0, hash).toLowerCase();
+  if (base !== INVITE_LINK && base !== `${INVITE_LINK}/`) return null;
+  return text.slice(hash + 1);
+}
+
+/**
+ * The payload of an opened invite link (`https://even.appalaya.com/i#<payload>`, also `/i/#`), trimmed and, if it
+ * was percent-encoded, decoded; null when the URL is not an invite link or carries no payload.
  */
 export function payloadFromUrl(url: string | null | undefined): string | null {
   if (url == null) return null;
-  const hash = url.indexOf('#');
-  if (hash === -1) return null;
-  let payload = url.slice(hash + 1).trim();
+  const fragment = inviteLinkFragment(url.trim());
+  if (fragment === null) return null;
+  let payload = fragment.trim();
   try {
     payload = decodeURIComponent(payload);
   } catch {
     // Not percent-encoded: use it as it is.
   }
   return payload === '' ? null : payload;
+}
+
+/**
+ * Where a URL the system opens the app with goes (`+native-intent`, design.md "Invites" → Open): an invite link with a
+ * payload goes straight to Join with it as the `code` param (`/join?code=<payload>`), so the code travels in the route
+ * and nothing has to catch the link after the route mounts. Anything else comes back unchanged for the router, a
+ * payload-less `/i` included (its route goes to Groups).
+ */
+export function routeForSystemUrl(url: string): string {
+  const code = payloadFromUrl(url);
+  return code === null ? url : (hrefs.joinWithCode(code) as string);
 }
 
 /**

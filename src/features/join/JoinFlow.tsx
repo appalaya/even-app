@@ -43,7 +43,7 @@ type Step =
 export interface JoinFlowProps {
   /** Master switch from the route: false while the route is leaving. */
   visible: boolean;
-  /** A code handed over by `/i` or pasted into the dev seed. */
+  /** A code handed over by an invite link (`/join?code=`) or the dev seed; a new one replaces the field's text. */
   initialCode?: string;
   /** Start at "Which name is yours?" for a group this phone holds but has not claimed a seat in. */
   pickLocalId?: string;
@@ -91,6 +91,29 @@ export function JoinFlow({
   // Why the last Join did not go through, for the text it was tapped with: the line under Join.
   const [failure, setFailure] = useState<{ text: string; message: string } | null>(null);
   const latest = useRef(0);
+
+  // Another invite link opened while Join shows lands on this same route with a new `code`: it replaces the field's
+  // text, and if another sheet was showing (the scanner, the name pick, a move), that one leaves and, as `go` does,
+  // the code sheet comes back once it is down.
+  const [handedCode, setHandedCode] = useState(initialCode);
+  const [backToCode, setBackToCode] = useState(false);
+  if (initialCode !== undefined && initialCode !== handedCode) {
+    setHandedCode(initialCode);
+    setText(initialCode);
+    if (step.kind !== 'code') {
+      setShown(null);
+      setBackToCode(true);
+    }
+  }
+  useEffect(() => {
+    if (!backToCode) return;
+    const timer = setTimeout(() => {
+      setBackToCode(false);
+      setStep({ kind: 'code' });
+      setShown('code');
+    }, SWAP_MS);
+    return () => clearTimeout(timer);
+  }, [backToCode]);
 
   useEffect(() => {
     const request = ++latest.current;
