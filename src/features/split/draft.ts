@@ -348,6 +348,23 @@ export function sharesLine(
   return `${rest} split ${ratio}.`;
 }
 
+/** The "+ extra" field's placeholder (SplitEqual), shown while it holds nothing. */
+export const EXTRA_PLACEHOLDER = '+ extra';
+
+/**
+ * What the "+ extra" field shows: while focused, the text as typed; otherwise "+$12.00" once it holds an amount, or ''
+ * (the placeholder shows). The whole string is drawn: the field is 72 wide and grows to fit it.
+ */
+export function extraText(
+  extra: number,
+  currency: string,
+  editing: string | null,
+  locale?: string,
+): string {
+  if (editing !== null) return editing;
+  return extra > 0 ? `+${formatMinor(extra, currency, locale)}` : '';
+}
+
 /** A percentage in basis points as the cell shows it: 1500 → "15%", 3333 → "33.33%", 1250 → "12.5%". */
 export function formatBps(bp: number): string {
   const whole = Math.trunc(bp / 100);

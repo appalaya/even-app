@@ -396,9 +396,15 @@ const styles = StyleSheet.create({
   },
   checkTop: { marginTop: 5 },
   equalName: { flex: 1, minWidth: 0, gap: 1, paddingTop: 5 },
-  equalRight: { flexShrink: 0, alignItems: 'flex-end', gap: 6 },
+  /** Takes what it needs (the name gives way first); shrinks only when even an empty name leaves too little. */
+  equalRight: { flexShrink: 1, alignItems: 'flex-end', gap: 6 },
   equalAmount: { paddingTop: 5 },
-  controls: { flexDirection: 'row', gap: 6 },
+  /**
+   * The stepper, then the extra field on the row's right edge. The field grows to fit its amount; the stepper moves
+   * left, and if the two no longer fit side by side it gives way to the line below (wrap-reverse), the field keeping
+   * its place under the amount.
+   */
+  controls: { flexDirection: 'row', flexWrap: 'wrap-reverse', justifyContent: 'flex-end', gap: 6 },
   totalRow: {
     flexDirection: 'row',
     alignItems: 'baseline',

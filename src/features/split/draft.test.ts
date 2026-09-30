@@ -6,6 +6,8 @@ import {
   draftFromResolved,
   draftToSpec,
   equalDraft,
+  EXTRA_PLACEHOLDER,
+  extraText,
   formatBps,
   isEveryoneEqually,
   previewAmounts,
@@ -229,5 +231,23 @@ describe('labels', () => {
     expect(formatBps(1250)).toBe('12.5%');
     expect(formatBps(0)).toBe('0%');
     expect(formatBps(-500)).toBe('-5%');
+  });
+});
+
+describe('the "+ extra" field', () => {
+  // The field shows this whole string and grows to fit it (72 wide at least). At 72 fixed, bold "+$25.00" needed
+  // 57 pt of the 54 inside it and iOS drew only the "+".
+  it('shows an amount whole, with its sign and symbol', () => {
+    expect(extraText(2500, 'CAD', null, 'en-US')).toBe('+$25.00');
+    expect(extraText(1200, 'CAD', null, 'en-US')).toBe('+$12.00');
+    expect(extraText(123400, 'CAD', null, 'en-US')).toBe('+$1,234.00');
+    expect(extraText(1234, 'JPY', null, 'en-US')).toBe('+¥1,234');
+  });
+
+  it('shows the typed text while focused, and nothing (the placeholder) while empty', () => {
+    expect(extraText(2500, 'CAD', '25.0', 'en-US')).toBe('25.0');
+    expect(extraText(2500, 'CAD', '', 'en-US')).toBe('');
+    expect(extraText(0, 'CAD', null, 'en-US')).toBe('');
+    expect(EXTRA_PLACEHOLDER).toBe('+ extra');
   });
 });

@@ -1494,9 +1494,12 @@ Deviating from the canvas in implementation is a no-go.
 - **Split** (pushed from Add expense): segmented Equal · Exact · Percent. In
   Equal each member row has an optional "×n" multiplier and an optional
   "+ extra" amount (extras come off the top, the rest splits by share; no
-  caption says so). Over-assigned Exact and Percent read "Over by $6.00" /
-  "Over by 5%" (never red) and Done stays off until Remaining reaches zero, with
-  no caption saying so.
+  caption says so). The field is 72 wide and grows to fit its amount, so money
+  is never clipped: it keeps the row's right edge under the amount, and the
+  stepper to its left moves over (the name truncating first) or, when even
+  that is not enough, drops below it. Over-assigned Exact and Percent read
+  "Over by $6.00" / "Over by 5%" (never red) and Done stays off until
+  Remaining reaches zero, with no caption saying so.
 - **Expense detail**: the facts, the split, who added it and when, edit and
   delete, and a History section listing every version with who changed what;
   any version can be restored in one tap.

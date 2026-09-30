@@ -2,13 +2,15 @@
  * Split's row controls, composed from kit pieces and tokens: the ×n shares stepper and the "+ extra" field. (The
  * include checkbox is the kit's `Checkbox`.)
  */
-import { exponentOf, formatMinor } from '@even/core';
+import { exponentOf } from '@even/core';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppText, Icon } from '@/components';
 import { applyKey, entryToMinor, minorToEntry } from '@/features/addExpense/amountEntry';
 import { fontWeight, strokes, tabularNums, typography, useTheme } from '@/theme';
+
+import { EXTRA_PLACEHOLDER, extraText } from './draft';
 
 /**
  * The shares stepper (SplitEqual): 32 tall, fully round, a 1 pt `outline`; − and + at 12 pt in `textMuted` around
@@ -84,10 +86,19 @@ function parseTyped(text: string, exponent: number): number {
   return entryToMinor(entry, exponent);
 }
 
+/** The extra field's type scale cap (its text and the copy that sizes it must scale alike). */
+const EXTRA_MAX_SCALE = 1.4;
+
 /**
  * The "+ extra" field (SplitEqual): 72 × 32, fully round, a 1 pt dashed `outlineDashed` and "+ extra" in
  * `textMuted`; once it holds an amount, soft accent with "+$12.00" bold in the accent. Uses the system decimal pad
  * (the board draws no keypad in Equal).
+ *
+ * 72 is a minimum: the field grows to fit its text, 8 either side, so money is never clipped. Bold "+$12.00" needs
+ * about 57 pt at the default text size, more than the 54 a fixed 72 left it, and a single-line UITextField that cannot
+ * fit its text draws only what comes before the first line break: "+". A hidden copy of the text sets the width; the
+ * input spans the whole field, so its text keeps that 8 either side, and the placeholder, with all 70 inside an empty
+ * field, fits at every size without widening it.
  */
 export function ExtraField({
   extra,
@@ -105,7 +116,8 @@ export function ExtraField({
   const exponent = exponentOf(currency);
   const [editing, setEditing] = useState<string | null>(null);
   const has = extra > 0 && editing === null;
-  const shown = editing ?? (extra > 0 ? `+${formatMinor(extra, currency)}` : '');
+  const shown = extraText(extra, currency, editing);
+  const type = [typography.caption, styles.extraText, has && styles.extraOn];
   return (
     <View
       style={[
@@ -115,6 +127,16 @@ export function ExtraField({
           : { borderColor: tokens.outlineDashed, borderStyle: 'dashed' },
       ]}
     >
+      <Text
+        style={[type, styles.extraSizer]}
+        maxFontSizeMultiplier={EXTRA_MAX_SCALE}
+        numberOfLines={1}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {shown}
+      </Text>
       <TextInput
         value={shown}
         onChangeText={(text) => {
@@ -123,19 +145,14 @@ export function ExtraField({
         }}
         onFocus={() => setEditing(minorToEntry(extra, exponent))}
         onBlur={() => setEditing(null)}
-        placeholder="+ extra"
+        placeholder={EXTRA_PLACEHOLDER}
         placeholderTextColor={tokens.textMuted}
         keyboardType="decimal-pad"
         selectionColor={tokens.accent}
         cursorColor={tokens.accent}
         accessibilityLabel={label}
-        maxFontSizeMultiplier={1.4}
-        style={[
-          typography.caption,
-          styles.extraInput,
-          { color: has ? tokens.accent : tokens.text },
-          has && styles.extraOn,
-        ]}
+        maxFontSizeMultiplier={EXTRA_MAX_SCALE}
+        style={[type, { color: has ? tokens.accent : tokens.text }]}
       />
     </View>
   );
@@ -152,13 +169,14 @@ const styles = StyleSheet.create({
   step: { width: 26, height: 30, alignItems: 'center', justifyContent: 'center' },
   times: { minWidth: 28, textAlign: 'center' },
   extra: {
-    width: 72,
+    minWidth: 72,
     height: 32,
-    paddingHorizontal: 8,
     borderRadius: 16,
     borderWidth: strokes.hairline,
     justifyContent: 'center',
   },
-  extraInput: { padding: 0, textAlign: 'center', ...tabularNums },
+  extraText: { padding: 0, textAlign: 'center', ...tabularNums },
   extraOn: { fontWeight: fontWeight.bold },
+  /** In the flow but 0 tall, so it widens the field without moving the input off centre. */
+  extraSizer: { height: 0, paddingHorizontal: 8, opacity: 0 },
 });
