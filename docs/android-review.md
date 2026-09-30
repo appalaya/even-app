@@ -61,7 +61,7 @@ area. Differences that come from the seed's data or from shared code, and so wou
 | Report (ReportGroup) | both | Matches after the monospace fix (the group id). Continue to report was not pressed; it opens the same in-app browser as Help (below). |
 | Name pick and no seat (SeatPick, SeatSameDevice, GroupNoSeat) | both | Matches. On SeatSameDevice the board darkens the screen behind both sheets more than the app does (one scrim, as `Sheet` documents) (not Android). |
 | App settings (AppSettings) | both | Matches. **Bug fixed:** the Notifications switch sent people to the Settings app instead of asking; Android reports a never-asked permission as denied (see below). |
-| About (AppAbout) | both | Matches. A local build reads "1.0 (1)". |
+| About (AppAbout) | both | Matches. A local build reads "1.0 (1)". The Diagnostics caption leaves out the model on Android (the owner's decision 4, below). |
 | Diagnostics (AppDiagnostics) | both | Android has no on-device model, so since the owner's decision 4 (below) it leaves out Category model and Check on this phone: the page opens on Sync, then This build (Android 17 and the device model, no Apple Intelligence row). No board draws Android. |
 | In-app browser (ReportInBrowser) | both | A Chrome Custom Tab, accepted as it is (the owner's decision 3, below). Its bar takes `surface` in both modes; it closes with an ✕ (a "Done" text button is iOS only), Chrome adds minimise, share and menu buttons, and Chrome shows its own first-run screen the first time. Back returns to the app. |
 | Splash | both | Matches: the mark on the canvas colour in each mode. |
@@ -151,9 +151,9 @@ and was checked on the Pixel 10 emulator, and where the change is shared with iO
    Category model and Check on this phone on iOS only, Sync with a group, This build always. On Android the page
    opens on Sync, 16 below the nav bar as the first section is on iOS, or on This build with no groups. iOS is
    unchanged: the simulator's page matched a screenshot from before the change pixel for pixel, apart from the
-   clock and one live model timing. Tests cover both platforms' lists. **Left:** About's caption for the Diagnostics
-   row still reads "What the app knows about its model and sync." on Android too; changing it needs Android copy,
-   which the decision did not include.
+   clock and one live model timing. Tests cover both platforms' lists. **About's caption, since:** on Android the
+   caption under About's Diagnostics row reads "What the app knows about sync. Nothing here leaves your phone.";
+   iOS keeps "What the app knows about its model and sync. …" (`diagnosticsCaption`; design.md's Copy lists both).
 5. **Notification channel: "Group activity".** At launch, and before the background task posts, the app creates
    one channel: id `group-activity`, name "Group activity", description "New expenses and payments in your
    groups." Every activity notification is posted in it (expo-notifications takes the channel on the trigger, as

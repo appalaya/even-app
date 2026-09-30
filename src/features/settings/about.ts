@@ -1,4 +1,7 @@
-/** App settings → About: where the links go and how the version reads ("1.0 (1)", AppSettings board). Pure. */
+/**
+ * App settings → About: where the links go, how the version reads ("1.0 (1)", AppSettings board) and the caption
+ * under Diagnostics. Pure.
+ */
 
 /** The landing site's plain pages (design.md "Landing page"). */
 export const LINKS = {
@@ -21,4 +24,14 @@ export function versionLabel(
 ): string {
   const v = (version ?? '1.0.0').replace(/^(\d+\.\d+)\.0$/, '$1');
   return `${v} (${build ?? '1'})`;
+}
+
+/**
+ * The caption under About's Diagnostics row. It names the model only where Diagnostics shows the model's sections
+ * (`diagnosticsSections`): iOS, as AppAbout draws it. Android has no on-device model, so its page is about sync.
+ */
+export function diagnosticsCaption(os: string): string {
+  return os === 'ios'
+    ? 'What the app knows about its model and sync. Nothing here leaves your phone.'
+    : 'What the app knows about sync. Nothing here leaves your phone.';
 }

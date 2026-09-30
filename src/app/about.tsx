@@ -2,15 +2,16 @@
  * About (AppAbout, AppAboutDark), pushed from App settings' "About" row: "‹ Settings" with "About" centred in the
  * nav bar; 28 below it the mark at 64 pt in the accent, "Even" 28/34 bold 12 under it, and the version ("1.0 (120)",
  * 15/20 `textMuted`, tabular) 2 under that. Then, 28 below, one card of Privacy, Terms and Source code (each opens
- * in the in-app browser, as Help and feedback does), and 20 below it a card with "Diagnostics ›" and its caption.
+ * in the in-app browser, as Help and feedback does), and 20 below it a card with "Diagnostics ›" and its caption
+ * (`diagnosticsCaption`: on Android it leaves out the model, as Diagnostics does there).
  */
 import { router } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 import { AppText, Card, Footnote, ListRow, Mark, Screen } from '@/components';
 import { useInAppBrowser } from '@/features/report/inAppBrowser';
 import { hrefs } from '@/features/groups/routes';
-import { LINKS } from '@/features/settings/about';
+import { diagnosticsCaption, LINKS } from '@/features/settings/about';
 import { APP_VERSION } from '@/features/settings/appVersion';
 import { layout } from '@/theme';
 
@@ -51,9 +52,7 @@ export default function AboutScreen() {
           onPress={() => router.push(hrefs.diagnostics)}
         />
       </Card>
-      <Footnote>
-        What the app knows about its model and sync. Nothing here leaves your phone.
-      </Footnote>
+      <Footnote>{diagnosticsCaption(Platform.OS)}</Footnote>
     </Screen>
   );
 }

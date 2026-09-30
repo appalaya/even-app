@@ -1486,9 +1486,10 @@ Deviating from the canvas in implementation is a no-go.
   28/34 bold, and the version and build ("1.0 (120)", a zero patch dropped);
   one card of Privacy, Terms and Source code (the public repository), each in
   the in-app browser; then a card with "Diagnostics ›", captioned "What the
-  app knows about its model and sync. Nothing here leaves your phone." A
-  settings sub-page: the links and the version had outgrown App settings, and
-  Diagnostics needed a place out of everyday reach.
+  app knows about its model and sync. Nothing here leaves your phone." (on
+  Android the caption leaves out the model, as Diagnostics does there; see
+  Copy). A settings sub-page: the links and the version had outgrown App
+  settings, and Diagnostics needed a place out of everyday reach.
 - **Diagnostics** (AppDiagnostics, AppDiagnosticsDark, DiagnosticsStates;
   pushed from About): read-only except one button, and everything on it is
   already on the phone. Why it exists: a tester can say what the category
@@ -1620,11 +1621,15 @@ straight apostrophes in the app, typographic ones on the site); the same
 error is worded the same way everywhere. A sweep with an inventory of every
 user-visible string is part of review before a release.
 
-Copy no board draws, shown by the system:
+Copy no board draws:
 
-- Android's notification channel (Settings › Apps › Even › Notifications):
-  name "Group activity", description "New expenses and payments in your
-  groups."
+- Android's notification channel, shown by the system (Settings › Apps ›
+  Even › Notifications): name "Group activity", description "New expenses
+  and payments in your groups."
+- About's caption under Diagnostics. iOS, as AppAbout draws it: "What the app
+  knows about its model and sync. Nothing here leaves your phone." Android,
+  whose Diagnostics has no model sections: "What the app knows about sync.
+  Nothing here leaves your phone." (`diagnosticsCaption`)
 
 ## Key patterns
 
