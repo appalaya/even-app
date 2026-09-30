@@ -36,7 +36,10 @@ export interface SheetAction {
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  /** Draw as a back button (chevron and label), as Split's "‹ New expense". */
+  /**
+   * Draw as a back button (chevron and label), as Split's "‹ New expense". At the largest text sizes its label takes
+   * the room the trailing action leaves and ends in an ellipsis.
+   */
   back?: boolean;
 }
 
@@ -49,7 +52,8 @@ export interface SheetHeaderProps {
   title?: ReactNode;
   /**
    * A 17/22 semibold title centred in the action row ("New expense", "Split", "Record a payment", "Join with
-   * code", "New group"). At the largest text sizes it gives way to the actions (`NavTitle`).
+   * code", "New group"). At the largest text sizes it gives way to the actions (`NavTitle`), and is not drawn when
+   * they leave it no room.
    */
   navTitle?: string;
   /** The round close button alone at the trailing edge (Join). */
@@ -273,9 +277,11 @@ const ROW_INSET_BACK = { left: 4, right: 8 } as const;
 
 /**
  * The centred title, laid over the whole action row. At the default sizes every title fits between the actions and
- * sits in the middle of the sheet, where the boards draw it. At the largest text sizes the actions keep their full
- * width and the title gives way (`navTitlePlacement`): it moves off centre only as far as it must, into the room the
- * actions leave, and ends in an ellipsis when even that is too narrow. Its uncut width is read from a hidden copy.
+ * sits in the middle of the sheet, where the boards draw it. At the largest text sizes the actions keep their width
+ * and the title gives way (`navTitlePlacement`): it moves off centre only as far as it must, into the room the
+ * actions leave, and ends in an ellipsis when even that is too narrow. When the actions leave no room at all (a back
+ * label cut short beside Done) it is not drawn (opacity 0), and keeps its header role. Its uncut width is read from a
+ * hidden copy.
  */
 function NavTitle({
   title,
@@ -298,11 +304,13 @@ function NavTitle({
       pointerEvents="none"
       style={[
         styles.navTitle,
-        placement !== 'center' && {
-          paddingLeft: clearLeft,
-          paddingRight: clearRight,
-          alignItems: placement === 'fill' ? 'center' : placement,
-        },
+        placement !== 'center' &&
+          placement !== 'hidden' && {
+            paddingLeft: clearLeft,
+            paddingRight: clearRight,
+            alignItems: placement === 'fill' ? 'center' : placement,
+          },
+        placement === 'hidden' && styles.navTitleHidden,
       ]}
     >
       <AppText weight="semibold" numberOfLines={1} accessibilityRole="header">
@@ -325,8 +333,10 @@ function NavTitle({
 
 /**
  * `padded`: the trailing action in Split's back-button row pads 12 at each side (20 from the edge, as drawn);
- * in a text row (Rename group, Date) it sits on the row's 16 pt inset. An action never shrinks or truncates: the
- * title gives way instead.
+ * in a text row (Rename group, Date) it sits on the row's 16 pt inset. A text action ("Cancel", "Done") never
+ * shrinks or truncates: the title gives way instead. A back button's label is the one exception: at the largest
+ * text sizes it takes what the trailing action leaves and ends in an ellipsis, as the full screen's `BackButton`
+ * does, so Done stays whole and on screen.
  */
 function HeaderAction({
   action,
@@ -362,6 +372,8 @@ function HeaderAction({
       <AppText
         weight={side === 'right' ? 'semibold' : 'regular'}
         color={disabled ? 'textDisabled' : 'accent'}
+        numberOfLines={action.back === true ? 1 : undefined}
+        style={action.back === true ? styles.backLabel : undefined}
       >
         {action.label}
       </AppText>
@@ -538,6 +550,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   navTitleMeasure: { position: 'absolute', left: 0, top: 0, opacity: 0 },
+  navTitleHidden: { opacity: 0 },
   actionRowBack: { paddingLeft: 4, paddingRight: 8 },
   headerAction: {
     minHeight: layout.tapTarget,
@@ -545,7 +558,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexShrink: 0,
   },
-  headerActionBack: { gap: 2, paddingRight: 8 },
+  // A back button may shrink (its label truncates); the chevron keeps its size.
+  headerActionBack: { gap: 2, paddingRight: 8, flexShrink: 1 },
+  backLabel: { flexShrink: 1 },
   headerActionRight: { marginLeft: 'auto' },
   headerActionPadded: { paddingHorizontal: 12 },
   closeRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 8 },

@@ -30,6 +30,15 @@ describe("the sheet header's centred title", () => {
     expect(navTitlePlacement(ROW, 200, 136, 120)).toBe('fill');
   });
 
+  it('is not drawn when a back label cut short beside Done leaves no room', () => {
+    // At iOS's largest size "‹ New expense" ends where Done starts (240): each side keeps 8 clear of the other.
+    expect(navTitlePlacement(ROW, 150, 248, ROW - 240 + 8)).toBe('hidden');
+    // The label whole, 12 short of Done: no room once both gaps of 8 are kept.
+    expect(navTitlePlacement(ROW, 150, 248, ROW - 252 + 8)).toBe('hidden');
+    // 20 short of Done leaves 4: the title fills it, with an ellipsis.
+    expect(navTitlePlacement(ROW, 150, 248, ROW - 260 + 8)).toBe('fill');
+  });
+
   it('allows half a point for rounding', () => {
     // Centred, the title starts at 100.8, 0.2 short of the 101 the action needs.
     expect(navTitlePlacement(ROW, 200.4, 101, 16)).toBe('center');

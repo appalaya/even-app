@@ -1653,8 +1653,11 @@ the system's dialog, in Even's theme: `surface`, `text` and `textSecondary`,
 28 dp corners (the sheets' radius), Inter, sentence-case buttons in the
 accent. Both buttons take the accent, because Android cannot make only Delete
 red without a native module. At the largest text sizes a sheet header's
-actions keep their full width and never truncate; its centred title gives way,
-moving off centre only as far as it must and then ending in an ellipsis.
+Cancel and Done keep their full width and never truncate. A back button's
+label (Split's "‹ New expense") takes the room Done leaves and ends in an
+ellipsis, as a screen's back button does. The centred title gives way to all
+of them: it moves off centre only as far as it must, then ends in an
+ellipsis, and is not drawn when they leave it no room.
 
 ## On-device capture (designed for, not in v1)
 

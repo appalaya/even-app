@@ -172,10 +172,14 @@ and was checked on the Pixel 10 emulator, and where the change is shared with iO
    accessibility size, Cancel stays whole and the titles are cut ("Join…", "New…", "Reco…"). At the default sizes
    the titles sit where they did: Add expense's header matches this review's screenshot pixel for pixel, Join with
    code's title sits 1 px (0.4 dp) left from rounding, and on iOS the Join with code header matches an earlier
-   screenshot exactly. **Left:** at iOS's largest size Split's back button ("‹ New expense") fills the row and
-   pushes Done past the right edge. It did before this change too (the actions never shrank), and the rule the
-   owner chose covers Cancel; letting the back label truncate, as the full-screen back button already does, would
-   keep Done reachable. That is a question for the owner.
+   screenshot exactly. **Split's back button, since:** at iOS's largest size "‹ New expense" filled the row and
+   pushed Done past the right edge (the actions never shrank). The same rule now covers it: Done keeps its full
+   width and never truncates, and the back label takes what is left and ends in an ellipsis, as the full-screen
+   back button does; "Split" is not drawn when no room is left for it. On the iPhone 17 simulator at the largest
+   accessibility size the row reads "‹ New…" and "Done". At 200 % on the Pixel 10 emulator the label still fits
+   whole ("‹ New expense", "Spl…", "Done") and nothing moved; with the display size raised as well (density 560)
+   it reads "‹ New expe…" and "Done". At the default sizes Split matches screenshots from before the change pixel
+   for pixel on both, in light and dark (on Android, the status bar's own icons aside).
 
 ## Not verified
 
