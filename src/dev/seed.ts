@@ -20,7 +20,12 @@
  * - the name-pick seed clears this phone's claimed seat, and the `unclaimed` states write their row with none; the
  *   recovery seed deletes rows but keeps their secrets, as a reinstall would.
  * Member ids are drawn until their avatar colour lands on the boards' slots (Sam violet, Maya clay, Nathan steel…),
- * and timestamps are chosen so Activity and Expense detail read like their boards.
+ * and timestamps are chosen so Activity and Expense detail read like their boards. The one avatar the seed cannot
+ * place is yours at the top of Groups and on App settings' You card: it is coloured by this install's device id
+ * (core `memberColor(deviceId)`), which the seed does not choose, so it is the boards' violet only on an install whose
+ * id lands there, one in twelve (the 30 September store shots: plum on the iPhone 18 Pro Max simulator, teal on the
+ * Pixel 10 emulator). That is the install, not the platform: `memberColor` gives the same slot for the same id on iOS,
+ * Android and Node, so a member looks the same on every phone.
  *
  * Pure apart from the writers, which take the services; `seed.test.ts` checks the Group scenarios against the
  * boards' numbers.
