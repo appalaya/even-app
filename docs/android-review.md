@@ -196,6 +196,9 @@ and was checked on the Pixel 10 emulator, and where the change is shared with iO
 - Android 12 and earlier (a different notification permission model) and Android 8 and earlier (no 500 and 600
   weights before Android 9: Inter falls back to Regular or Bold).
 - Tablets, foldables, TalkBack, the empty-state motion beyond its rest frame, and how the haptics feel.
+- What the 30 September 2026 beta QA round covered on Android (sync, the notification fix, Diagnostics, the
+  contact page) and still left open (a real QR scan, background refresh, App Links): see
+  [`qa-2026-09-30.md`](qa-2026-09-30.md).
 
 ## Setup that worked
 
