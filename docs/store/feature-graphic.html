@@ -1,0 +1,70 @@
+<!doctype html>
+<!--
+  Play feature graphic, 1024 x 500: the lockup on the canvas colour with the subtitle, nothing else.
+  Tokens are the `even` theme's light values (src/theme/themes.ts): background, accent, text, textSecondary.
+  The mark is the one on the landing page (web/index.html); the type is Inter Display, which the Android app
+  bundles (assets/fonts), at the lockup's proportions (typography.ts wordmarkLockup: 44/48, 700, -1.2, with a
+  52 mark), scaled 2.5 times.
+  The subtitle can be swapped without editing: feature-graphic.html?subtitle=Shared%20bills.%20No%20ads.%20Private.
+  Rendered to feature-graphic.png by render.mjs in this folder (docs/store-listing.md, "Feature graphic").
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Even feature graphic</title>
+<style>
+  @font-face { font-family: "InterDisplay"; font-weight: 700; src: url("../../assets/fonts/InterDisplay-Bold.ttf"); }
+  @font-face { font-family: "InterDisplay"; font-weight: 500; src: url("../../assets/fonts/InterDisplay-Medium.ttf"); }
+  :root {
+    --background: #F6F5F1;
+    --accent: #1F6B5A;
+    --text: #161715;
+    --text-secondary: #595B56;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: 1024px;
+    height: 500px;
+    overflow: hidden;
+    background: var(--background);
+    font-family: "InterDisplay", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .lockup {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+    color: var(--text);
+    font-size: 110px;
+    line-height: 120px;
+    font-weight: 700;
+    letter-spacing: -3px;
+    /* Optical centring: the word's right side bearing and the mark's open right edge balance out at about this. */
+    margin-left: -8px;
+  }
+  .mark { color: var(--accent); flex-shrink: 0; }
+  .subtitle {
+    margin: 34px 0 0;
+    color: var(--text-secondary);
+    font-size: 36px;
+    line-height: 44px;
+    font-weight: 500;
+    letter-spacing: -0.4px;
+  }
+</style>
+</head>
+<body>
+  <div class="lockup">
+    <svg class="mark" width="130" height="130" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    <span>Even</span>
+  </div>
+  <p class="subtitle" id="subtitle">No ads. No accounts. Private.</p>
+  <script>
+    const subtitle = new URLSearchParams(location.search).get('subtitle');
+    if (subtitle) document.getElementById('subtitle').textContent = subtitle;
+  </script>
+</body>
+</html>

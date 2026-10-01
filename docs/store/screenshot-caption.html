@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  The optional captioned screenshot (docs/store-listing.md, "Screenshots"): one short line on the canvas colour
+  above the plain capture, nothing else. No device frame, no badges, no second line.
+  Parameters (query string):
+    shot     path to the capture, relative to this file
+    caption  the line
+    w, h     output size: 1320 x 2868 for the App Store's 6.9-inch set, 1080 x 1920 for Play phones
+    font     "system" (SF on a Mac, matching the iOS app) or "inter" (Inter Display, matching the Android app)
+  render.mjs in this folder renders it; caption-example.png is one such render.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Even screenshot caption</title>
+<style>
+  @font-face { font-family: "InterDisplay"; font-weight: 600; src: url("../../assets/fonts/InterDisplay-SemiBold.ttf"); }
+  :root {
+    --background: #F6F5F1;
+    --text: #161715;
+    --border: #E3E2DC;
+    --w: 1320px;
+    --h: 2868px;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: var(--w);
+    height: var(--h);
+    overflow: hidden;
+    background: var(--background);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  body.system { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  body.inter { font-family: "InterDisplay", sans-serif; }
+  .caption {
+    margin: calc(var(--w) * 0.105) 0 0;
+    padding: 0 calc(var(--w) * 0.08);
+    color: var(--text);
+    font-size: calc(var(--w) * 0.062);
+    line-height: 1.15;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-align: center;
+  }
+  .shot {
+    display: block;
+    margin-top: calc(var(--w) * 0.075);
+    width: calc(var(--w) * 0.8);
+    border-radius: calc(var(--w) * 0.042);
+    outline: calc(var(--w) * 0.0015) solid var(--border);
+  }
+</style>
+</head>
+<body class="system">
+  <p class="caption" id="caption">See who owes whom</p>
+  <img class="shot" id="shot" alt="">
+  <script>
+    const q = new URLSearchParams(location.search);
+    const root = document.documentElement.style;
+    root.setProperty('--w', `${Number(q.get('w') || 1320)}px`);
+    root.setProperty('--h', `${Number(q.get('h') || 2868)}px`);
+    document.body.className = q.get('font') === 'inter' ? 'inter' : 'system';
+    if (q.get('caption')) document.getElementById('caption').textContent = q.get('caption');
+    document.getElementById('shot').src = q.get('shot') || '../screenshots/group-light.png';
+  </script>
+</body>
+</html>
