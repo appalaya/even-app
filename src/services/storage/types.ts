@@ -164,10 +164,17 @@ export type PrefKey =
   /** App theme id (themes are a later feature); absent means `even`. */
   | 'theme'
   /**
-   * `1` once the contextual notification permission request has been made (the first time a group with more than
-   * one member is opened; design.md "Background refresh"), so it is asked at most once.
+   * `1` once notification permission has been asked for: the contextual request (the first time a group with more
+   * than one member is opened; design.md "Background refresh") or the App settings switch. The group screen asks
+   * again only while `notifications.unanswered` says the last prompt closed with no answer.
    */
   | 'notifications.asked'
+  /**
+   * How many notification prompts in a row closed with no answer (Android 13 and later: Back, or a tap outside);
+   * absent means none. Below the limit (state/prefs.ts `UNANSWERED_PROMPT_LIMIT`) the switch reads off-but-askable
+   * and the group screen asks again.
+   */
+  | 'notifications.unanswered'
   /**
    * "Last notified", per group, as JSON: `{ [localId]: { at, count } }` (services/notifications/coalesce.ts). Local
    * ids and counts only, nothing decrypted.

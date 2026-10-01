@@ -2,7 +2,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { openTestStore, STORE_KINDS, type TestStore } from '../services/testing/testStore';
 import { isStateError } from './errors';
-import { notificationStatusOf, PrefsService, type NotificationStatus } from './prefs';
+import {
+  contextualAskDue,
+  notificationStatusOf,
+  PrefsService,
+  promptWentUnanswered,
+  UNANSWERED_PROMPT_LIMIT,
+  type NotificationPermission,
+  type NotificationStatus,
+  type PermissionReading,
+} from './prefs';
 
 const opened: TestStore[] = [];
 afterEach(async () => {
@@ -14,15 +23,22 @@ describe.each(STORE_KINDS)('prefs on the %s store', (kind) => {
     const store = await openTestStore(kind);
     opened.push(store);
     let current = status ?? 'unavailable';
+    // iOS's shape: the prompt cannot be closed without an answer.
+    const reading = (): PermissionReading => ({
+      granted: current === 'granted',
+      status: current,
+      canAskAgain: current !== 'denied',
+    });
     const prefs = new PrefsService(
       store,
       status === null
         ? null
         : {
-            status: async () => current,
+            dismissible: false,
+            status: async () => reading(),
             request: async () => {
               current = 'granted';
-              return current;
+              return reading();
             },
           },
     );
@@ -98,6 +114,144 @@ describe.each(STORE_KINDS)('prefs on the %s store', (kind) => {
   });
 });
 
+type Answer = 'allow' | "don't allow" | 'close';
+
+/**
+ * Android 13 and later, as expo-notifications reports it: the OS's record (no decision, refused once, refused for
+ * good, granted), and expo's own `asked` and `blocked` flags (expo-modules-core PermissionsService: `asked` is set
+ * before the prompt shows; `blocked` is "denied with no rationale to show" after each request). Not granted reads
+ * `denied` (NotificationPermissionsModule: notifications are off). Each prompt the OS shows takes the next answer.
+ */
+function android13(answers: Answer[]) {
+  const os = {
+    decision: 'none' as 'none' | 'refused once' | 'refused' | 'granted',
+    asked: false,
+    blocked: false,
+    prompts: 0,
+    requests: 0,
+  };
+  const reading = (): PermissionReading =>
+    os.decision === 'granted'
+      ? { granted: true, status: 'granted', canAskAgain: true }
+      : { granted: false, status: 'denied', canAskAgain: !(os.asked && os.blocked) };
+  const permission: NotificationPermission = {
+    dismissible: true,
+    status: async () => reading(),
+    request: async () => {
+      os.requests += 1;
+      os.asked = true;
+      if (os.decision === 'none' || os.decision === 'refused once') {
+        os.prompts += 1;
+        const answer = answers.shift() ?? 'close';
+        if (answer === 'allow') os.decision = 'granted';
+        if (answer === "don't allow") {
+          os.decision = os.decision === 'none' ? 'refused once' : 'refused';
+        }
+        // 'close' (Back, or a tap outside): Android records nothing.
+      }
+      // Android's rationale flag is on only after a single refusal.
+      os.blocked = os.decision !== 'granted' && os.decision !== 'refused once';
+      return reading();
+    },
+  };
+  return { os, permission };
+}
+
+describe.each(STORE_KINDS)('notification asks on Android 13 and later, on the %s store', (kind) => {
+  async function android(answers: Answer[]) {
+    const store = await openTestStore(kind);
+    opened.push(store);
+    const { os, permission } = android13(answers);
+    return { store, os, prefs: new PrefsService(store, permission) };
+  }
+
+  it('asks again after a prompt closed with no answer, up to the limit', async () => {
+    const { store, os, prefs } = await android(['close', 'close']);
+    // The prompt closed with Back: expo reads "denied, can't ask again", but the OS has no answer on record.
+    expect(await prefs.askForNotificationsInContext()).toBe('undetermined');
+    expect(os.prompts).toBe(1);
+    expect(await store.getPref('notifications.unanswered')).toBe('1');
+    // The switch reads off and askable (it shows the prompt rather than opening Settings).
+    expect((await prefs.load()).notifications).toBe('undetermined');
+
+    // The next group open asks again.
+    expect(await prefs.askForNotificationsInContext()).toBe('denied');
+    expect(os.prompts).toBe(2);
+    // Closed twice: no more asks, and the switch opens Settings.
+    expect(await prefs.askForNotificationsInContext()).toBeNull();
+    expect(os.prompts).toBe(2);
+    expect((await prefs.load()).notifications).toBe('denied');
+  });
+
+  it('the switch shows the prompt again after it closed with no answer', async () => {
+    const { store, os, prefs } = await android(['close', 'allow']);
+    expect(await prefs.askForNotificationsInContext()).toBe('undetermined');
+    expect(await prefs.requestNotifications()).toBe('granted');
+    expect(os.prompts).toBe(2);
+    expect(await store.getPref('notifications.unanswered')).toBeNull();
+    expect(await prefs.askForNotificationsInContext()).toBeNull();
+  });
+
+  it('never asks again in context after an answer, even a first "Don\'t allow"', async () => {
+    const { os, prefs } = await android(["don't allow"]);
+    // Refused once: the OS can still show its prompt, so the switch can ask (as before).
+    expect(await prefs.askForNotificationsInContext()).toBe('undetermined');
+    expect(await prefs.askForNotificationsInContext()).toBeNull();
+    expect(os.prompts).toBe(1);
+
+    const { os: granted, prefs: allowed } = await android(['allow']);
+    expect(await allowed.askForNotificationsInContext()).toBe('granted');
+    expect(await allowed.askForNotificationsInContext()).toBeNull();
+    expect(granted.prompts).toBe(1);
+  });
+
+  it('an answer through the switch counts: the group screen does not ask after it', async () => {
+    const { os, prefs } = await android(["don't allow"]);
+    expect(await prefs.requestNotifications()).toBe('undetermined');
+    expect(await prefs.askForNotificationsInContext()).toBeNull();
+    expect(os.prompts).toBe(1);
+  });
+
+  it('a refusal for good, read as no answer, costs one request that shows nothing', async () => {
+    const { os, prefs } = await android(["don't allow", "don't allow"]);
+    expect(await prefs.requestNotifications()).toBe('undetermined');
+    // The second refusal is final, but expo reads it like a closed prompt.
+    expect(await prefs.requestNotifications()).toBe('undetermined');
+    expect(os.decision).toBe('refused');
+    // The group screen asks once more; the OS shows nothing and the app stops asking.
+    expect(await prefs.askForNotificationsInContext()).toBe('denied');
+    expect(os.requests).toBe(3);
+    expect(os.prompts).toBe(2);
+    expect(await prefs.askForNotificationsInContext()).toBeNull();
+    expect((await prefs.load()).notifications).toBe('denied');
+  });
+});
+
+describe('promptWentUnanswered', () => {
+  const closed = { granted: false, status: 'denied', canAskAgain: false };
+  it("reads Android's denied-and-can't-ask-again right after a prompt as no answer", () => {
+    expect(promptWentUnanswered(closed, true)).toBe(true);
+  });
+  it('reads a first refusal, a grant, and anything on iOS as an answer', () => {
+    expect(
+      promptWentUnanswered({ granted: false, status: 'denied', canAskAgain: true }, true),
+    ).toBe(false);
+    expect(
+      promptWentUnanswered({ granted: true, status: 'granted', canAskAgain: true }, true),
+    ).toBe(false);
+    expect(promptWentUnanswered(closed, false)).toBe(false);
+  });
+});
+
+describe('contextualAskDue', () => {
+  it('asks the first time, and again only while the last prompts closed with no answer', () => {
+    expect(contextualAskDue(false, 0)).toBe(true);
+    expect(contextualAskDue(true, 0)).toBe(false);
+    expect(contextualAskDue(true, 1)).toBe(true);
+    expect(contextualAskDue(true, UNANSWERED_PROMPT_LIMIT)).toBe(false);
+  });
+});
+
 describe('notificationStatusOf', () => {
   it('reads a permission the OS can still ask for as undetermined, on either platform', () => {
     // iOS, never asked.
@@ -115,6 +269,15 @@ describe('notificationStatusOf', () => {
       'denied',
     );
     expect(notificationStatusOf({ granted: true, status: 'granted', canAskAgain: true })).toBe(
+      'granted',
+    );
+  });
+
+  it("reads denied-and-can't-ask-again as undetermined while prompts closed with no answer are below the limit", () => {
+    const closed = { granted: false, status: 'denied', canAskAgain: false };
+    expect(notificationStatusOf(closed, 1)).toBe('undetermined');
+    expect(notificationStatusOf(closed, UNANSWERED_PROMPT_LIMIT)).toBe('denied');
+    expect(notificationStatusOf({ granted: true, status: 'granted', canAskAgain: true }, 1)).toBe(
       'granted',
     );
   });

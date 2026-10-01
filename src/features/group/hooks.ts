@@ -3,7 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 
 import type { StatusLineProps } from '@/components';
-import { askForNotificationsOnce, clearActivityNotification } from '@/services/notifications/local';
+import {
+  askForNotificationsInContext,
+  clearActivityNotification,
+} from '@/services/notifications/local';
 import { useApp, useSyncStatus, type GroupSnapshot, type InviteInfo } from '@/state';
 
 import { statusLineWords } from './format';
@@ -171,7 +174,8 @@ export function useInvite(localId: string, ready: boolean, enabled: boolean): In
 /**
  * Notifications, from the group screen (design.md "Background refresh"): while the group is on screen its activity
  * notification is cleared (it has been seen); and the first time a group with more than one member is opened, the
- * permission is asked for, once per install (`askForNotificationsOnce` remembers it in `prefs`).
+ * permission is asked for, once per install unless the prompt closed with no answer (`askForNotificationsInContext`
+ * remembers it in `prefs`).
  */
 export function useGroupNotifications(localId: string, memberCount: number | null): void {
   const services = useApp();
@@ -184,6 +188,6 @@ export function useGroupNotifications(localId: string, memberCount: number | nul
   useEffect(() => {
     if (asked.current || memberCount === null || memberCount < 2) return;
     asked.current = true;
-    void askForNotificationsOnce(services).catch(() => undefined);
+    void askForNotificationsInContext(services).catch(() => undefined);
   }, [memberCount, services]);
 }

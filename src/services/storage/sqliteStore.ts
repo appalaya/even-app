@@ -70,6 +70,7 @@ export const PREF_KEYS: readonly PrefKey[] = [
   'appearance',
   'theme',
   'notifications.asked',
+  'notifications.unanswered',
   'notifications.ledger',
 ];
 

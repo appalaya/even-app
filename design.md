@@ -1220,7 +1220,21 @@ takedown is a server-side blocklist, not a client action.
   a 15-minute floor. App settings makes no promise about timing (the
   Notifications row has no sentence under it). Any claim about when updates
   arrive is verified on a real device before it goes into store copy.
-- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member (once per install; the `prefs` row `notifications.asked` remembers it); the switch carries no caption, since it says what it does.
+- Background sync is always on; there is no per-group or app-level switch for it, because the OS already decides when it runs and a switch would only make the app look broken when flipped by mistake. The one user-facing control is **Notifications** in App settings, tied to the OS permission, requested contextually the first time the user opens a group that has more than one member (once per install; the `prefs` row `notifications.asked` remembers it, and an answer given through the switch counts too); the switch carries no caption, since it says what it does.
+- A prompt closed with no answer is not an answer. Android 13 and later let
+  people close it with Back or a tap outside; the OS then records no decision
+  and would show the prompt again, but expo-notifications reads that close
+  exactly like a final refusal (denied, can't ask again), and so does
+  Android's rationale flag. Only a first "Don't allow" reads differently
+  (denied, can ask again). So on Android, "denied, can't ask again" right
+  after a prompt counts as unanswered (`promptWentUnanswered`, state/prefs.ts;
+  the `prefs` row `notifications.unanswered` counts them in a row): the next
+  group open that qualifies asks again, and the switch shows the prompt
+  instead of opening Settings. After two prompts in a row end unanswered
+  (`UNANSWERED_PROMPT_LIMIT`) the group screen stops asking and the switch
+  opens Settings. A real final refusal read this way costs one request that
+  shows nothing. An answer, any answer, ends the contextual asks. iOS's prompt
+  cannot be closed without an answer, so iOS asks exactly once.
 
 ## Invites
 

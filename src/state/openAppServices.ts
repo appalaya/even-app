@@ -8,6 +8,7 @@
  * never does: `__DEV__` is false there and every transport refuses http.
  */
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
 import EvenClassifier from '../../modules/even-classifier';
 import { expoFileIO } from '../services/groupFile/expoFileIO';
@@ -16,7 +17,7 @@ import { openStore } from '../services/storage/openStore';
 import { HttpTransport, localHttpUrl } from '../services/sync/httpTransport';
 import { createInfoCache } from '../services/sync/info';
 import { setCategoryHistory, setOnDeviceModel } from './categories';
-import { notificationStatusOf, type NotificationPermission } from './prefs';
+import type { NotificationPermission } from './prefs';
 import { createAppServices, type AppServices } from './services';
 
 // The on-device model behind the category chip (design.md "Model refinement"); null in a build without the native
@@ -24,12 +25,12 @@ import { createAppServices, type AppServices } from './services';
 setOnDeviceModel(EvenClassifier);
 
 const notifications: NotificationPermission = {
-  async status() {
-    return notificationStatusOf(await Notifications.getPermissionsAsync());
-  },
-  async request() {
-    return notificationStatusOf(await Notifications.requestPermissionsAsync());
-  },
+  // Android 13 and later ask with a dialog that Back or a tap outside closes with no answer (POST_NOTIFICATIONS; on
+  // older Android there is no prompt). iOS's alert cannot be closed without one.
+  dismissible:
+    Platform.OS === 'android' && typeof Platform.Version === 'number' && Platform.Version >= 33,
+  status: () => Notifications.getPermissionsAsync(),
+  request: () => Notifications.requestPermissionsAsync(),
 };
 
 let opened: Promise<AppServices> | null = null;

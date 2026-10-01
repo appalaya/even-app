@@ -1,7 +1,8 @@
 /**
  * App settings → Notifications (AppSettings board; design.md "Background refresh"): the only switch in the app,
- * tied to the OS permission. On asks for it (the OS prompt, or the Settings app once it was refused); off sends the
- * user to the Settings app, since an app cannot revoke its own permission. The status is read again whenever the app
+ * tied to the OS permission. On asks for it (the OS prompt, also after a prompt closed with no answer; the Settings
+ * app once it was refused for good, or after the prompt closed unanswered twice: state/prefs.ts); off sends the user
+ * to the Settings app, since an app cannot revoke its own permission. The status is read again whenever the app
  * returns to the foreground.
  */
 import { useEffect } from 'react';

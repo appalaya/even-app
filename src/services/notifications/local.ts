@@ -4,8 +4,9 @@
  *   `ok` events other devices wrote (planned by activity.ts / coalesce.ts), posted at once; a newer one replaces
  *   the group's previous one and carries its count on while it is still showing;
  * - `ensureNotificationPermission()`: the contextual permission request (never at launch); a no-op once the OS has
- *   an answer. `askForNotificationsOnce()` is what the group screen calls the first time a group with more than one
- *   member is opened: it asks at most once per install (`prefs` row `notifications.asked`);
+ *   an answer. `askForNotificationsInContext()` is what the group screen calls when a group with more than one
+ *   member is opened: it asks the first time on this install (`prefs` row `notifications.asked`), and again only
+ *   while the last prompt closed with no answer, up to a limit (`notifications.unanswered`, state/prefs.ts);
  * - `clearActivityNotification(localId)`: for the group screen, once its activity has been seen;
  * - `ensureActivityChannel()`: Android's "Group activity" channel, which every activity notification is posted in.
  *
@@ -18,7 +19,7 @@ import { Platform } from 'react-native';
 
 import { openAppServices } from '../../state/openAppServices';
 import type { AppServices } from '../../state/services';
-import { notificationStatusOf, type NotificationStatus } from '../../state/prefs';
+import type { NotificationStatus } from '../../state/prefs';
 import type { SyncResult } from '../sync/types';
 import { planActivityNotifications } from './activity';
 import {
@@ -145,28 +146,19 @@ export async function scheduleActivityNotifications(
 export async function ensureNotificationPermission(
   services?: AppServices,
 ): Promise<NotificationStatus> {
-  let current: Notifications.NotificationPermissionsStatus;
-  try {
-    current = await Notifications.getPermissionsAsync();
-  } catch {
-    return 'unavailable';
-  }
-  const status = notificationStatusOf(current);
-  if (status !== 'undetermined') return status;
-  return (services ?? (await openAppServices())).prefs.requestNotifications();
+  return (services ?? (await openAppServices())).prefs.ensureNotifications();
 }
 
 /**
  * The group screen's contextual ask: the first time a group with more than one member is opened on this install,
- * ask for notification permission (unless the OS already has an answer); never again after that. Resolves with the
- * status, or null when it had already asked.
+ * ask for notification permission (unless the OS already has an answer). Never again after an answer; a prompt
+ * closed with no answer (Android's Back, or a tap outside) is asked again at the next such open, up to a limit
+ * (state/prefs.ts `contextualAskDue`). Resolves with the status, or null when no ask was due.
  */
-export async function askForNotificationsOnce(
+export async function askForNotificationsInContext(
   services?: AppServices,
 ): Promise<NotificationStatus | null> {
-  const app = services ?? (await openAppServices());
-  if (!(await app.prefs.claimNotificationAsk())) return null;
-  return ensureNotificationPermission(app);
+  return (services ?? (await openAppServices())).prefs.askForNotificationsInContext();
 }
 
 /** Removes a group's activity notification and forgets its count (the group screen calls this when it opens). */

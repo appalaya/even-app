@@ -72,11 +72,18 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
     const events: SyncEvent[] = [];
     const logs: string[] = [];
     const notifications = { status: 'undetermined' as NotificationStatus };
+    // iOS's shape: a prompt that cannot be closed without an answer, and expo's reading of each status.
+    const reading = () => ({
+      granted: notifications.status === 'granted',
+      status: notifications.status === 'unavailable' ? 'undetermined' : notifications.status,
+      canAskAgain: notifications.status !== 'denied',
+    });
     const permission: NotificationPermission = {
-      status: async () => notifications.status,
+      dismissible: false,
+      status: async () => reading(),
       request: async () => {
         notifications.status = 'granted';
-        return notifications.status;
+        return reading();
       },
     };
     const services = await createAppServices({
