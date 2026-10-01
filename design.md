@@ -1709,7 +1709,10 @@ spinner that blocks.
 prefixed with `'` so a spreadsheet does not execute another member's title.
 
 **Platform conventions.** Expo Router gives back gestures and the Android back
-button. Respect safe areas, dark mode, dynamic type. On Android, three-button
+button. Respect safe areas, dark mode, dynamic type. On iOS, push and pop draw
+both screens as rounded cards over the native stack's own view, which takes the
+canvas (`NavigationTheme`, React Navigation's theme background), so no grey
+shows at their corners and edges in either theme. On Android, three-button
 navigation shows the canvas behind its buttons (the system's contrast scrim is
 off; the buttons are dark in light and light in dark), and `Alert.alert` stays
 the system's dialog, in Even's theme: `surface`, `text` and `textSecondary`,

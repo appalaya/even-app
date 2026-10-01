@@ -17,7 +17,7 @@ import { runStartupSelfCheck } from '@/selfCheck';
 import { registerBackgroundRefresh } from '@/services/background/task';
 import { ensureActivityChannel } from '@/services/notifications/local';
 import { AppProvider, usePrefs } from '@/state';
-import { ThemeProvider, useTheme } from '@/theme';
+import { NavigationTheme, ThemeProvider, useTheme } from '@/theme';
 
 if (__DEV__) runStartupSelfCheck();
 
@@ -92,20 +92,22 @@ function RootStack() {
   return (
     <>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: tokens.background },
-        }}
-      >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="create" options={SHEET_ROUTE} />
-        <Stack.Screen name="join" options={SHEET_ROUTE} />
-        <Stack.Screen name="i" options={SHEET_ROUTE} />
-        <Stack.Screen name="settings" />
-        <Stack.Screen name="about" />
-        <Stack.Screen name="diagnostics" />
-      </Stack>
+      <NavigationTheme>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: tokens.background },
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="create" options={SHEET_ROUTE} />
+          <Stack.Screen name="join" options={SHEET_ROUTE} />
+          <Stack.Screen name="i" options={SHEET_ROUTE} />
+          <Stack.Screen name="settings" />
+          <Stack.Screen name="about" />
+          <Stack.Screen name="diagnostics" />
+        </Stack>
+      </NavigationTheme>
     </>
   );
 }
