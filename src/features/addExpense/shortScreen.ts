@@ -1,12 +1,15 @@
 /**
  * Add expense on a screen shorter than the boards (402 × 874): what gives way, in order, so that Save and the keypad
- * (or the category grid) keep their size and their place at the bottom of the sheet (design.md, Add expense).
+ * (or the category grid) keep their size and their place at the bottom of the sheet (design.md, Add expense). Settle
+ * draws the same amount block and the same gap above its keypad, so it gives way the same way, around Record payment
+ * and its footnote (design.md, Settle).
  *
  * 1. The space above the amount: the free space around it first (the amount block is flexible), then its top padding.
  * 2. The amount: its currency code moves beside it, on its baseline (as the typing state draws it), then the amount
  *    shrinks from 60/68 to 30/34.
  * 3. The gap above the keypad: 12 to 4.
- * 4. What is left over scrolls: the amount, title, Paid by, date and Split rows, above Save.
+ * 4. What is left over scrolls: the amount, title, Paid by, date and Split rows, above Save (on Settle, From and To,
+ *    the amount, the date and the note, above Record payment).
  *
  * At the boards' size and taller nothing changes, so those screens stay as drawn. Pure, so it is tested in Node.
  */
@@ -50,8 +53,9 @@ export const FULL_FIT: ShortFit = {
 
 /**
  * How the sheet fits `room`: the height left for the amount block and the gap above the keypad once the title, Paid
- * by, date, Split, Save (with the error line) and the keypad or grid have theirs. `fontScale` is the system text
- * size (the amount's is capped at 1.3); `picking` is the category picker being open.
+ * by, date, Split, Save (with the error line) and the keypad or grid have theirs (on Settle: From and To, the date
+ * and note, Record payment with the error line, its footnote and the keypad). `fontScale` is the system text size
+ * (the amount's is capped at 1.3); `picking` is the category picker being open (never on Settle).
  */
 export function fitShortScreen(room: number, fontScale: number, picking: boolean): ShortFit {
   const k = Math.min(Math.max(fontScale, 0), AMOUNT_MAX_FONT_SCALE);

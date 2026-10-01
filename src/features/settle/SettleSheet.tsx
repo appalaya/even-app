@@ -5,11 +5,24 @@
  * "Settle up" it starts empty (you pay, "Choose" whom, "$0"). From and To open the member sheet (everyone except
  * whoever is on the other side). Recorded, the button becomes "✓ Recorded" for 0.8 s with a light haptic, then the
  * sheet closes.
+ *
+ * On a screen shorter than the boards, Record payment, its footnote and the keypad keep their size and place, and the
+ * rest gives way as on Add expense (`fitShortScreen`); From and To, the amount, the date and the note scroll only once
+ * nothing else can.
  */
 import { exponentOf, LIMITS, type GroupState } from '@even/core';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import {
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+  type LayoutChangeEvent,
+  type ScrollViewInstance,
+} from 'react-native';
 
 import {
   AmountDisplay,
@@ -34,6 +47,8 @@ import {
 } from '@/features/addExpense/labels';
 import { MemberPickerSheet } from '@/features/addExpense/MemberPickerSheet';
 import { RouteSheet, useRouteSheet } from '@/features/addExpense/RouteSheet';
+import { AMOUNT_PAD, fitShortScreen, KEYPAD_GAP } from '@/features/addExpense/shortScreen';
+import { useOverflowScroll } from '@/features/addExpense/useOverflowScroll';
 import { useApp, useGroup, useMe } from '@/state';
 import { radii, useTheme } from '@/theme';
 
@@ -86,6 +101,66 @@ export function SettleSheet({ groupId, params, onClosed, dev }: SettleSheetProps
 /** How long "✓ Recorded" shows before the sheet closes (Settle, extra states). */
 const RECORDED_MS = 800;
 
+/** The footnote's gap under Record payment, as drawn. */
+const FOOTNOTE_GAP = 8;
+
+/**
+ * The heights that never give way on a short screen, each measured on its own element (as on Add expense, so
+ * positions round as before): the form, From and To, the date and note, the error line, Record payment (or
+ * "✓ Recorded"), the footnote, and the keypad.
+ */
+interface Measured {
+  body: number;
+  people: number;
+  details: number;
+  error: number;
+  record: number;
+  footnote: number;
+  keys: number;
+}
+
+/**
+ * How the sheet fits the screen (`fitShortScreen`): as drawn until everything is measured, and while the note is typed
+ * (the keypad is down then, and only scrolling gives way). The gaps between the rows are the drawn ones.
+ */
+function useShortFit(typing: boolean, error: boolean, recorded: boolean) {
+  const { fontScale } = useWindowDimensions();
+  const [box, setBox] = useState<Measured>({
+    body: 0,
+    people: 0,
+    details: 0,
+    error: 0,
+    record: 0,
+    footnote: 0,
+    keys: 0,
+  });
+  const measure = useCallback(
+    (key: keyof Measured) => (e: LayoutChangeEvent) => {
+      const height = e.nativeEvent.layout.height;
+      setBox((b) => (Math.abs(b[key] - height) < 0.5 ? b : { ...b, [key]: height }));
+    },
+    [],
+  );
+  const ready =
+    box.body > 0 &&
+    box.people > 0 &&
+    box.details > 0 &&
+    box.record > 0 &&
+    box.footnote > 0 &&
+    box.keys > 0 &&
+    (!error || box.error > 0);
+  if (typing || !ready) return { fit: null, measure };
+  const rows = styles.people.marginTop + box.people + box.details;
+  const gap = recorded
+    ? styles.recorded.marginTop
+    : error
+      ? styles.recordAfterError.marginTop
+      : styles.record.marginTop;
+  const record = (error ? styles.error.marginTop + box.error : 0) + gap + box.record;
+  const below = FOOTNOTE_GAP + box.footnote + box.keys;
+  return { fit: fitShortScreen(box.body - rows - record - below, fontScale, false), measure };
+}
+
 function SettleForm({
   groupId,
   state,
@@ -127,6 +202,14 @@ function SettleForm({
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'From' | 'To' | 'date' | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { fit, measure } = useShortFit(typing, error !== null, recorded);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const scroll = useOverflowScroll(scrollRef);
+  // Typing the note on a short screen: the rows stay scrolled to their end as the keyboard comes up, so the note sits
+  // just above Record payment.
+  useEffect(() => {
+    if (typing && scroll.scrollable) scrollRef.current?.scrollToEnd({ animated: false });
+  }, [typing, scroll.scrollable, scroll.view]);
   // Development: open a picker once the sheet is up (the dev seed's screenshots).
   useEffect(() => {
     if (!__DEV__ || dev?.sheet === undefined) return;
@@ -180,58 +263,81 @@ function SettleForm({
   const role = sheet === 'From' || sheet === 'To' ? sheet : null;
   const other = role === 'From' ? to : role === 'To' ? from : null;
   return (
-    <View style={styles.body}>
-      <View style={styles.people}>
-        <View style={styles.person}>
-          <FieldLabel>From</FieldLabel>
-          <MemberSelect
-            role="From"
-            member={fromMember}
-            label={memberLabel(fromMember, meId)}
-            onPress={() => openSheet('From')}
+    <View style={styles.body} onLayout={measure('body')}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.flex}
+        contentContainerStyle={styles.grow}
+        scrollEnabled={scroll.scrollable}
+        keyboardShouldPersistTaps="handled"
+        onLayout={scroll.onLayout}
+        onContentSizeChange={scroll.onContentSizeChange}
+      >
+        <View style={styles.people} onLayout={measure('people')}>
+          <View style={styles.person}>
+            <FieldLabel>From</FieldLabel>
+            <MemberSelect
+              role="From"
+              member={fromMember}
+              label={memberLabel(fromMember, meId)}
+              onPress={() => openSheet('From')}
+            />
+          </View>
+          <View style={styles.arrow}>
+            <Icon name="arrowRight" size={20} color={tokens.textMuted} />
+          </View>
+          <View style={styles.person}>
+            <FieldLabel>To</FieldLabel>
+            <MemberSelect
+              role="To"
+              member={toMember}
+              label={memberLabel(toMember, meId)}
+              onPress={() => openSheet('To')}
+            />
+          </View>
+        </View>
+        <Pressable
+          onPress={Keyboard.dismiss}
+          accessible={false}
+          style={[
+            styles.amount,
+            fit !== null && fit.amountPadTop !== AMOUNT_PAD && { paddingTop: fit.amountPadTop },
+          ]}
+        >
+          <AmountDisplay
+            amount={amount}
+            currency={currency}
+            empty={amountText === ''}
+            scale={fit?.amountScale}
+            inline={fit?.amountInline}
+          />
+        </Pressable>
+        <View style={styles.details} onLayout={measure('details')}>
+          <SelectPill
+            value={dateLabel(date, today)}
+            onPress={() => openSheet('date')}
+            accessibilityLabel={`Date: ${dateLabel(date, today)}`}
+          />
+          <TextField
+            variant="pill"
+            accessibilityLabel="Note"
+            placeholder="Note (optional)"
+            value={note}
+            onChangeText={(text) => {
+              setNote(text);
+              setError(null);
+            }}
+            maxLength={LIMITS.noteMax}
+            returnKeyType="done"
+            submitBehavior="blurAndSubmit"
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            containerStyle={styles.note}
           />
         </View>
-        <View style={styles.arrow}>
-          <Icon name="arrowRight" size={20} color={tokens.textMuted} />
-        </View>
-        <View style={styles.person}>
-          <FieldLabel>To</FieldLabel>
-          <MemberSelect
-            role="To"
-            member={toMember}
-            label={memberLabel(toMember, meId)}
-            onPress={() => openSheet('To')}
-          />
-        </View>
-      </View>
-      <Pressable onPress={Keyboard.dismiss} accessible={false} style={styles.amount}>
-        <AmountDisplay amount={amount} currency={currency} empty={amountText === ''} />
-      </Pressable>
-      <View style={styles.details}>
-        <SelectPill
-          value={dateLabel(date, today)}
-          onPress={() => openSheet('date')}
-          accessibilityLabel={`Date: ${dateLabel(date, today)}`}
-        />
-        <TextField
-          variant="pill"
-          accessibilityLabel="Note"
-          placeholder="Note (optional)"
-          value={note}
-          onChangeText={(text) => {
-            setNote(text);
-            setError(null);
-          }}
-          maxLength={LIMITS.noteMax}
-          returnKeyType="done"
-          submitBehavior="blurAndSubmit"
-          onFocus={() => setTyping(true)}
-          onBlur={() => setTyping(false)}
-          containerStyle={styles.note}
-        />
-      </View>
+      </ScrollView>
       {error !== null && (
-        <View style={styles.error} accessibilityRole="alert">
+        <View style={styles.error} accessibilityRole="alert" onLayout={measure('error')}>
           <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
           <AppText variant="footnote" weight="semibold" style={styles.errorText}>
             {error}
@@ -243,6 +349,7 @@ function SettleForm({
           style={[styles.recorded, { backgroundColor: tokens.accentSoft }]}
           accessibilityRole="alert"
           accessibilityLabel="Recorded"
+          onLayout={measure('record')}
         >
           <Icon name="check" size={20} color={tokens.accent} />
           <AppText weight="semibold" color="accent">
@@ -254,14 +361,21 @@ function SettleForm({
           label="Record payment"
           disabled={!canSave}
           onPress={() => void onRecord()}
+          onLayout={measure('record')}
           style={[styles.record, error !== null && styles.recordAfterError]}
         />
       )}
-      <Footnote align="center" spacingTop={8}>
+      <Footnote align="center" spacingTop={FOOTNOTE_GAP} onLayout={measure('footnote')}>
         Records that the money moved. Send it however you like.
       </Footnote>
       {!typing && (
-        <View style={styles.keys}>
+        <View
+          onLayout={measure('keys')}
+          style={[
+            styles.keys,
+            fit !== null && fit.keypadGap !== KEYPAD_GAP && { marginTop: fit.keypadGap },
+          ]}
+        >
           <Keypad onKey={onKey} keyHeight={52} decimal={exponent > 0} />
         </View>
       )}
@@ -295,6 +409,8 @@ function SettleForm({
 
 const styles = StyleSheet.create({
   body: { flex: 1 },
+  flex: { flex: 1 },
+  grow: { flexGrow: 1 },
   people: {
     flexDirection: 'row',
     alignItems: 'flex-end',

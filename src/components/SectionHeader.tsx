@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { layout } from '@/theme';
 
@@ -57,13 +57,15 @@ export function Footnote({
   children,
   align = 'left',
   spacingTop = 6,
+  onLayout,
 }: {
   children: ReactNode;
   align?: 'left' | 'center';
   spacingTop?: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }) {
   return (
-    <View style={[styles.wrap, { marginTop: spacingTop }]}>
+    <View style={[styles.wrap, { marginTop: spacingTop }]} onLayout={onLayout}>
       <AppText variant="caption" color="textMuted" align={align}>
         {children}
       </AppText>

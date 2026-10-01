@@ -116,3 +116,43 @@ describe('Add expense on short screens', () => {
     expect(used(fit, false, 1.3)).toBeCloseTo(roomAt(1.3) - 40, 6);
   });
 });
+
+/**
+ * Settle's rows that never give way, as its boards draw them: From and To 12 + 18 + 6 + 48; the date and note 44;
+ * Record payment 16 + 52; its footnote 8 + 18 a line (two lines on a 375 pt wide screen); the keypad 4 × 52 + 3 × 4.
+ * The sheet's top, header and bottom pad are Add expense's.
+ */
+const SETTLE_ROWS = 84 + 44 + 68 + 8 + 220;
+const settleRoomOn = (screenHeight: number, footnoteLines = 1) =>
+  screenHeight - 116 - 59 - 30 - SETTLE_ROWS - 18 * footnoteLines;
+
+describe('Settle on short screens', () => {
+  it('leaves the boards’ size and taller as drawn', () => {
+    expect(fitShortScreen(settleRoomOn(874), 1, false)).toEqual(FULL_FIT); // the boards
+    expect(fitShortScreen(settleRoomOn(956), 1, false)).toEqual(FULL_FIT); // iPhone 18 Pro Max
+    expect(fitShortScreen(settleRoomOn(923), 1, false)).toEqual(FULL_FIT); // Pixel 10
+    expect(fitShortScreen(settleRoomOn(808), 1, false)).toEqual(FULL_FIT); // 1080 × 1920 at 380 dpi
+  });
+
+  it('fits a 16:9 Android phone (411 × 731 dp) without scrolling: the code moves beside a smaller amount', () => {
+    const fit = fitShortScreen(settleRoomOn(731), 1, false);
+    expect(fit.amountPadTop).toBe(0);
+    expect(fit.amountInline).toBe(true);
+    expect(fit.amountScale).toBeCloseTo((84 - AMOUNT_PAD - KEYPAD_GAP) / AMOUNT_LINE, 6);
+    expect(fit.keypadGap).toBe(KEYPAD_GAP);
+    expect(fit.overflow).toBe(0);
+    expect(used(fit)).toBeCloseTo(settleRoomOn(731), 6);
+  });
+
+  it('on an iPhone SE (375 × 667) takes everything else, then scrolls the rows above Record payment', () => {
+    const fit = fitShortScreen(settleRoomOn(667, 2), 1, false);
+    expect(fit).toEqual({
+      amountPadTop: 0,
+      amountInline: true,
+      amountScale: AMOUNT_MIN_SCALE,
+      keypadGap: KEYPAD_GAP_MIN,
+      overflow: 44,
+    });
+    expect(used(fit) - fit.overflow).toBe(settleRoomOn(667, 2));
+  });
+});

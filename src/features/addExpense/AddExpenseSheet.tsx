@@ -13,14 +13,7 @@
  */
 import { exponentOf, LIMITS, type Category, type GroupState } from '@even/core';
 import { router } from 'expo-router';
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type RefObject,
-} from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Keyboard,
   Pressable,
@@ -72,6 +65,7 @@ import {
   type ShortFit,
 } from './shortScreen';
 import { SPLIT_ROW_GAP, SplitRow } from './SplitRow';
+import { useOverflowScroll } from './useOverflowScroll';
 
 export interface AddExpenseSheetProps {
   groupId: string;
@@ -278,23 +272,6 @@ function useShortFit(typing: boolean, picking: boolean, error: boolean) {
     : styles.save.marginTop + box.save;
   const fit: ShortFit = fitShortScreen(box.body - rows - save - box.keys, fontScale, picking);
   return { fit, measure };
-}
-
-/** The rows above Save scroll only when they do not fit (so the sheet's swipe-down works everywhere otherwise). */
-function useOverflowScroll(ref: RefObject<ScrollViewInstance | null>) {
-  const [heights, setHeights] = useState({ view: 0, content: 0 });
-  const scrollable = heights.content - heights.view > 1;
-  useEffect(() => {
-    if (scrollable) ref.current?.flashScrollIndicators();
-  }, [ref, scrollable]);
-  const onLayout = useCallback((e: LayoutChangeEvent) => {
-    const view = e.nativeEvent.layout.height;
-    setHeights((h) => (h.view === view ? h : { ...h, view }));
-  }, []);
-  const onContentSizeChange = useCallback((_: number, content: number) => {
-    setHeights((h) => (h.content === content ? h : { ...h, content }));
-  }, []);
-  return { scrollable, onLayout, onContentSizeChange };
 }
 
 /** Every split problem reads the same on the sheet: the fix is in Split. */

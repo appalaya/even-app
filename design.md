@@ -1537,7 +1537,14 @@ Deviating from the canvas in implementation is a no-go.
 - **Settle**: from → to → amount, prefilled from the tapped settle-list row;
   from Balances' "Settle up" it starts empty (you pay, "Choose" whom). From
   and To open the member sheet; recorded, the button reads "✓ Recorded" for
-  0.8 s, then the sheet closes.
+  0.8 s, then the sheet closes. On a screen shorter than the boards, Record
+  payment, the line under it and the keypad keep their size and their place,
+  and the rest gives way in Add expense's order (`fitShortScreen`), From and
+  To, the amount, the date and the note being the rows that scroll last: a
+  16:9 Android phone (411 × 731 dp) fits without scrolling, an iPhone SE
+  (375 × 667) scrolls to the date and note, and while the note is typed it
+  stays just above Record payment, above the keyboard. At the boards' size
+  and taller nothing changes.
 - **App settings** (your avatar at the top right of Groups): a "You" card with the avatar
   centred at the top, 72 px, a small pencil badge on its corner and no
   caption (tapping opens the same emoji picker sheet used everywhere, with
