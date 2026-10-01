@@ -18,19 +18,22 @@
  */
 import type { Href } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Keyboard } from 'react-native';
 
 import { hrefs } from '@/features/groups/routes';
 import { isStateError, useApp } from '@/state';
 
 import { ConfirmSheet } from './ConfirmSheet';
 import {
+  afterCheck,
   joinFailureMessage,
   joinFailureOf,
   moveQuestion,
   problemMessage,
+  type CodeState,
   type JoinFailure,
 } from './invite';
-import { JoinCodeSheet, type CodeState } from './JoinCodeSheet';
+import { JoinCodeSheet } from './JoinCodeSheet';
 import { PickNameStep } from './PickNameStep';
 import { ScanSheet } from './ScanSheet';
 
@@ -123,16 +126,10 @@ export function JoinFlow({
     if (text.trim() === '') return;
     void groups.previewInvite(text).then((result) => {
       if (request !== latest.current) return;
-      setChecked({
-        text,
-        code: result.ok
-          ? { kind: 'read', invite: result.invite }
-          : {
-              kind: 'error',
-              message: problemMessage(result.error),
-              update: result.error === 'version',
-            },
-      });
+      const outcome = afterCheck(result);
+      // A complete code: the keyboard goes, so the preview card and Join show (it covered them after a paste).
+      if (outcome.dismissKeyboard) Keyboard.dismiss();
+      setChecked({ text, code: outcome.code });
     });
   }, [text, groups]);
 

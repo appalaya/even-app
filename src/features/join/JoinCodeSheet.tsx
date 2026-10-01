@@ -16,9 +16,13 @@
  * Join sits at the foot, inset 16. When Join could not go through (JoinCodeRefused), the reason sits
  * under it in the field-error style (16 pt warning glyph, 8 pt gap, 14/19 semibold), 12 below, inset 20, and Join
  * stays on to try again.
+ *
+ * The keyboard: a code that reads puts it away (`afterCheck`, in JoinFlow) so the card and Join show; a tap on the
+ * sheet outside the field or a drag of its content puts it away too. While it is up the content ends 12 above it (the
+ * kit Sheet) and scrolls.
  */
 import * as Clipboard from 'expo-clipboard';
-import { Linking, StyleSheet, View, Platform } from 'react-native';
+import { Keyboard, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, Icon, Sheet, TextField } from '@/components';
@@ -28,13 +32,7 @@ import type { InvitePreview } from '@/state';
 import { useTheme } from '@/theme';
 import { LINKS } from '@/features/settings/about';
 
-import { previewCopy, type PreviewCopy } from './invite';
-
-export type CodeState =
-  | { kind: 'empty' }
-  | { kind: 'read'; invite: InvitePreview }
-  /** `update`: the invite needs a newer Even; offer the store. */
-  | { kind: 'error'; message: string; update?: boolean };
+import { previewCopy, type CodeState, type PreviewCopy } from './invite';
 
 /** "Update" opens this phone's store listing. */
 const UPDATE_URL = Platform.OS === 'android' ? LINKS.store.android : LINKS.store.ios;
@@ -85,42 +83,53 @@ export function JoinCodeSheet({
       navTitle="Join with code"
       accessibilityLabel="Join with code"
     >
-      <AppText variant="subheadLoose" color="textSecondary" style={styles.intro}>
-        Paste the code or link someone sent you, or scan it from their phone.
-      </AppText>
-      <TextField
-        variant="code"
-        value={text}
-        onChangeText={onChangeText}
-        placeholder="Paste a code or link"
-        accessibilityLabel="Invite code"
-        autoCapitalize="none"
-        autoCorrect={false}
-        spellCheck={false}
-        onPaste={() => void paste()}
-        onScan={onScan}
-        error={state.kind === 'error' ? state.message : undefined}
-        containerStyle={styles.field}
-      />
-      {state.kind === 'read' && copy !== null && <InviteCard invite={state.invite} copy={copy} />}
-      {state.kind === 'error' && state.update === true && (
-        <Button
-          label="Update"
-          variant="secondary"
-          size="compact"
-          fullWidth={false}
-          onPress={() => void Linking.openURL(UPDATE_URL)}
-          style={styles.update}
-        />
-      )}
-      <View style={styles.flex} />
-      <Button
-        label={copy?.action ?? 'Join'}
-        onPress={onJoin}
-        disabled={state.kind !== 'read' || busy}
-        style={styles.join}
-      />
-      {failure !== undefined && <FieldError message={failure} style={styles.failure} />}
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.grow}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        <Pressable onPress={Keyboard.dismiss} accessible={false} style={styles.grow}>
+          <AppText variant="subheadLoose" color="textSecondary" style={styles.intro}>
+            Paste the code or link someone sent you, or scan it from their phone.
+          </AppText>
+          <TextField
+            variant="code"
+            value={text}
+            onChangeText={onChangeText}
+            placeholder="Paste a code or link"
+            accessibilityLabel="Invite code"
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            onPaste={() => void paste()}
+            onScan={onScan}
+            error={state.kind === 'error' ? state.message : undefined}
+            containerStyle={styles.field}
+          />
+          {state.kind === 'read' && copy !== null && (
+            <InviteCard invite={state.invite} copy={copy} />
+          )}
+          {state.kind === 'error' && state.update === true && (
+            <Button
+              label="Update"
+              variant="secondary"
+              size="compact"
+              fullWidth={false}
+              onPress={() => void Linking.openURL(UPDATE_URL)}
+              style={styles.update}
+            />
+          )}
+          <View style={styles.flex} />
+          <Button
+            label={copy?.action ?? 'Join'}
+            onPress={onJoin}
+            disabled={state.kind !== 'read' || busy}
+            style={styles.join}
+          />
+          {failure !== undefined && <FieldError message={failure} style={styles.failure} />}
+        </Pressable>
+      </ScrollView>
     </Sheet>
   );
 }
@@ -155,6 +164,7 @@ function InviteCard({ invite, copy }: { invite: InvitePreview; copy: PreviewCopy
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  grow: { flexGrow: 1 },
   intro: { marginTop: 8, marginHorizontal: 20 },
   field: { marginTop: 16, marginHorizontal: 16 },
   card: { marginTop: 16, marginHorizontal: 16, paddingVertical: 16, paddingHorizontal: 18, gap: 4 },

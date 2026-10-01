@@ -1,11 +1,12 @@
 import { decodeInvite, encodeInvite, inviteLink, makeInvite } from '@even/core';
 import { describe, expect, it } from 'vitest';
 
-import type { JoinResult } from '@/state';
+import type { InvitePreview, JoinResult } from '@/state';
 
 import type { SyncErrorCode } from '../../services/sync/types';
 
 import {
+  afterCheck,
   hostOf,
   inviteLinkFragment,
   joinFailureMessage,
@@ -111,6 +112,38 @@ describe('join invite helpers', () => {
         previewCopy({ name: 'Banff 2026', local: { ...held, name: 'Banff 2026' }, fit }),
       ).toEqual({ status: 'Code complete', title: 'Join Banff 2026?', action: 'Join' });
     }
+  });
+
+  it('puts the keyboard away once a code reads, and keeps it for a code that cannot be used', () => {
+    const invite: InvitePreview = {
+      localId: 'local-1',
+      name: 'Banff 2026',
+      currency: 'CAD',
+      serverUrl: 'https://sync.example.net',
+      host: 'sync.example.net',
+      local: null,
+      fit: 'join',
+    };
+    // Complete (pasted, typed, scanned or handed over by a link): the preview card, and the keyboard goes.
+    expect(afterCheck({ ok: true, invite })).toEqual({
+      code: { kind: 'read', invite },
+      dismissKeyboard: true,
+    });
+    expect(afterCheck({ ok: true, invite: { ...invite, fit: 'already' } }).dismissKeyboard).toBe(
+      true,
+    );
+    // Cut short or damaged: the line under the field, and the keyboard stays to paste or type it again.
+    for (const error of ['checksum', 'malformed', 'server'] as const) {
+      expect(afterCheck({ ok: false, error })).toEqual({
+        code: { kind: 'error', message: "That code isn't complete. Copy it again.", update: false },
+        dismissKeyboard: false,
+      });
+    }
+    // For a newer Even: its line and Update, and the keyboard stays.
+    expect(afterCheck({ ok: false, error: 'version' })).toEqual({
+      code: { kind: 'error', message: 'This invite needs a newer Even.', update: true },
+      dismissKeyboard: false,
+    });
   });
 
   it('words the checksum problem as the board does', () => {

@@ -1279,7 +1279,11 @@ checksum, and canonicalises the server URL.
   parser in `core`, not Hermes's incomplete `URL`.
 - **Paste**: the Groups screen has "Join with code." It accepts the bare
   payload or a full link and strips the URL. A checksum failure says "That
-  code isn't complete. Copy it again."
+  code isn't complete. Copy it again." A code that reads, pasted, typed,
+  scanned or opened as a link, puts the keyboard away so the preview card and
+  Join show (`afterCheck`); a tap on the sheet outside the field, or a drag of
+  its content, puts it away too. While the keyboard is up the sheet's content
+  ends 12 above it and scrolls.
 - **Scan** (boards JoinScan, JoinScanDenied, JoinScanNotInvite, JoinScanFound):
   a Scan pill beside Paste opens the camera sheet (viewfinder with corner
   brackets, a light button, Cancel). It accepts a bare code or the

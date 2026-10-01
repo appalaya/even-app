@@ -1,13 +1,14 @@
 /**
- * Invite plumbing for the Join flow (design.md "Invites"): where an opened invite link goes, the preview card's words
- * (a new group, or one this phone is already in), the copy for a code that cannot be used, the line under Join when a
+ * Invite plumbing for the Join flow (design.md "Invites"): where an opened invite link goes, what a check of the code
+ * field shows and whether the keyboard goes, the preview card's words (a new group, or one this phone is already in),
+ * the copy for a code that cannot be used, the line under Join when a
  * usable invite still cannot be joined, and the confirmation for an invite that names a group this phone holds on
  * another server. Pure.
  */
 import { PROTOCOL } from '@even/core';
 
 import { hrefs } from '@/features/groups/routes';
-import type { InvitePreview, InviteProblem, JoinResult } from '@/state';
+import type { InvitePreview, InviteProblem, JoinResult, PreviewResult } from '@/state';
 
 import type { SyncErrorCode } from '../../services/sync/types';
 
@@ -54,6 +55,38 @@ export function payloadFromUrl(url: string | null | undefined): string | null {
 export function routeForSystemUrl(url: string): string {
   const code = payloadFromUrl(url);
   return code === null ? url : (hrefs.joinWithCode(code) as string);
+}
+
+/** The code field's text as checked: nothing to show yet, an invite that reads, or one that cannot be used. */
+export type CodeState =
+  | { kind: 'empty' }
+  | { kind: 'read'; invite: InvitePreview }
+  /** `update`: the invite needs a newer Even; offer the store. */
+  | { kind: 'error'; message: string; update?: boolean };
+
+/** What the code sheet does with a check of the field's text (`afterCheck`). */
+export interface CheckOutcome {
+  /** The preview card for a code that reads, or the line under the field for one that cannot be used. */
+  code: CodeState;
+  /**
+   * Put the keyboard away. A code that reads is complete and nothing is left to type, so the keyboard goes and the
+   * preview card and Join (or Open) show; up, it covered them after a paste or a scan. A code that cannot be used keeps
+   * the keyboard, to paste or type it again.
+   */
+  dismissKeyboard: boolean;
+}
+
+/** The outcome of checking the field's text (`previewInvite`), pasted, typed, scanned, or handed over by a link. */
+export function afterCheck(result: PreviewResult): CheckOutcome {
+  if (result.ok) return { code: { kind: 'read', invite: result.invite }, dismissKeyboard: true };
+  return {
+    code: {
+      kind: 'error',
+      message: problemMessage(result.error),
+      update: result.error === 'version',
+    },
+    dismissKeyboard: false,
+  };
 }
 
 /** The preview card's words and its button (JoinCodePreview, JoinCodeHeld). */
