@@ -31,9 +31,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: android-${{ github.ref }}
-  # A Play upload is one edit committed at the end, so cancelling a run part-way publishes nothing.
-  cancel-in-progress: true
+  # One group for every ref: Play allows one open edit per app, and a main-branch run and a beta tag run
+  # started minutes apart each open their own (the first beta/1.0.0-122 run died with "This edit has
+  # expired" that way). Runs queue instead of cancelling, so a tag never loses to a merge.
+  group: android-play
+  cancel-in-progress: false
 
 permissions:
   contents: read

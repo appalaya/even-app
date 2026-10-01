@@ -18,6 +18,7 @@ on:
     # (Path filters are not evaluated for tag pushes.)
     paths-ignore:
       - 'web/**'
+      - 'docs/**'
       - 'android/**'
       - '.github/workflows/android.yml'
       - '.github/workflows/ci.yml'
