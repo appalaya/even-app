@@ -24,4 +24,19 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return resolve(context, moduleName, platform);
 };
 
+// The dev sync server (npm run dev:server, scripts/dev-server.sh) keeps a SQLite database under
+// `${EVEN_DEV_SERVER_DATA:-~/Library/Caches/even-dev-server}` by default, but an older checkout or an
+// explicit override can still put one at .dev/sync-server/ inside the project root. resolver.blockList also
+// feeds Metro's file-map ignorePattern, so without this, every sync push rewrites a file Metro is watching
+// and the app shows a Fast Refresh "Refreshing…" banner after each one. Block the whole .dev/ folder.
+const devDataDir = path.join(__dirname, '.dev') + path.sep;
+const devDataPattern = new RegExp(`^${devDataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+const defaultBlockList = config.resolver.blockList;
+const blockListPatterns = Array.isArray(defaultBlockList)
+  ? defaultBlockList
+  : defaultBlockList
+    ? [defaultBlockList]
+    : [];
+config.resolver.blockList = [...blockListPatterns, devDataPattern];
+
 module.exports = config;

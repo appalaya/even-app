@@ -77,8 +77,10 @@ npm run dev:server        # the Python reference server (../even-server/python) 
 
 The first run creates the server's venv with Homebrew's Python 3.14 and
 installs its pinned requirements. Every start begins on an empty database in
-`.dev/sync-server/` (git-ignored), with the rate limits raised and the caps of
-the public server; it logs one line per request with the route pattern only.
+`${EVEN_DEV_SERVER_DATA:-~/Library/Caches/even-dev-server}`, outside the
+project root so Metro never treats its writes as a changed project file, with
+the rate limits raised and the caps of the public server; it logs one line
+per request with the route pattern only.
 Stop it with Ctrl-C.
 
 - The iOS simulator reaches it at `127.0.0.1:8787`, the Android emulator at

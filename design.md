@@ -1800,9 +1800,11 @@ one:
 - `npm run dev:server` runs the Python reference server
   (`../even-server/python`) on 127.0.0.1:8787: its venv made with Homebrew's
   Python 3.14 and its pinned requirements on first use, an empty database in
-  `.dev/sync-server/` at each start, rates raised to 100,000 a minute so seeds
-  can create many groups from one address, and the public server's caps, so
-  Usage lines read as drawn. It logs only the server's own route-pattern line.
+  `${EVEN_DEV_SERVER_DATA:-~/Library/Caches/even-dev-server}` at each start
+  (outside the project root, so Metro never sees its writes), rates raised to
+  100,000 a minute so seeds can create many groups from one address, and the
+  public server's caps, so Usage lines read as drawn. It logs only the
+  server's own route-pattern line.
 - The seed's server is `http://127.0.0.1:8787` on the iOS simulator and
   `http://10.0.2.2:8787` on the Android emulator (`Platform.OS`), or the link's
   `server` for a phone on the local network. Groups store its canonical

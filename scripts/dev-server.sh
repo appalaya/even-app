@@ -3,10 +3,11 @@
 #
 # Runs the Python reference server from ../even-server/python on 127.0.0.1:8787, creating its venv with Homebrew's
 # Python 3.14 and installing its pinned requirements the first time. Each start begins with an empty database in
-# .dev/sync-server/ (git-ignored); phones that synced with an earlier one re-push their groups, as after any
-# server-side delete. Rates are raised so seeds can create many groups from one address; the caps are the public
-# server's, so Usage lines read as the boards draw them. It logs what the server logs by default: one line per
-# request with the route pattern, never a URL, group id, token or body.
+# ${EVEN_DEV_SERVER_DATA:-~/Library/Caches/even-dev-server}, outside the project root so Metro never sees its
+# writes; phones that synced with an earlier one re-push their groups, as after any server-side delete. Rates
+# are raised so seeds can create many groups from one address; the caps are the public server's, so Usage lines
+# read as the boards draw them. It logs what the server logs by default: one line per request with the route
+# pattern, never a URL, group id, token or body.
 #
 # The iOS simulator reaches it at http://127.0.0.1:8787, the Android emulator at http://10.0.2.2:8787. For a phone
 # on the local network, start it with EVEN_DEV_SERVER_HOST=0.0.0.0 and add &server=http://<this Mac's address>:8787
@@ -17,7 +18,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER_DIR="${EVEN_SERVER_DIR:-$ROOT/../even-server/python}"
 HOST="${EVEN_DEV_SERVER_HOST:-127.0.0.1}"
 PORT=8787
-DATA="$ROOT/.dev/sync-server"
+DATA="${EVEN_DEV_SERVER_DATA:-$HOME/Library/Caches/even-dev-server}"
 VENV="$SERVER_DIR/.venv"
 
 fail() {

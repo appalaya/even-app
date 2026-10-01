@@ -71,5 +71,5 @@ yarn-error.*
 node_modules/
 coverage/
 
-# The dev seed's sync server (npm run dev:server): its throwaway database
+# Local dev scratch (an old dev-server database may still live here)
 .dev/
