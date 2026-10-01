@@ -1509,6 +1509,16 @@ Deviating from the canvas in implementation is a no-go.
   Yesterday). Save is
   one tap with haptic feedback. Advanced split is a push, not a modal in a
   modal. Archived members already on the expense stay visible in the editor.
+  On a screen shorter than the boards (402 × 874), Save and the keypad (or the
+  category grid) keep their size and their place at the bottom, and the rest
+  gives way in this order (`fitShortScreen`): the space above the amount; the
+  amount, its code first moving beside it on the baseline (as while typing),
+  then the amount shrinking to 30/34; the gap above the keypad, 12 to 4; and
+  last, the rows between the amount and Save scroll, and only then, so the
+  sheet's swipe down works everywhere else. A 16:9 Android phone (411 × 731
+  dp) fits without scrolling; on an iPhone SE (375 × 667) the Split row is
+  scrolled to. While the title is typed only the scrolling applies, so Save
+  stays above the keyboard. At the boards' size and taller nothing changes.
 - **Split** (pushed from Add expense): segmented Equal · Exact · Percent. In
   Equal each member row has an optional "×n" multiplier and an optional
   "+ extra" amount (extras come off the top, the rest splits by share; no

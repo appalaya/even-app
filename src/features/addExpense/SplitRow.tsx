@@ -1,7 +1,10 @@
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, type LayoutChangeEvent } from 'react-native';
 
 import { AppText, Icon } from '@/components';
 import { radii, useTheme } from '@/theme';
+
+/** The gap above the Split row, under Paid by and the date. */
+export const SPLIT_ROW_GAP = 8;
 
 /**
  * The Split row on Add expense, as drawn: 52 tall on `fill`, radius 16, padding 0 14 0 16, 10 apart; "Split" 15/20
@@ -13,15 +16,18 @@ export function SplitRow({
   label,
   detail,
   onPress,
+  onLayout,
 }: {
   label: string;
   detail: string | null;
   onPress: () => void;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }) {
   const { tokens } = useTheme();
   return (
     <Pressable
       onPress={onPress}
+      onLayout={onLayout}
       accessibilityRole="button"
       accessibilityLabel={`Split: ${label}${detail === null ? '' : `, ${detail}`}`}
       style={({ pressed }) => [
@@ -51,7 +57,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     minHeight: 52,
-    marginTop: 8,
+    marginTop: SPLIT_ROW_GAP,
     marginHorizontal: 16,
     paddingLeft: 16,
     paddingRight: 14,

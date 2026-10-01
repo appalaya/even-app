@@ -1,6 +1,8 @@
 import { formatMinor } from '@even/core';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { typography } from '@/theme';
+
 import { AppText } from './AppText';
 
 export interface AmountDisplayProps {
@@ -19,6 +21,12 @@ export interface AmountDisplayProps {
    */
   compact?: boolean;
   onPress?: () => void;
+  /**
+   * Add expense on a screen shorter than the boards (`fitShortScreen`): the amount's size relative to 60/68, down to
+   * half, and `inline` puts the code beside it on its baseline, as `compact` does. The defaults draw the boards.
+   */
+  scale?: number;
+  inline?: boolean;
 }
 
 /**
@@ -40,6 +48,8 @@ export function AmountDisplay({
   empty = false,
   compact = false,
   onPress,
+  scale = 1,
+  inline = false,
 }: AmountDisplayProps) {
   const text = empty ? zeroLabel(currency, locale) : formatMinor(amount, currency, locale);
   if (compact) {
@@ -67,9 +77,10 @@ export function AmountDisplay({
       </Pressable>
     );
   }
+  const sized = scale === 1 ? null : scaledAmount(scale);
   return (
     <View
-      style={styles.column}
+      style={inline ? styles.inline : styles.column}
       accessible
       accessibilityRole="text"
       accessibilityLabel={`Amount ${text}`}
@@ -83,6 +94,7 @@ export function AmountDisplay({
         minimumFontScale={0.4}
         maxFontSizeMultiplier={1.3}
         align="center"
+        style={[sized, inline && styles.shrink]}
       >
         {text}
       </AppText>
@@ -93,8 +105,25 @@ export function AmountDisplay({
   );
 }
 
+/** `typography.amount` (60/68, −1.5) at `scale`. */
+function scaledAmount(scale: number) {
+  const { fontSize, lineHeight, letterSpacing } = typography.amount;
+  return {
+    fontSize: fontSize * scale,
+    lineHeight: Math.round(lineHeight * scale),
+    letterSpacing: letterSpacing * scale,
+  };
+}
+
 const styles = StyleSheet.create({
   column: { alignItems: 'center', gap: 2, alignSelf: 'stretch' },
+  inline: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    gap: 6,
+    maxWidth: '100%',
+  },
   compact: { flexDirection: 'row', alignItems: 'baseline', gap: 6, maxWidth: '100%' },
   shrink: { flexShrink: 1 },
 });

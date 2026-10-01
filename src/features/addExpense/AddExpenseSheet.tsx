@@ -7,11 +7,30 @@
  * States as drawn: first open ("$0" muted, the dashed "Category" chip, Save off); Edit expense ("Save changes");
  * typing the title (the keypad hides, the amount shrinks to one line, Save sits above the keyboard); a failed save
  * (the error line just above Save, everything typed kept); the Paid by and date pickers as sheets.
+ *
+ * On a screen shorter than the boards, Save and the keypad (or the category grid) keep their size and place, and the
+ * rest gives way as `fitShortScreen` says; the rows above Save scroll only once nothing else can.
  */
 import { exponentOf, LIMITS, type Category, type GroupState } from '@even/core';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from 'react';
+import {
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+  type LayoutChangeEvent,
+  type ScrollViewInstance,
+} from 'react-native';
 
 import {
   AmountDisplay,
@@ -45,7 +64,14 @@ import { dateLabel, listedMembers, memberLabel, saveErrorMessage } from './label
 import { MemberPickerSheet } from './MemberPickerSheet';
 import { RouteSheet, useRouteSheet } from './RouteSheet';
 import { leaveSheet, splitHref } from './routing';
-import { SplitRow } from './SplitRow';
+import {
+  AMOUNT_PAD,
+  AMOUNT_PAD_PICKING,
+  fitShortScreen,
+  KEYPAD_GAP,
+  type ShortFit,
+} from './shortScreen';
+import { SPLIT_ROW_GAP, SplitRow } from './SplitRow';
 
 export interface AddExpenseSheetProps {
   groupId: string;
@@ -200,6 +226,77 @@ function DraftedForm({
   );
 }
 
+/**
+ * The heights that never give way on a short screen, each measured on its own element (a wrapper around several would
+ * move them by a pixel at densities like 2.625, where Yoga rounds positions relative to the parent): the form, the
+ * title, Paid by and the date, Split, the error line, Save, and the keypad or category grid.
+ */
+interface Measured {
+  body: number;
+  title: number;
+  pills: number;
+  split: number;
+  error: number;
+  save: number;
+  keys: number;
+}
+
+/**
+ * How the sheet fits the screen (`fitShortScreen`): as drawn until everything is measured, and while typing the title
+ * (the keypad is down then, and only scrolling gives way). The gaps between the rows are the drawn ones.
+ */
+function useShortFit(typing: boolean, picking: boolean, error: boolean) {
+  const { fontScale } = useWindowDimensions();
+  const [box, setBox] = useState<Measured>({
+    body: 0,
+    title: 0,
+    pills: 0,
+    split: 0,
+    error: 0,
+    save: 0,
+    keys: 0,
+  });
+  const measure = useCallback(
+    (key: keyof Measured) => (e: LayoutChangeEvent) => {
+      const height = e.nativeEvent.layout.height;
+      setBox((b) => (Math.abs(b[key] - height) < 0.5 ? b : { ...b, [key]: height }));
+    },
+    [],
+  );
+  const ready =
+    box.body > 0 &&
+    box.title > 0 &&
+    box.pills > 0 &&
+    box.split > 0 &&
+    box.save > 0 &&
+    box.keys > 0 &&
+    (!error || box.error > 0);
+  if (typing || !ready) return { fit: null, measure };
+  const rows = box.title + styles.pills.marginTop + box.pills + SPLIT_ROW_GAP + box.split;
+  const save = error
+    ? styles.error.marginTop + box.error + styles.saveAfterError.marginTop + box.save
+    : styles.save.marginTop + box.save;
+  const fit: ShortFit = fitShortScreen(box.body - rows - save - box.keys, fontScale, picking);
+  return { fit, measure };
+}
+
+/** The rows above Save scroll only when they do not fit (so the sheet's swipe-down works everywhere otherwise). */
+function useOverflowScroll(ref: RefObject<ScrollViewInstance | null>) {
+  const [heights, setHeights] = useState({ view: 0, content: 0 });
+  const scrollable = heights.content - heights.view > 1;
+  useEffect(() => {
+    if (scrollable) ref.current?.flashScrollIndicators();
+  }, [ref, scrollable]);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const view = e.nativeEvent.layout.height;
+    setHeights((h) => (h.view === view ? h : { ...h, view }));
+  }, []);
+  const onContentSizeChange = useCallback((_: number, content: number) => {
+    setHeights((h) => (h.content === content ? h : { ...h, content }));
+  }, []);
+  return { scrollable, onLayout, onContentSizeChange };
+}
+
 /** Every split problem reads the same on the sheet: the fix is in Split. */
 const SPLIT_PROBLEM = "The split doesn't add up to the amount. Open Split to fix it.";
 
@@ -244,6 +341,9 @@ function ExpenseForm({
   const [typing, setTyping] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sheet, setSheet] = useState<'payer' | 'date' | null>(null);
+  const { fit, measure } = useShortFit(typing, pickerOpen, draft.error !== null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const scroll = useOverflowScroll(scrollRef);
   // Development: open a picker once the sheet is up (the dev seed's screenshots).
   useEffect(() => {
     if (!__DEV__ || dev?.sheet === undefined) return;
@@ -329,63 +429,90 @@ function ExpenseForm({
     }
   };
 
+  const pad = pickerOpen ? AMOUNT_PAD_PICKING : AMOUNT_PAD;
   return (
-    <View style={styles.body}>
-      {typing ? (
-        <View style={styles.amountCompact}>
-          <AmountDisplay
-            amount={amount}
-            currency={currency}
-            empty={draft.amountText === ''}
-            compact
+    <View style={styles.body} onLayout={measure('body')}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.flex}
+        contentContainerStyle={styles.grow}
+        scrollEnabled={scroll.scrollable}
+        keyboardShouldPersistTaps="handled"
+        onLayout={scroll.onLayout}
+        onContentSizeChange={scroll.onContentSizeChange}
+      >
+        {typing ? (
+          <View style={styles.amountCompact}>
+            <AmountDisplay
+              amount={amount}
+              currency={currency}
+              empty={draft.amountText === ''}
+              compact
+              onPress={Keyboard.dismiss}
+            />
+          </View>
+        ) : (
+          <Pressable
             onPress={Keyboard.dismiss}
+            accessible={false}
+            style={[
+              styles.amount,
+              pickerOpen && styles.amountPicking,
+              fit !== null && fit.amountPadTop !== pad && { paddingTop: fit.amountPadTop },
+            ]}
+          >
+            <AmountDisplay
+              amount={amount}
+              currency={currency}
+              empty={draft.amountText === ''}
+              scale={fit?.amountScale}
+              inline={fit?.amountInline}
+            />
+          </Pressable>
+        )}
+        <View onLayout={measure('title')}>
+          <TextField
+            variant="title"
+            accessibilityLabel="Title"
+            placeholder="Title"
+            value={draft.title}
+            onChangeText={onTitle}
+            maxLength={LIMITS.titleMax}
+            returnKeyType="done"
+            submitBehavior="blurAndSubmit"
+            onFocus={() => {
+              setTyping(true);
+              setPickerOpen(false);
+            }}
+            onBlur={() => setTyping(false)}
+            autoFocus={__DEV__ && dev?.focusTitle === true}
+            containerStyle={styles.gutter}
+            trailing={
+              <ChipSlot chip={chip} title={draft.title} choosing={pickerOpen} onPress={onChip} />
+            }
           />
         </View>
-      ) : (
-        <Pressable
-          onPress={Keyboard.dismiss}
-          accessible={false}
-          style={[styles.amount, pickerOpen && styles.amountPicking]}
-        >
-          <AmountDisplay amount={amount} currency={currency} empty={draft.amountText === ''} />
-        </Pressable>
-      )}
-      <TextField
-        variant="title"
-        accessibilityLabel="Title"
-        placeholder="Title"
-        value={draft.title}
-        onChangeText={onTitle}
-        maxLength={LIMITS.titleMax}
-        returnKeyType="done"
-        submitBehavior="blurAndSubmit"
-        onFocus={() => {
-          setTyping(true);
-          setPickerOpen(false);
-        }}
-        onBlur={() => setTyping(false)}
-        autoFocus={__DEV__ && dev?.focusTitle === true}
-        containerStyle={styles.gutter}
-        trailing={
-          <ChipSlot chip={chip} title={draft.title} choosing={pickerOpen} onPress={onChip} />
-        }
-      />
-      <View style={styles.pills}>
-        <SelectPill
-          label="Paid by"
-          value={memberLabel(payer, meId)}
-          onPress={() => openSheet('payer')}
+        <View style={styles.pills} onLayout={measure('pills')}>
+          <SelectPill
+            label="Paid by"
+            value={memberLabel(payer, meId)}
+            onPress={() => openSheet('payer')}
+          />
+          <SelectPill
+            value={dateLabel(draft.date, today)}
+            onPress={() => openSheet('date')}
+            accessibilityLabel={`Date: ${dateLabel(draft.date, today)}`}
+          />
+        </View>
+        <SplitRow
+          label={summary.label}
+          detail={summary.detail}
+          onPress={openSplit}
+          onLayout={measure('split')}
         />
-        <SelectPill
-          value={dateLabel(draft.date, today)}
-          onPress={() => openSheet('date')}
-          accessibilityLabel={`Date: ${dateLabel(draft.date, today)}`}
-        />
-      </View>
-      <SplitRow label={summary.label} detail={summary.detail} onPress={openSplit} />
-      {typing && <View style={styles.flex} />}
+      </ScrollView>
       {draft.error !== null && (
-        <View style={styles.error} accessibilityRole="alert">
+        <View style={styles.error} accessibilityRole="alert" onLayout={measure('error')}>
           <Icon name="warning" size={16} color={tokens.text} strokeWidth={2.2} />
           <AppText variant="footnote" weight="semibold" style={styles.flexShrink}>
             {draft.error}
@@ -397,19 +524,26 @@ function ExpenseForm({
         haptic="success"
         disabled={!canSave}
         onPress={() => void onSave()}
+        onLayout={measure('save')}
         style={[
           styles.save,
           typing && styles.saveTyping,
           draft.error !== null && styles.saveAfterError,
         ]}
       />
-      {typing ? null : pickerOpen ? (
-        <View style={styles.keys}>
-          <CategoryGrid value={chip.category} onChange={onPickCategory} />
-        </View>
-      ) : (
-        <View style={styles.keys}>
-          <Keypad onKey={onKey} decimal={exponent > 0} />
+      {typing ? null : (
+        <View
+          onLayout={measure('keys')}
+          style={[
+            styles.keys,
+            fit !== null && fit.keypadGap !== KEYPAD_GAP && { marginTop: fit.keypadGap },
+          ]}
+        >
+          {pickerOpen ? (
+            <CategoryGrid value={chip.category} onChange={onPickCategory} />
+          ) : (
+            <Keypad onKey={onKey} decimal={exponent > 0} />
+          )}
         </View>
       )}
       <MemberPickerSheet
@@ -441,6 +575,7 @@ function ExpenseForm({
 const styles = StyleSheet.create({
   body: { flex: 1 },
   flex: { flex: 1 },
+  grow: { flexGrow: 1 },
   flexShrink: { flexShrink: 1 },
   /** Typing the title: the amount on one line, 8 below the header and 12 above the title. */
   amountCompact: { alignItems: 'center', marginTop: 8, marginBottom: 12, marginHorizontal: 16 },
@@ -455,7 +590,7 @@ const styles = StyleSheet.create({
   gutter: { marginHorizontal: 16 },
   pills: { flexDirection: 'row', gap: 8, marginTop: 12, marginHorizontal: 16 },
   save: { marginTop: 16, marginHorizontal: 16 },
-  /** Keyboard up: Save sits on the spacer, 12 above the keyboard. */
+  /** Keyboard up: Save sits under the rows' scroll view, which takes the room left, 12 above the keyboard. */
   saveTyping: { marginTop: 0 },
   /** Save failed: the line sits 14 under the Split row and Save 10 under it. */
   saveAfterError: { marginTop: 10 },

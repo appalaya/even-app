@@ -1,6 +1,13 @@
 import * as Haptics from 'expo-haptics';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { layout, useTheme, type FontWeightName, type TypographyVariant } from '@/theme';
 
@@ -76,6 +83,7 @@ export interface ButtonProps {
   accessibilityHint?: string;
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
 export function Button({
@@ -97,6 +105,7 @@ export function Button({
   accessibilityHint,
   style,
   testID,
+  onLayout,
 }: ButtonProps) {
   const { tokens } = useTheme();
   const spec = SIZES[size];
@@ -143,6 +152,7 @@ export function Button({
   return (
     <Pressable
       testID={testID}
+      onLayout={onLayout}
       onPress={handlePress}
       disabled={disabled}
       hitSlop={slop > 0 ? { top: slop, bottom: slop } : undefined}
