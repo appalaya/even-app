@@ -233,6 +233,15 @@ class Fold {
   private readonly lastWrite = new Map<string, Map<ExpenseField, Stamp>>();
   private readonly expenseTombstones = new Set<string>();
   private readonly paymentTombstones = new Set<string>();
+  // Sets for the membership checks a hostile log can make long (10,000 claims of one member, 10,000 `member.done`
+  // or `group.rotated` with distinct ids): an array scan and re-sort per event made those folds quadratic. The
+  // state's arrays are filled from these in `finish`, in the same order as before.
+  /** Device ids per member that claimed it; each member's `devices` is sorted once in `finish`. */
+  private readonly claims = new Map<string, Set<string>>();
+  /** Members marked done; `doneMembers` is materialised, sorted, in `finish`. */
+  private readonly done = new Set<string>();
+  /** localIds named by `group.rotated`, in fold order; `rotatedFrom` is materialised in `finish`. */
+  private readonly rotated = new Set<string>();
 
   constructor(
     private readonly formatter: (minor: number) => string,
@@ -324,8 +333,8 @@ class Fold {
         return `${actor} regenerated the invite link`;
       }
       case 'group.rotated': {
-        if (s.rotatedFrom.includes(ev.from)) return null;
-        s.rotatedFrom = [...s.rotatedFrom, ev.from];
+        if (this.rotated.has(ev.from)) return null;
+        this.rotated.add(ev.from);
         return `${actor} regenerated the invite link`;
       }
       case 'group.moved': {
@@ -349,9 +358,15 @@ class Fold {
         return this.memberUpdated(ev, actor);
       case 'member.claimed': {
         const m = this.ensureMember(ev.id);
-        if (m.devices.includes(ev.dev)) return null;
-        const hadDevice = m.devices.length > 0;
-        m.devices = [...m.devices, ev.dev].sort(compareCodeUnits);
+        let devices = this.claims.get(ev.id);
+        if (devices === undefined) {
+          devices = new Set(m.devices);
+          this.claims.set(ev.id, devices);
+        }
+        if (devices.has(ev.dev)) return null;
+        const hadDevice = devices.size > 0;
+        devices.add(ev.dev);
+        m.devices.push(ev.dev); // fold-owned array; sorted in `finish`
         if (this.confirmsSelfJoin(ev)) return null; // the self-add already said "X joined"
         return hadDevice ? `${m.name} joined on a new device` : `${m.name} joined`;
       }
@@ -368,14 +383,14 @@ class Fold {
         return `${actor} unarchived ${m.name}`;
       }
       case 'member.done': {
-        if (s.doneMembers.includes(ev.id)) return null;
+        if (this.done.has(ev.id)) return null;
         const m = this.ensureMember(ev.id);
-        s.doneMembers = [...s.doneMembers, ev.id].sort(compareCodeUnits);
+        this.done.add(ev.id);
         return `${m.name} is done adding expenses`;
       }
       case 'member.undone': {
-        if (!s.doneMembers.includes(ev.id)) return null; // before ensureMember: a no-op creates no placeholder
-        s.doneMembers = s.doneMembers.filter((memberId) => memberId !== ev.id);
+        if (!this.done.has(ev.id)) return null; // before ensureMember: a no-op creates no placeholder
+        this.done.delete(ev.id);
         return `${this.nameOf(ev.id)} is adding more expenses`;
       }
       case 'expense.added':
@@ -477,7 +492,7 @@ class Fold {
     const stamp: Stamp = { ts: ev.ts, id: entry.id };
     this.lastWrite.set(rec.id, new Map(EXPENSE_FIELDS.map((f) => [f, stamp] as const)));
     // Auto-clear: adding an expense shows the adder is not done. No separate activity item.
-    if (s.doneMembers.includes(ev.by)) s.doneMembers = s.doneMembers.filter((memberId) => memberId !== ev.by);
+    this.done.delete(ev.by);
     return `${actor} added ${expense.title} · ${this.format(expense.amount)}`;
   }
 
@@ -579,6 +594,9 @@ class Fold {
 
   finish(): GroupState {
     const s = this.state;
+    for (const m of s.members.values()) if (m.devices.length > 1) m.devices.sort(compareCodeUnits);
+    s.doneMembers = [...this.done].sort(compareCodeUnits);
+    s.rotatedFrom = [...this.rotated];
 
     // Flags: at most one per item; currency first.
     const flagged: FlaggedItem[] = [];
@@ -631,7 +649,7 @@ class Fold {
       .sort((a, b) => compareCodeUnits(a[0] ?? '', b[0] ?? ''));
 
     // Everyone's done: every non-archived member with a claimed device is done, and there is at least one.
-    const done = new Set(s.doneMembers);
+    const done = this.done;
     const joined = [...s.members.values()].filter((m) => !m.archived && m.devices.length > 0);
     s.allDone = joined.length > 0 && joined.every((m) => done.has(m.id));
 

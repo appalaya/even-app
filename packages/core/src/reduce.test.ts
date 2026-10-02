@@ -1121,3 +1121,56 @@ describe('reduce: purity and determinism', () => {
     expect(reduce(log).expenses.get(GAS)?.split[MAYA]).toBe(2000);
   });
 });
+
+describe('reduce: scale', () => {
+  // A hostile member can fill a group (10,000 events on the public server) with events that each grow one list:
+  // claims of one member from distinct device ids, `member.done` for distinct ids, `group.rotated` with distinct
+  // `from`. Each used to scan and re-sort its list per event, so the fold was quadratic (10,000 claims: 1.3 s in V8
+  // with the JIT, far more on a phone), and it reruns on every sync. The bound here is ~20× the linear fold's time.
+  const N = 20_000;
+  const LOCAL_ID = (n: number): string => String(n).padStart(43, '0');
+  const timed = (log: LogEntry[]): { state: GroupState; ms: number } => {
+    const start = performance.now();
+    const state = reduce(log);
+    return { state, ms: performance.now() - start };
+  };
+
+  it(`folds ${N} claims of one member from distinct devices in linear time, devices sorted and unique`, () => {
+    // Device ids in descending order, so every claim lands in front of the sorted list.
+    const claim = (n: number, dev: string): LogEntry =>
+      entry(n, { type: 'member.claimed', id: JORDAN, by: JORDAN, dev });
+    const log = [
+      ...base(),
+      ...Array.from({ length: N }, (_, i) => claim(100 + i, eid(N - i))),
+      claim(100 + N, eid(1)), // a repeat: no-op
+    ];
+    const { state, ms } = timed(log);
+    const devices = state.members.get(JORDAN)?.devices ?? [];
+    expect(devices).toHaveLength(N);
+    expect(devices).toEqual([...devices].sort());
+    expect(devices[0]).toBe(eid(1));
+    expect(ms).toBeLessThan(2_000);
+  });
+
+  it(`folds ${N} member.done for distinct ids in linear time, doneMembers sorted`, () => {
+    const ids = Array.from({ length: N }, (_, i) => eid(N - i));
+    const log = [...base(), ...ids.map((id, i) => entry(100 + i, { type: 'member.done', id }))];
+    const { state, ms } = timed(log);
+    expect(state.doneMembers).toHaveLength(N);
+    expect(state.doneMembers).toEqual([...ids].sort());
+    expect(ms).toBeLessThan(2_000);
+  });
+
+  it(`folds ${N} group.rotated with distinct from in linear time, in fold order, deduplicated`, () => {
+    const log = [
+      ...base(),
+      ...Array.from({ length: N }, (_, i) => entry(100 + i, { type: 'group.rotated', from: LOCAL_ID(N - i) })),
+      entry(100 + N, { type: 'group.rotated', from: LOCAL_ID(N) }),
+    ];
+    const { state, ms } = timed(log);
+    expect(state.rotatedFrom).toHaveLength(N);
+    expect(state.rotatedFrom[0]).toBe(LOCAL_ID(N));
+    expect(state.rotatedFrom[N - 1]).toBe(LOCAL_ID(1));
+    expect(ms).toBeLessThan(2_000);
+  });
+});
