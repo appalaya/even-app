@@ -33,6 +33,10 @@
  *   drops it with a local log line, since retrying cannot change it. A kept debt is given up, with a log line, at
  *   its 20th failed attempt or the first one 30 days after it was recorded: the copy then stays until the server
  *   expires it, and the token leaves the disk.
+ * - Every envelope a pull stores readable goes into the shared `DecodeCache` as it was opened, so the derive that
+ *   follows opens none of them again. The engine keeps no name cache of its own: `name_cache` and
+ *   `currency_cache` come from the derived state, in the lifecycle check after each cycle (pre-launch review H3: a
+ *   join used to open every envelope three times).
  * - A sync failure is logged as fixed words, its code and HTTP status (`sync failed code=unauthorized status=401`):
  *   never the server URL or host, the error's message, or any text from a response. React Native writes every
  *   console line to the device log, release builds included, and the server is whoever the invite names. A local
@@ -54,11 +58,9 @@ import {
   open,
   parseEvent,
   PROTOCOL,
-  reduce,
   resealEnvelope,
   type Envelope,
   type Event,
-  type LogEntry,
 } from '@even/core';
 
 import type { Secrets } from '../secrets/types';
@@ -71,6 +73,7 @@ import type {
   Store,
 } from '../storage/types';
 import { OPENS_PER_YIELD, pacer, RESEALS_PER_YIELD, yieldToEventLoop } from '../yieldToEventLoop';
+import { DecodeCache, type Decoded } from './decodeCache';
 import { SyncError, toSyncError } from './errors';
 import { createInfoCache, type InfoCache } from './info';
 import type {
@@ -159,6 +162,8 @@ export interface SyncEngineDeps {
   transportFor: (serverUrl: string) => Transport;
   /** Shared with settings; defaults to a private cache. */
   infoCache?: InfoCache;
+  /** Shared with the derived state, so what a pull opened is not opened again; defaults to a private cache. */
+  decodeCache?: DecodeCache;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   /** Runs `fn` after `ms`; returns a cancel function. Defaults to `setTimeout`. */
@@ -228,6 +233,8 @@ export interface ClassifiedEnvelope {
   row: NewEventRow;
   /** The parsed body for `ok` rows. */
   event: Event | null;
+  /** The opened body's `type`, for every row that opened (`ok`, `invalid`, `unsupported_body`). */
+  type: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -279,12 +286,15 @@ function junkText(id: string, rest: Record<string, unknown>): string {
 
 /**
  * design.md "Cycle, per group", step 2, for one pulled envelope. Returns null only when the entry has no usable
- * id (it cannot be stored or deduplicated; a conforming server never sends one).
+ * id (it cannot be stored or deduplicated; a conforming server never sends one). `known` answers for an envelope
+ * this launch already opened (the shared `DecodeCache`, by id, exact text and group id): a valid event found there
+ * is not opened again, which is what a pull after a server move or an epoch reset brings back.
  */
 export function classifyPulled(
   raw: unknown,
   key: Uint8Array,
   groupId: string,
+  known?: (id: string, text: string) => Decoded | undefined,
 ): ClassifiedEnvelope | null {
   if (!isRecord(raw)) return null;
   const { seq, ...rest } = raw;
@@ -302,6 +312,7 @@ export function classifyPulled(
     return {
       row: { ...base, ts: null, envelope: junkText(id, rest), status: 'undecryptable' },
       event: null,
+      type: null,
     };
   }
   const envelope = { id, v: rest.v, n: rest.n, c: rest.c } as Envelope;
@@ -310,6 +321,16 @@ export function classifyPulled(
     return {
       row: { ...base, ts: null, envelope: text, status: 'unsupported_envelope' },
       event: null,
+      type: null,
+    };
+  }
+
+  const seen = known?.(id, text);
+  if (seen?.event != null) {
+    return {
+      row: { ...base, ts: seen.event.ts, envelope: text, status: 'ok' },
+      event: seen.event,
+      type: seen.type,
     };
   }
 
@@ -317,14 +338,19 @@ export function classifyPulled(
   try {
     body = open({ key, groupId, envelope });
   } catch {
-    return { row: { ...base, ts: null, envelope: text, status: 'undecryptable' }, event: null };
+    return {
+      row: { ...base, ts: null, envelope: text, status: 'undecryptable' },
+      event: null,
+      type: null,
+    };
   }
+  const type = isRecord(body) && typeof body.type === 'string' ? body.type : null;
   const event = parseEvent(body);
   if (event !== null) {
-    return { row: { ...base, ts: event.ts, envelope: text, status: 'ok' }, event };
+    return { row: { ...base, ts: event.ts, envelope: text, status: 'ok' }, event, type };
   }
   const status = isUnsupportedBody(body) ? 'unsupported_body' : 'invalid';
-  return { row: { ...base, ts: bodyTs(body), envelope: text, status }, event: null };
+  return { row: { ...base, ts: bodyTs(body), envelope: text, status }, event: null, type };
 }
 
 // ---------- Engine ----------
@@ -376,7 +402,6 @@ interface Cycle {
   pulled: number;
   newOkIds: string[];
   epochResets: number;
-  nameEventPulled: boolean;
   /** Entries charged against `pullEntriesPerCycle` so far. */
   pullCharged: number;
   inlineWaits: number;
@@ -387,6 +412,11 @@ interface Cycle {
 interface SendableEnvelope {
   id: string;
   envelope: Envelope;
+}
+
+/** An envelope as the store keeps it: its four fields in this order (sqliteStore.ts `envelopeText`). */
+function envelopeText(envelope: Envelope): string {
+  return JSON.stringify({ id: envelope.id, v: envelope.v, n: envelope.n, c: envelope.c });
 }
 
 function decodedLength(base64urlChars: number): number {
@@ -431,6 +461,7 @@ function skipped(
 export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
   const { store, secrets, transportFor } = deps;
   const infoCache = deps.infoCache ?? createInfoCache();
+  const decodeCache = deps.decodeCache ?? new DecodeCache();
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const schedule =
@@ -676,7 +707,9 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       for (const raw of page.events) {
         // Each one is opened: a page of 1,000 is about 0.2 s without a JIT, so the thread is handed back in between.
         if (cycle.pace()) await yieldToEventLoop();
-        const classified = classifyPulled(raw, cycle.key, cycle.groupId);
+        const classified = classifyPulled(raw, cycle.key, cycle.groupId, (id, text) =>
+          decodeCache.get(cycle.localId, id, text, cycle.groupId),
+        );
         if (classified !== null && !byId.has(classified.row.id))
           byId.set(classified.row.id, classified);
       }
@@ -699,11 +732,19 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
 
       cycle.pulled += inserted.length;
       for (const id of inserted) {
-        const classified = byId.get(id);
-        if (classified === undefined) continue;
-        if (classified.row.status === 'ok') cycle.newOkIds.push(id);
-        const type = classified.event?.type;
-        if (type === 'group.created' || type === 'group.renamed') cycle.nameEventPulled = true;
+        if (byId.get(id)?.row.status === 'ok') cycle.newOkIds.push(id);
+      }
+      // Opened once, here: the derive after this cycle finds each one (same id, text and group id) and opens nothing.
+      // A duplicate goes in too: when it is the stored text (this device's own, pulled back), the derive finds it.
+      for (const { row, event, type } of byId.values()) {
+        if (row.status === 'ok' || row.status === 'invalid' || row.status === 'unsupported_body') {
+          decodeCache.put(cycle.localId, row.id, {
+            text: row.envelope,
+            groupId: cycle.groupId,
+            event,
+            type,
+          });
+        }
       }
       if (!page.more) return { kind: 'done' };
       cycle.pullCharged += Math.max(limit, page.events.length);
@@ -711,31 +752,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         // What was pulled stays committed: the next cycle carries on from this cursor.
         return { kind: 'stop', error: new SyncError('server_error', 'pull over the cycle budget') };
       }
-    }
-  }
-
-  /** Re-derives the cached name and currency from the whole log when a pull brought a naming event. */
-  async function refreshNameCache(cycle: Cycle): Promise<void> {
-    const entries: LogEntry[] = [];
-    for (const { id, envelope } of await store.listReadable(cycle.localId)) {
-      let body: unknown;
-      try {
-        body = open({ key: cycle.key, groupId: cycle.groupId, envelope });
-      } catch {
-        continue;
-      }
-      const event = parseEvent(body);
-      if (event?.type === 'group.created' || event?.type === 'group.renamed') {
-        entries.push({ id, event });
-      }
-    }
-    if (entries.length === 0) return;
-    const state = reduce(entries);
-    const cache: { name?: string; currency?: string } = {};
-    if (state.name !== '') cache.name = state.name;
-    if (state.created) cache.currency = state.currency;
-    if (cache.name !== undefined || cache.currency !== undefined) {
-      await store.setNameCache(cycle.localId, cache);
     }
   }
 
@@ -773,7 +789,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       pulled: 0,
       newOkIds: [],
       epochResets: 0,
-      nameEventPulled: false,
       pullCharged: 0,
       inlineWaits: 0,
       pace: pacer(OPENS_PER_YIELD),
@@ -792,7 +807,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       break;
     }
 
-    if (cycle.nameEventPulled) await refreshNameCache(cycle);
     if (pushStopped !== null) throw pushStopped;
 
     return {
@@ -1092,6 +1106,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     if (moving.has(localId)) return failed('in_flight');
     moving.add(localId);
     let dropped: number;
+    let resealed: { id: string; from: string; to: string }[] = [];
+    let groupIds: { from: string; to: string } | null = null;
     try {
       // Let a running cycle finish; while `moving` is set, no new one starts.
       for (let running = inFlight.get(localId); running; running = inFlight.get(localId)) {
@@ -1107,6 +1123,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       if (derived !== localId) return failed('no_secret');
       const from = deriveServer(secret, group.serverUrl).groupId;
       const to = deriveServer(secret, origin).groupId;
+      groupIds = { from, to };
 
       // Read, re-encrypt, and switch in one transaction, so a write landing meanwhile cannot be left behind
       // sealed for the old group id.
@@ -1117,12 +1134,18 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         // transaction holds the store meanwhile, so no write can land between the read and the switch.
         const reencrypted: ReadableEnvelope[] = [];
         const pace = pacer(RESEALS_PER_YIELD);
+        resealed = [];
         for (const { id, envelope } of await tx.listReadable(localId)) {
           if (pace()) await yieldToEventLoop();
-          reencrypted.push({
-            id,
-            envelope: resealEnvelope({ key, groupId: from, newKey: key, newGroupId: to, envelope }),
+          const next = resealEnvelope({
+            key,
+            groupId: from,
+            newKey: key,
+            newGroupId: to,
+            envelope,
           });
+          reencrypted.push({ id, envelope: next });
+          resealed.push({ id, from: envelopeText(envelope), to: envelopeText(next) });
         }
         await tx.setServer(localId, origin, reencrypted);
         // A debt to delete the copy on the server this group now syncs through would wipe it.
@@ -1134,6 +1157,18 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       return failed('local_error');
     } finally {
       moving.delete(localId);
+    }
+    // The bodies are the same bytes: what was decrypted for the old group id stands for the new envelopes too.
+    if (groupIds !== null) {
+      const ids = groupIds;
+      for (const r of resealed) {
+        decodeCache.resealed(
+          localId,
+          r.id,
+          { text: r.from, groupId: ids.from },
+          { text: r.to, groupId: ids.to },
+        );
+      }
     }
     // Backoff and batch size were learned from the old server.
     backoff.delete(localId);

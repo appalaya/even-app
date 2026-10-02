@@ -32,12 +32,15 @@ import {
   type SyncEngineHandle,
   type SyncTuning,
 } from './engine';
+import { DecodeCache } from './decodeCache';
 import type { ServerInfo, StoredEnvelope, SyncEvent, SyncResult, Transport } from './types';
 
 interface Device {
   store: TestStore;
   secrets: FakeSecrets;
   engine: SyncEngineHandle;
+  /** What the engine's pulls opened (the app shares it with the derived state). */
+  decodeCache: DecodeCache;
   events: SyncEvent[];
   /** Every log line, with its detail. */
   logs: string[];
@@ -79,9 +82,11 @@ async function setupWith(kind: StoreKind, options: SetupOptions = {}): Promise<H
     await store.upsertGroup(groupRow(keys, { createdAt: clock.now() }));
     const events: SyncEvent[] = [];
     const logs: string[] = [];
+    const decodeCache = new DecodeCache();
     const engine = createSyncEngine({
       store,
       secrets,
+      decodeCache,
       transportFor: (url) => {
         const target = servers.get(url);
         if (target === undefined) throw new Error(`no fake server at ${url}`);
@@ -95,7 +100,7 @@ async function setupWith(kind: StoreKind, options: SetupOptions = {}): Promise<H
       ...(options.tuning === undefined ? {} : { tuning: options.tuning }),
     });
     engine.subscribe((event) => events.push(event));
-    return { store, secrets, engine, events, logs };
+    return { store, secrets, engine, decodeCache, events, logs };
   }
 
   function addServer(url: string): FakeServer {
@@ -215,7 +220,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect(h.server.requests.map((r) => r.op)).toEqual(['info', 'push', 'pull']);
     });
 
-    it('delivers one device’s events to another, as remote ok rows with ts, and caches the name', async () => {
+    it('delivers one device’s events to another, as remote ok rows with ts, each opened once', async () => {
       const h = await setup();
       await writeLocal(h.store, h.keys, h.ev.created('Banff 2026', 'CAD'));
       await writeMany(h, 2);
@@ -231,17 +236,18 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       const rows = await b.store.dump(h.keys.localId);
       expect(rows.every((r) => r.origin === 'remote' && r.acked && r.status === 'ok')).toBe(true);
       expect(rows.every((r) => typeof r.ts === 'number')).toBe(true);
+      // Each pulled envelope went into the decode cache as it was opened, so the derive that follows opens none of
+      // them again; the name cache is the derived state's to keep (the lifecycle check), not a pass of the engine's.
+      expect(b.decodeCache.size(h.keys.localId)).toBe(3);
+      for (const row of rows) {
+        const decoded = b.decodeCache.get(h.keys.localId, row.id, row.envelope, h.keys.groupId);
+        expect(decoded?.event?.ts).toBe(row.ts);
+      }
       expect(await b.store.getGroup(h.keys.localId)).toMatchObject({
-        nameCache: 'Banff 2026',
-        currencyCache: 'CAD',
+        nameCache: null,
+        currencyCache: null,
         cursor: 3,
       });
-
-      // B renames; A picks the new name up.
-      await writeLocal(b.store, h.keys, h.ev.renamed('Banff 2027'));
-      await b.engine.syncGroup(h.keys.localId, foreground);
-      await h.engine.syncGroup(h.keys.localId, foreground);
-      expect((await h.store.getGroup(h.keys.localId))?.nameCache).toBe('Banff 2027');
     });
 
     it('acks duplicates: a 200 acknowledges every envelope in the batch', async () => {
@@ -1152,7 +1158,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
   });
 
   describe('converging', () => {
-    it('two devices converge, with acks, seq, cursor, and the name cache', async () => {
+    it('two devices converge, with acks, seq and cursor', async () => {
       const h = await setup({ limits: { max_batch: 2, max_page: 3 } });
       await writeLocal(h.store, h.keys, h.ev.created('Real store', 'EUR'));
       await writeMany(h, 4);
@@ -1163,11 +1169,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }),
       );
       expect(joined).toMatchObject({ pulled: 5, epochResets: 0 });
-      expect(await b.store.getGroup(h.keys.localId)).toMatchObject({
-        nameCache: 'Real store',
-        currencyCache: 'EUR',
-        cursor: 5,
-      });
+      expect(await b.store.getGroup(h.keys.localId)).toMatchObject({ cursor: 5 });
 
       await writeMany(h, 2, b.store);
       expectSynced(await b.engine.syncGroup(h.keys.localId, foreground));

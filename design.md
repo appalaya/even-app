@@ -1002,15 +1002,30 @@ under Rotation.
    else `ok`, cache `ts`. Insert with `acked = 1`,
    `origin = 'remote'`, ignore if present; on conflict set `acked = 1` and
    `seq`. Commit each page **and** the cursor update in one SQLite
-   transaction. Update `name_cache` from any `group.created`/`group.renamed`.
+   transaction. Each opened body goes into the decode cache (below), and an
+   envelope the cache already holds is not opened again.
 3. **Recompute**: invalidate the group's memoised state; observers re-render.
 4. Record `last_synced_at` or `last_sync_error`; reset
    `epoch_resets_this_cycle`. Both happen at the end of every cycle,
    successful or not, so an `epoch_unstable` group tries again on a later
    cycle instead of staying stuck.
 
-After a pull that brought a `group.created` or `group.renamed`, `name_cache`
-and `currency_cache` are re-derived from all of the group's naming events.
+`name_cache` and `currency_cache` are taken from the derived state by the
+lifecycle check that follows every cycle (`GroupService.processLifecycle`):
+the reducer already holds the group's name and currency, so nothing opens the
+log again for them.
+
+**One decode cache.** Every body the app decrypts is held in memory once, per
+group and envelope id, with the exact envelope text and the server group id it
+was opened for, in one cache shared by the engine, the derived state and
+rotation (`services/sync/decodeCache.ts`; pre-launch review H3, where a join
+opened every envelope three times). The pull puts what it opens; the derive
+and rotation's copy take from it; a server move carries each entry over to its
+re-encrypted envelope, whose plaintext is byte-identical; and a pull that
+brings back an envelope already held (after a move or an epoch reset) does not
+open it again. A lookup with other text or another group id misses, so an
+entry never stands in for an envelope it was not opened from. It is memory
+only, like every decrypted body, and a group's entries go when it is left.
 A pulled entry that is not an envelope at all is stored as `undecryptable`
 with its text cut to 4 KiB, so one oversized item cannot fail its page; one
 with no usable id is skipped. A page that says `more` without advancing

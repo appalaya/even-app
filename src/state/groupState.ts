@@ -6,8 +6,9 @@
  * readiness, sync status, and read-only reasons.
  *
  * Memoised per group and invalidated on the engine's `finished` events and on local writes. Each envelope is
- * decrypted once per (id, ciphertext): a re-derive after a sync only opens what is new, and a server move (which
- * re-encrypts every row) opens everything again. Nothing decrypted is ever written anywhere.
+ * decrypted once per (id, ciphertext), in a `DecodeCache` shared with the sync engine: what a pull opened to store
+ * is not opened again here, a re-derive after a sync opens only what is new, and a server move carries the bodies
+ * over to the re-encrypted rows. Nothing decrypted is ever written anywhere.
  *
  * The React layer reads snapshots synchronously (`peek`, `peekList`) and re-renders on `subscribe`; a snapshot object
  * is replaced, never mutated, so identity comparison tells a hook whether anything changed.
@@ -22,7 +23,6 @@ import {
   parseEvent,
   reduce,
   simplify,
-  type Event,
   type GroupState,
   type LogEntry,
   type MemberState,
@@ -37,6 +37,7 @@ import type {
   GroupRow,
   Store,
 } from '../services/storage/types';
+import { DecodeCache, type Decoded } from '../services/sync/decodeCache';
 import type { SyncEngine, SyncEvent, SyncResult } from '../services/sync/types';
 import { OPENS_PER_YIELD, pacer, yieldToEventLoop } from '../services/yieldToEventLoop';
 import { pendingAmong } from './acks';
@@ -199,13 +200,6 @@ function syncStatusOf(row: GroupRow, syncing: boolean, lastResult: SyncResult | 
 
 // ---------- The store ----------
 
-interface Decoded {
-  text: string;
-  groupId: string;
-  event: Event | null;
-  type: string | null;
-}
-
 interface Memo {
   derived: DerivedGroup;
   /** Valid (`ok`) entries, the reducer's input and the writers' `nextTs` log. */
@@ -218,6 +212,8 @@ export interface GroupStateDeps {
   engine: Pick<SyncEngine, 'subscribe'>;
   /** Locale for activity summaries' amounts; the device default when omitted. */
   locale?: string;
+  /** Shared with the sync engine, which fills it as it pulls; defaults to a private one. */
+  decodeCache?: DecodeCache;
   log?: (message: string, detail?: unknown) => void;
 }
 
@@ -249,7 +245,10 @@ export class GroupStateStore {
   private readonly versions = new Map<string, number>();
   private readonly memoVersions = new Map<string, number>();
   private readonly inflight = new Map<string, Promise<Memo | null>>();
-  private readonly decoded = new Map<string, Map<string, Decoded>>();
+  /** What each envelope decrypted to, shared with the engine (and rotation, through `GroupService`). */
+  readonly decodeCache: DecodeCache;
+  /** Whether `decodeCache` is this store's own (cleared on `dispose`) rather than one shared with the engine. */
+  private readonly ownsDecoded: boolean;
   private readonly snapshots = new Map<string, GroupSnapshot>();
   private readonly listeners = new Map<string, Set<() => void>>();
   private readonly syncing = new Set<string>();
@@ -267,6 +266,8 @@ export class GroupStateStore {
     this.store = deps.store;
     this.secrets = deps.secrets;
     this.locale = deps.locale;
+    this.decodeCache = deps.decodeCache ?? new DecodeCache();
+    this.ownsDecoded = deps.decodeCache === undefined;
     this.log = deps.log ?? ((message, detail) => console.warn(message, detail));
     this.unsubscribeEngine = deps.engine.subscribe((event) => this.onSync(event));
   }
@@ -355,7 +356,7 @@ export class GroupStateStore {
     this.versions.set(localId, this.version(localId) + 1);
     this.memo.delete(localId);
     this.memoVersions.delete(localId);
-    this.decoded.delete(localId);
+    this.decodeCache.drop(localId);
     this.lastResults.delete(localId);
     this.syncing.delete(localId);
     this.setSnapshot(localId, MISSING);
@@ -373,7 +374,7 @@ export class GroupStateStore {
     this.listeners.clear();
     this.listListeners.clear();
     this.memo.clear();
-    this.decoded.clear();
+    if (this.ownsDecoded) this.decodeCache.clear();
   }
 
   // ----- internals -----
@@ -450,7 +451,7 @@ export class GroupStateStore {
         this.memo.set(localId, memo);
         this.memoVersions.set(localId, version);
         if (memo === null) {
-          this.decoded.delete(localId);
+          this.decodeCache.drop(localId);
           this.setSnapshot(localId, MISSING);
         } else {
           this.setSnapshot(localId, {
@@ -490,23 +491,22 @@ export class GroupStateStore {
     if (!noSecret) {
       const key = local.encryptionKey;
       const groupId = deriveServer(secret, row.serverUrl).groupId;
-      const previous = this.decoded.get(localId);
-      const next = new Map<string, Decoded>();
+      // Each envelope is opened once per (text, group id): by the pull that stored it (the engine shares this cache), or
+      // by the first derive that reads it. A re-derive after a sync opens only what is new.
+      const since = this.decodeCache.mark();
+      const seen = new Set<string>();
       // Opening is the cost (about 0.2 ms an envelope without a JIT): hand the thread back every few hundred, so the
       // screen can draw and answer while a large group derives (pre-launch review H3).
       const pace = pacer(OPENS_PER_YIELD);
       for (const stored of await this.store.listEnvelopes(localId)) {
         if (!isReadable(stored.status)) continue;
-        let decoded = previous?.get(stored.id);
-        if (
-          decoded === undefined ||
-          decoded.text !== stored.envelope ||
-          decoded.groupId !== groupId
-        ) {
+        let decoded = this.decodeCache.get(localId, stored.id, stored.envelope, groupId);
+        if (decoded === undefined) {
           if (pace()) await yieldToEventLoop();
           decoded = decode(key, groupId, stored.envelope);
+          this.decodeCache.put(localId, stored.id, decoded);
         }
-        next.set(stored.id, decoded);
+        seen.add(stored.id);
         if (stored.status === 'ok') {
           if (decoded.event === null) {
             readFailures += 1;
@@ -518,7 +518,7 @@ export class GroupStateStore {
           skippedMoney = true;
         }
       }
-      this.decoded.set(localId, next);
+      this.decodeCache.retain(localId, seen, since);
     }
 
     const created = firstEntry(entries, (e) => e.event.type === 'group.created');

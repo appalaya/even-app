@@ -5,13 +5,14 @@
  * (`AppProvider`, hooks) only reads from what this returns.
  *
  * On creation: runs the store's migrations (idempotent), reads the device id, builds the sync engine, the derived
- * group state and the group service, wires the engine's `finished` events to the lifecycle checks (closure,
+ * group state (sharing one decode cache, so an envelope a pull opened is not opened again) and the group service, wires the engine's `finished` events to the lifecycle checks (closure,
  * rotation recognition, name cache), and starts one `reconcile` pass so a rotation that was waiting for its closure
  * to be acknowledged when the app last stopped carries on.
  */
 import type { Secrets } from '../services/secrets/types';
 import type { FileIO } from '../services/groupFile/fileIO';
 import type { Store } from '../services/storage/types';
+import { DecodeCache } from '../services/sync/decodeCache';
 import { createSyncEngine, type SyncEngineHandle, type SyncTuning } from '../services/sync/engine';
 import { createInfoCache, type InfoCache } from '../services/sync/info';
 import type { SyncResult, Transport } from '../services/sync/types';
@@ -72,12 +73,15 @@ export async function createAppServices(deps: AppServicesDeps): Promise<AppServi
   await store.migrate();
   const deviceId = await secrets.deviceId();
   const infoCache = deps.infoCache ?? createInfoCache();
+  // One decode cache: what a pull opens, the derive and rotation do not open again (pre-launch review H3).
+  const decodeCache = new DecodeCache();
 
   const engine = createSyncEngine({
     store,
     secrets,
     transportFor,
     infoCache,
+    decodeCache,
     now,
     log,
     ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
@@ -88,6 +92,7 @@ export async function createAppServices(deps: AppServicesDeps): Promise<AppServi
     store,
     secrets,
     engine,
+    decodeCache,
     log,
     ...(deps.locale === undefined ? {} : { locale: deps.locale }),
   });

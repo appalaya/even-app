@@ -1074,6 +1074,8 @@ export class GroupService {
       const { localId: newLocalId, encryptionKey: newKey } = deriveLocal(secret);
       const plannedServer = server ?? derived.row.serverUrl;
       let newServer = plannedServer;
+      let carried: { id: string; text: string; event: Event | null; type: string | null }[] = [];
+      let carriedGroupId = '';
       await this.secrets.setSecret(newLocalId, secret, plannedServer);
       try {
         await this.store.transaction(async (tx) => {
@@ -1083,9 +1085,13 @@ export class GroupService {
           newServer = serverUrl;
           const oldGroupId = deriveServer(oldSecret, row.serverUrl).groupId;
           const newGroupId = deriveServer(secret, serverUrl).groupId;
+          carried = [];
+          carriedGroupId = newGroupId;
 
           // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events stay behind. The
           // thread is handed back every few hundred, so the screen still draws while a large group is copied.
+          // What the derive already opened is not opened again: the copy only re-encrypts it, and the new group's
+          // first derive finds the bodies under the new envelopes (`carried`, put once this commits).
           const copied: NewEventRow[] = [];
           const newLog: LogEntry[] = [];
           const pace = pacer(RESEALS_PER_YIELD);
@@ -1094,13 +1100,23 @@ export class GroupService {
             if (pace()) await yieldToEventLoop();
             const envelope = parseEnvelopeText(stored.envelope);
             if (envelope === null) continue;
-            let body: unknown;
-            try {
-              body = open({ key: oldKey, groupId: oldGroupId, envelope });
-            } catch {
-              continue;
+            let opened = this.groupState.decodeCache.get(
+              localId,
+              stored.id,
+              stored.envelope,
+              oldGroupId,
+            );
+            if (opened === undefined || (opened.event === null && opened.type === null)) {
+              let body: unknown;
+              try {
+                body = open({ key: oldKey, groupId: oldGroupId, envelope });
+              } catch {
+                continue;
+              }
+              const event = stored.status === 'ok' ? parseEvent(body) : null;
+              opened = { text: stored.envelope, groupId: oldGroupId, event, type: typeOf(body) };
             }
-            if (CONTROL_TYPES.has(typeOf(body) ?? '')) continue;
+            if (CONTROL_TYPES.has(opened.type ?? '')) continue;
             const resealed = resealEnvelope({
               key: oldKey,
               groupId: oldGroupId,
@@ -1108,19 +1124,19 @@ export class GroupService {
               newGroupId,
               envelope,
             });
+            const text = JSON.stringify(resealed);
             copied.push({
               id: stored.id,
               origin: stored.origin,
               acked: false,
               seq: null,
               ts: stored.ts,
-              envelope: JSON.stringify(resealed),
+              envelope: text,
               status: stored.status,
             });
-            if (stored.status === 'ok') {
-              const event = parseEvent(body);
-              if (event !== null) newLog.push({ id: stored.id, event });
-            }
+            const event = stored.status === 'ok' ? opened.event : null;
+            carried.push({ id: stored.id, text, event, type: opened.type });
+            if (event !== null) newLog.push({ id: stored.id, event });
           }
           await tx.upsertGroup({
             localId: newLocalId,
@@ -1158,6 +1174,14 @@ export class GroupService {
       } catch (error) {
         await this.secrets.deleteSecret(newLocalId).catch(() => undefined);
         throw error;
+      }
+      for (const c of carried) {
+        this.groupState.decodeCache.put(newLocalId, c.id, {
+          text: c.text,
+          groupId: carriedGroupId,
+          event: c.event,
+          type: c.type,
+        });
       }
       // The old group moved while this ran (the new group follows the row, not the snapshot).
       if (newServer !== plannedServer) await this.recordServer(newLocalId, newServer);
@@ -1402,7 +1426,13 @@ export class GroupService {
             if (pace()) await yieldToEventLoop();
             const envelope = parseEnvelopeText(stored.envelope);
             if (envelope === null) continue;
-            if (CONTROL_TYPES.has(openType(oldKey, oldGroupId, envelope) ?? '')) continue;
+            const known = this.groupState.decodeCache.get(
+              oldLocalId,
+              stored.id,
+              stored.envelope,
+              oldGroupId,
+            )?.type;
+            if (CONTROL_TYPES.has(known ?? openType(oldKey, oldGroupId, envelope) ?? '')) continue;
             let resealed;
             try {
               resealed = resealEnvelope({
