@@ -70,6 +70,7 @@ import type {
   ReadableEnvelope,
   Store,
 } from '../storage/types';
+import { OPENS_PER_YIELD, pacer, RESEALS_PER_YIELD, yieldToEventLoop } from '../yieldToEventLoop';
 import { SyncError, toSyncError } from './errors';
 import { createInfoCache, type InfoCache } from './info';
 import type {
@@ -379,6 +380,8 @@ interface Cycle {
   /** Entries charged against `pullEntriesPerCycle` so far. */
   pullCharged: number;
   inlineWaits: number;
+  /** Envelopes opened by the pull: when to hand the thread back (`yieldToEventLoop`). */
+  pace: () => boolean;
 }
 
 interface SendableEnvelope {
@@ -671,6 +674,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
 
       const byId = new Map<string, ClassifiedEnvelope>();
       for (const raw of page.events) {
+        // Each one is opened: a page of 1,000 is about 0.2 s without a JIT, so the thread is handed back in between.
+        if (cycle.pace()) await yieldToEventLoop();
         const classified = classifyPulled(raw, cycle.key, cycle.groupId);
         if (classified !== null && !byId.has(classified.row.id))
           byId.set(classified.row.id, classified);
@@ -771,6 +776,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       nameEventPulled: false,
       pullCharged: 0,
       inlineWaits: 0,
+      pace: pacer(OPENS_PER_YIELD),
     };
 
     let pushStopped: SyncError | null;
@@ -1106,13 +1112,18 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       // sealed for the old group id.
       dropped = await store.transaction(async (tx) => {
         const { byStatus } = await tx.countByStatus(localId);
-        // Byte-exact: bodies are never parsed, so an unsupported one crosses unchanged.
-        const reencrypted: ReadableEnvelope[] = (await tx.listReadable(localId)).map(
-          ({ id, envelope }) => ({
+        // Byte-exact: bodies are never parsed, so an unsupported one crosses unchanged. The thread is handed back
+        // every few hundred (an open and a seal each), so the screen still draws during a large group's move; the
+        // transaction holds the store meanwhile, so no write can land between the read and the switch.
+        const reencrypted: ReadableEnvelope[] = [];
+        const pace = pacer(RESEALS_PER_YIELD);
+        for (const { id, envelope } of await tx.listReadable(localId)) {
+          if (pace()) await yieldToEventLoop();
+          reencrypted.push({
             id,
             envelope: resealEnvelope({ key, groupId: from, newKey: key, newGroupId: to, envelope }),
-          }),
-        );
+          });
+        }
         await tx.setServer(localId, origin, reencrypted);
         // A debt to delete the copy on the server this group now syncs through would wipe it.
         await tx.pendingDeletes.remove({ localId, serverUrl: origin });

@@ -238,7 +238,8 @@ export function GroupScreen({
     [state, myId],
   );
 
-  const name = derived?.name ?? '';
+  // Until the first derive lands (a large group, decrypted in slices), the cached name heads the empty screen.
+  const name = derived?.name ?? snapshot.name ?? '';
   const back = {
     label: 'Groups',
     onPress: () => (router.canGoBack() ? router.back() : router.replace(groupHrefs.groups)),

@@ -38,6 +38,7 @@ import type {
   Store,
 } from '../services/storage/types';
 import type { SyncEngine, SyncEvent, SyncResult } from '../services/sync/types';
+import { OPENS_PER_YIELD, pacer, yieldToEventLoop } from '../services/yieldToEventLoop';
 import { pendingAmong } from './acks';
 import { describeForLog } from './errors';
 import { firstEntry, isMoneyType, isReadable, lastEntry, parseEnvelopeText, typeOf } from './log';
@@ -138,6 +139,8 @@ export interface GroupSnapshot {
   status: 'loading' | 'ready' | 'missing' | 'error';
   derived: DerivedGroup | null;
   sync: SyncStatus | null;
+  /** While the first derive runs: the group's cached name (`name_cache`), so the nav bar can already say it. */
+  name?: string;
 }
 
 export interface GroupListRow {
@@ -470,6 +473,11 @@ export class GroupStateStore {
   private async derive(localId: string): Promise<Memo | null> {
     const row = await this.store.getGroup(localId);
     if (row === null) return null;
+    // A large group takes a while to open: until it has, the screen draws its loading state under the group's name.
+    const shown = this.snapshots.get(localId);
+    if (shown === undefined || (shown.status === 'loading' && shown.name === undefined)) {
+      this.setSnapshot(localId, { ...LOADING, name: row.nameCache ?? '' });
+    }
     const counts = await this.store.countByStatus(localId);
     const secret = await this.secrets.getSecret(localId);
     const local = secret === null ? null : deriveLocal(secret);
@@ -484,6 +492,9 @@ export class GroupStateStore {
       const groupId = deriveServer(secret, row.serverUrl).groupId;
       const previous = this.decoded.get(localId);
       const next = new Map<string, Decoded>();
+      // Opening is the cost (about 0.2 ms an envelope without a JIT): hand the thread back every few hundred, so the
+      // screen can draw and answer while a large group derives (pre-launch review H3).
+      const pace = pacer(OPENS_PER_YIELD);
       for (const stored of await this.store.listEnvelopes(localId)) {
         if (!isReadable(stored.status)) continue;
         let decoded = previous?.get(stored.id);
@@ -492,6 +503,7 @@ export class GroupStateStore {
           decoded.text !== stored.envelope ||
           decoded.groupId !== groupId
         ) {
+          if (pace()) await yieldToEventLoop();
           decoded = decode(key, groupId, stored.envelope);
         }
         next.set(stored.id, decoded);

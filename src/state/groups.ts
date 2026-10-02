@@ -83,6 +83,7 @@ import type {
   Transport,
 } from '../services/sync/types';
 import { groupUsage, type GroupUsage } from '../services/sync/usage';
+import { pacer, RESEALS_PER_YIELD, yieldToEventLoop } from '../services/yieldToEventLoop';
 import { allAcked } from './acks';
 import {
   describeForLog,
@@ -1083,11 +1084,14 @@ export class GroupService {
           const oldGroupId = deriveServer(oldSecret, row.serverUrl).groupId;
           const newGroupId = deriveServer(secret, serverUrl).groupId;
 
-          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events stay behind.
+          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events stay behind. The
+          // thread is handed back every few hundred, so the screen still draws while a large group is copied.
           const copied: NewEventRow[] = [];
           const newLog: LogEntry[] = [];
+          const pace = pacer(RESEALS_PER_YIELD);
           for (const stored of await tx.listEnvelopes(localId)) {
             if (!isReadable(stored.status)) continue;
+            if (pace()) await yieldToEventLoop();
             const envelope = parseEnvelopeText(stored.envelope);
             if (envelope === null) continue;
             let body: unknown;
@@ -1391,9 +1395,11 @@ export class GroupService {
           const oldGroupId = deriveServer(oldSecret, oldRow.serverUrl).groupId;
           const newGroupId = deriveServer(newSecret, newRow.serverUrl).groupId;
           const have = new Set((await tx.listEnvelopes(newLocalId)).map((row) => row.id));
+          const pace = pacer(RESEALS_PER_YIELD);
           for (const stored of await tx.listEnvelopes(oldLocalId)) {
             if (stored.origin !== 'local' || !isReadable(stored.status) || have.has(stored.id))
               continue;
+            if (pace()) await yieldToEventLoop();
             const envelope = parseEnvelopeText(stored.envelope);
             if (envelope === null) continue;
             if (CONTROL_TYPES.has(openType(oldKey, oldGroupId, envelope) ?? '')) continue;
