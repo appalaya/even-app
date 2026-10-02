@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
-import { useApp, useGroups } from '@/state';
+import { describeForLog, useApp, useGroups } from '@/state';
 
 let askedThisLaunch = false;
 /** Bumped by the dev seed's reset so a Groups screen that is already mounted checks again. */
@@ -66,7 +66,7 @@ export function useKeychainRecovery() {
       const recovered = await services.groups.recoverGroupsFromSecrets();
       if (recovered > 0) void services.foreground();
     } catch (error) {
-      console.warn('keychain recovery failed', error instanceof Error ? error.message : error);
+      console.warn('keychain recovery failed', describeForLog(error));
     } finally {
       setBusy(false);
       setCount(0);

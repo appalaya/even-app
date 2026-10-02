@@ -15,6 +15,7 @@ import type { Store } from '../services/storage/types';
 import { createSyncEngine, type SyncEngineHandle, type SyncTuning } from '../services/sync/engine';
 import { createInfoCache, type InfoCache } from '../services/sync/info';
 import type { SyncResult, Transport } from '../services/sync/types';
+import { describeForLog } from './errors';
 import { GroupStateStore } from './groupState';
 import { GroupService } from './groups';
 import { PrefsService, type NotificationPermission } from './prefs';
@@ -109,7 +110,7 @@ export async function createAppServices(deps: AppServicesDeps): Promise<AppServi
   function track(task: Promise<unknown>): void {
     const settled = task
       .catch((error: unknown) => {
-        log('state: background task failed', error instanceof Error ? error.message : error);
+        log('state: background task failed', describeForLog(error));
       })
       .finally(() => {
         tasks.delete(settled);

@@ -13,6 +13,7 @@
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 
+import { describeForLog } from '../../state/errors';
 import { openAppServices } from '../../state/openAppServices';
 import type { AppServices } from '../../state/services';
 import type { SyncResult } from '../sync/types';
@@ -45,7 +46,7 @@ if (!TaskManager.isTaskDefined(BACKGROUND_REFRESH_TASK)) {
       await runBackgroundRefresh();
       return BackgroundTask.BackgroundTaskResult.Success;
     } catch (error) {
-      console.warn('background: refresh failed', error instanceof Error ? error.message : error);
+      console.warn('background: refresh failed', describeForLog(error));
       return BackgroundTask.BackgroundTaskResult.Failed;
     }
   });
@@ -71,7 +72,7 @@ export async function registerBackgroundRefresh(): Promise<RegistrationResult> {
     }
     return 'registered';
   } catch (error) {
-    console.warn('background: could not register', error instanceof Error ? error.message : error);
+    console.warn('background: could not register', describeForLog(error));
     return 'failed';
   }
 }

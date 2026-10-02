@@ -17,6 +17,7 @@ import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { describeForLog } from '../../state/errors';
 import { openAppServices } from '../../state/openAppServices';
 import type { AppServices } from '../../state/services';
 import type { NotificationStatus } from '../../state/prefs';
@@ -62,10 +63,7 @@ export function ensureActivityChannel(): Promise<void> {
     () => undefined,
     (error: unknown) => {
       activityChannel = null;
-      console.warn(
-        'notifications: could not create the channel',
-        error instanceof Error ? error.message : error,
-      );
+      console.warn('notifications: could not create the channel', describeForLog(error));
     },
   );
   return activityChannel;

@@ -22,7 +22,7 @@ import {
 } from '@/components';
 import { InviteQrSheet } from '@/features/invite/InviteQrSheet';
 import { PickNameStep } from '@/features/join/PickNameStep';
-import { deviceSeat, useApp, useGroup } from '@/state';
+import { describeForLog, deviceSeat, useApp, useGroup } from '@/state';
 import { layout, useTheme } from '@/theme';
 
 import { DoneRow, DoneSheet } from './DoneAdding';
@@ -146,7 +146,7 @@ export function GroupScreen({
   useEffect(() => {
     if (ownSeat === null) return;
     groups.restoreSeat(localId).catch((error: unknown) => {
-      console.warn('restoring the seat failed', error instanceof Error ? error.message : error);
+      console.warn('restoring the seat failed', describeForLog(error));
     });
   }, [ownSeat, groups, localId]);
 

@@ -13,7 +13,7 @@ import { router } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert } from 'react-native';
 
-import { useApp } from '@/state';
+import { describeForLog, useApp } from '@/state';
 
 import { hrefs } from './routes';
 
@@ -61,7 +61,7 @@ export function useImportGroupFile() {
           return;
       }
     } catch (error) {
-      console.warn('import group file failed', error instanceof Error ? error.message : error);
+      console.warn('import group file failed', describeForLog(error));
       Alert.alert("That isn't an Even group file.");
     } finally {
       setBusy(false);
@@ -77,7 +77,7 @@ export function useImportGroupFile() {
       setRefused(null);
       if (result.outcome === 'imported') router.push(hrefs.group(result.localId));
     } catch (error) {
-      console.warn('import group file failed', error instanceof Error ? error.message : error);
+      console.warn('import group file failed', describeForLog(error));
       setRefused(null);
     } finally {
       setBusy(false);

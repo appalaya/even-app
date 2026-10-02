@@ -21,7 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard } from 'react-native';
 
 import { hrefs } from '@/features/groups/routes';
-import { isStateError, useApp } from '@/state';
+import { describeForLog, isStateError, useApp } from '@/state';
 
 import { ConfirmSheet } from './ConfirmSheet';
 import {
@@ -163,10 +163,7 @@ export function JoinFlow({
       if (failed !== null) {
         // The server refused the group: undo the join so that nothing is left and Join tries it afresh.
         await groups.leaveGroup(result.localId).catch((error: unknown) => {
-          console.warn(
-            'undoing a failed join failed',
-            error instanceof Error ? error.message : error,
-          );
+          console.warn('undoing a failed join failed', describeForLog(error));
         });
         fail(failed);
         return;
@@ -206,7 +203,7 @@ export function JoinFlow({
       ) {
         setRefusal({ text, message: problemMessage(problem), update: problem === 'version' });
       } else {
-        console.warn('join failed', error instanceof Error ? error.message : error);
+        console.warn('join failed', describeForLog(error));
         fail('unknown');
       }
     } finally {
@@ -221,7 +218,7 @@ export function JoinFlow({
       const result = await groups.acceptInviteMove(s.localId, s.toServer);
       if (result.outcome !== 'moved') console.warn('move did not complete', result.outcome);
     } catch (error) {
-      console.warn('move failed', error instanceof Error ? error.message : error);
+      console.warn('move failed', describeForLog(error));
     } finally {
       setBusy(false);
       onDone(hrefs.group(s.localId));

@@ -18,6 +18,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { archivedLabel } from '../features/groups/cardLabels';
+import { StoreError } from '../services/storage/errors';
 import type { NewEventRow } from '../services/storage/types';
 import { settle } from '../services/testing/fakeClock';
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
@@ -277,6 +278,29 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
       archivedLabel(row?.memberCount ?? null, row?.myNet ?? null, row?.currency ?? null, 'en-US'),
     ).toBe('2 people · you owe 617');
     expect(displayMinor(617, 'ZZZ')).toBe('617');
+  });
+
+  it('logs a failed derive as fixed words, never a message quoting the local id (review L7)', async () => {
+    const w = await setup(kind);
+    const a = await w.device('A');
+    const { localId } = await a.services.groups.createGroup({
+      name: 'Banff 2026',
+      currency: 'CAD',
+      myName: 'Maya',
+      serverUrl: SERVER,
+    });
+    await a.services.idle();
+    a.store.fault = (method) => {
+      if (method === 'countByStatus')
+        throw new StoreError('group_not_found', `no group ${localId}`);
+    };
+    a.services.groupState.invalidate(localId);
+    const stop = a.services.groupState.subscribe(localId, () => undefined);
+    await settle();
+    stop();
+    a.store.fault = null;
+    expect(a.logs).toContain('state: could not derive a group StoreError code=group_not_found');
+    for (const line of a.logs) expect(line).not.toContain(localId);
   });
 
   it('a group without its secret derives no state and is read-only', async () => {

@@ -39,6 +39,7 @@ import type {
 } from '../services/storage/types';
 import type { SyncEngine, SyncEvent, SyncResult } from '../services/sync/types';
 import { pendingAmong } from './acks';
+import { describeForLog } from './errors';
 import { firstEntry, isMoneyType, isReadable, lastEntry, parseEnvelopeText, typeOf } from './log';
 
 // ---------- Pure pieces ----------
@@ -397,7 +398,7 @@ export class GroupStateStore {
     try {
       this.finishedHook?.(localId, event.result);
     } catch (error) {
-      this.log('state: finished hook threw', error instanceof Error ? error.message : error);
+      this.log('state: finished hook threw', describeForLog(error));
     }
   }
 
@@ -421,14 +422,14 @@ export class GroupStateStore {
       try {
         listener();
       } catch (error) {
-        this.log('state: listener threw', error instanceof Error ? error.message : error);
+        this.log('state: listener threw', describeForLog(error));
       }
     }
   }
 
   private refresh(localId: string): void {
     this.load(localId).catch((error: unknown) => {
-      this.log('state: could not derive a group', error instanceof Error ? error.message : error);
+      this.log('state: could not derive a group', describeForLog(error));
       if (!this.snapshots.has(localId)) this.setSnapshot(localId, ERROR);
     });
   }
@@ -618,10 +619,7 @@ export class GroupStateStore {
     if (this.listListeners.size === 0 && this.listSnapshot === LOADING_LIST) return;
     this.listVersion += 1;
     this.loadList().catch((error: unknown) => {
-      this.log(
-        'state: could not build the groups list',
-        error instanceof Error ? error.message : error,
-      );
+      this.log('state: could not build the groups list', describeForLog(error));
     });
   }
 
@@ -637,7 +635,7 @@ export class GroupStateStore {
           try {
             listener();
           } catch (error) {
-            this.log('state: list listener threw', error instanceof Error ? error.message : error);
+            this.log('state: list listener threw', describeForLog(error));
           }
         }
         return this.listSnapshot;

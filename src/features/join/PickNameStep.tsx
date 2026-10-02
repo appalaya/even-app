@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { EmojiPickerSheet } from '@/features/emoji/EmojiPickerSheet';
 import { namePick, sameDeviceWords, seatMark, type NamePick } from '@/features/group/model';
 import { isNameTaken, nameTakenMessage } from '@/features/groups/names';
-import { isStateError, useApp, useGroup, usePrefs } from '@/state';
+import { describeForLog, isStateError, useApp, useGroup, usePrefs } from '@/state';
 
 import { ConfirmSheet } from './ConfirmSheet';
 import { hostOf } from './invite';
@@ -141,7 +141,7 @@ export function PickNameStep({
       }
     } catch (error) {
       setFormError(`Couldn't join as ${member.name}. Try again.`);
-      console.warn('claim failed', error instanceof Error ? error.message : error);
+      console.warn('claim failed', describeForLog(error));
     } finally {
       setBusy(false);
     }
@@ -170,7 +170,7 @@ export function PickNameStep({
         setFormError(`A group has at most ${LIMITS.membersMax} members.`);
       else {
         setFormError("Couldn't add you. Try again.");
-        console.warn('join as new member failed', error instanceof Error ? error.message : error);
+        console.warn('join as new member failed', describeForLog(error));
       }
     } finally {
       setBusy(false);

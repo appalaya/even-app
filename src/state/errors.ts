@@ -56,6 +56,19 @@ export function isStateError(error: unknown, code?: StateErrorCode): error is St
   return error instanceof StateError && (code === undefined || error.code === code);
 }
 
+/**
+ * A failure as a log line's detail: the error's name and, when it carries one, its code (`StoreError
+ * code=group_not_found`, `TypeError`), never its message (design.md "Error handling"; pre-launch review L7). A
+ * message can quote a local id (a `StoreError`'s "no group <localId>"), a server URL or a server's own words, and
+ * React Native writes every console line to the device log, release builds included. Never throws.
+ */
+export function describeForLog(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const name = /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : 'Error';
+  const code: unknown = (error as { code?: unknown }).code;
+  return typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? `${name} code=${code}` : name;
+}
+
 /** Maps core's `InviteError` codes onto the three the UI distinguishes, plus `version`. */
 export function inviteProblemOf(error: unknown): InviteProblem {
   if (error instanceof InviteError) {

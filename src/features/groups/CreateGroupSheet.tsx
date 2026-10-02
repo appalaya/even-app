@@ -34,7 +34,7 @@ import {
 } from '@/components';
 import { EmojiPickerSheet } from '@/features/emoji/EmojiPickerSheet';
 import { hostOf } from '@/features/join/invite';
-import { isStateError, useApp, usePrefs } from '@/state';
+import { describeForLog, isStateError, useApp, usePrefs } from '@/state';
 import { radii, strokes, useTheme } from '@/theme';
 
 import { currencyName, defaultCurrency } from './currencies';
@@ -179,7 +179,7 @@ export function CreateGroupSheet({ visible, onCancel, onCreated, prefill }: Crea
         setFormError('Two people here have the same name.');
       } else {
         setFormError("Couldn't create the group. Try again.");
-        console.warn('create group failed', error instanceof Error ? error.message : error);
+        console.warn('create group failed', describeForLog(error));
       }
     }
   };

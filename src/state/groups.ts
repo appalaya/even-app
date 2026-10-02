@@ -84,7 +84,13 @@ import type {
 } from '../services/sync/types';
 import { groupUsage, type GroupUsage } from '../services/sync/usage';
 import { allAcked } from './acks';
-import { fromSealError, inviteProblemOf, StateError, type InviteProblem } from './errors';
+import {
+  describeForLog,
+  fromSealError,
+  inviteProblemOf,
+  StateError,
+  type InviteProblem,
+} from './errors';
 import type { DerivedGroup, GroupStateStore } from './groupState';
 import { CONTROL_TYPES, isReadable, openType, parseEnvelopeText, typeOf } from './log';
 import { checkEmoji, normaliseName, type PrefsService } from './prefs';
@@ -1231,17 +1237,14 @@ export class GroupService {
         }
       }
     } catch (error) {
-      this.log(
-        'state: keychain index update failed',
-        error instanceof Error ? error.message : error,
-      );
+      this.log('state: keychain index update failed', describeForLog(error));
     }
     for (const row of rows) {
       if (row.state === 'hidden') continue;
       try {
         await this.processLifecycle(row.localId);
       } catch (error) {
-        this.log('state: lifecycle check failed', error instanceof Error ? error.message : error);
+        this.log('state: lifecycle check failed', describeForLog(error));
       }
     }
   }
@@ -1263,7 +1266,7 @@ export class GroupService {
         origin = canonicalOrigin(serverUrl);
         secret = await this.secrets.getSecret(localId);
       } catch (error) {
-        this.log('state: cannot recover a group', error instanceof Error ? error.message : error);
+        this.log('state: cannot recover a group', describeForLog(error));
         continue;
       }
       if (secret === null || deriveLocal(secret).localId !== localId) continue;
@@ -1584,10 +1587,7 @@ export class GroupService {
     try {
       await this.secrets.setServerUrl(localId, serverUrl);
     } catch (error) {
-      this.log(
-        'state: keychain index update failed',
-        error instanceof Error ? error.message : error,
-      );
+      this.log('state: keychain index update failed', describeForLog(error));
     }
   }
 
@@ -1629,10 +1629,7 @@ export class GroupService {
     try {
       await this.prefs.seedMe(name, emoji);
     } catch (error) {
-      this.log(
-        'state: could not remember the default name',
-        error instanceof Error ? error.message : error,
-      );
+      this.log('state: could not remember the default name', describeForLog(error));
     }
   }
 

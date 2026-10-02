@@ -1088,6 +1088,14 @@ a cycle (the store, a listener) adds its error's name and message. Never a
 group id, token, envelope or body (the same rule as the server's, in
 `THREAT-MODEL.md` "What we log").
 
+Every other log line in the app (the screens, the state layer, the
+background task and notifications) gives a failure as fixed words plus
+`describeForLog(error)` (`state/errors.ts`): the error's name and, when it
+has one, its code (`StoreError code=group_not_found`), never its message,
+which can quote a local id (a `StoreError`'s "no group <localId>"), a server
+URL or a server's own words (pre-launch review L7). Only the engine's own
+lines for a local failure outside a cycle still add the message, as above.
+
 **Pending deletes.** A debt is retried at the start of each cycle (step 0).
 `204`, or `404` (nothing left there), pays it. No response, 5xx, 429 and 503
 keep it for the next cycle. Any other answer (`401`, `410`, `405`, …) cannot
