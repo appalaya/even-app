@@ -30,7 +30,9 @@
  *   1,000 each, pruned with every page that brings one.
  * - `pending_deletes` are retried at the start of `syncAll` (every debt) and of a group's cycle (that group's):
  *   204, or 404 (nothing left), pays the debt; no answer, 5xx, 429 and 503 keep it; any other answer (401, 410, …)
- *   drops it with a local log line, since retrying cannot change it.
+ *   drops it with a local log line, since retrying cannot change it. A kept debt is given up, with a log line, at
+ *   its 20th failed attempt or the first one 30 days after it was recorded: the copy then stays until the server
+ *   expires it, and the token leaves the disk.
  * - A sync failure is logged as fixed words, its code and HTTP status (`sync failed code=unauthorized status=401`):
  *   never the server URL or host, the error's message, or any text from a response. React Native writes every
  *   console line to the device log, release builds included, and the server is whoever the invite names. A local
@@ -119,6 +121,10 @@ export interface SyncTuning {
   undecryptableKeep: number;
   /** `unsupported_envelope` rows kept per group, the same way. */
   unsupportedEnvelopeKeep: number;
+  /** Failed attempts at which a pending delete is given up (design.md "Pending deletes"). */
+  debtMaxAttempts: number;
+  /** Age past which a pending delete is given up at its next failed attempt. */
+  debtMaxAgeMs: number;
   /**
    * Entries one cycle may pull, epoch restarts included. Each page is charged the entries it asked for (or the
    * entries it brought, if more), so a server that answers `more` forever, with or without entries, ends the cycle.
@@ -140,6 +146,8 @@ export const DEFAULT_TUNING: SyncTuning = {
   maxInlineWaits: 2,
   undecryptableKeep: 1_000,
   unsupportedEnvelopeKeep: 1_000,
+  debtMaxAttempts: 20,
+  debtMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
   pullEntriesPerCycle: 2 * 10_000,
 };
 
@@ -977,8 +985,21 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         const error = toSyncError(thrown);
         if (error.status === 404) {
           outcome = { outcome: 'deleted' }; // nothing left to delete there
-        } else if (DEBT_TRANSIENT.has(error.code)) {
+        } else if (
+          DEBT_TRANSIENT.has(error.code) &&
+          debt.attempts + 1 < tuning.debtMaxAttempts &&
+          now() - debt.createdAt < tuning.debtMaxAgeMs
+        ) {
+          try {
+            await store.pendingDeletes.recordAttempt(debt);
+          } catch (storeError) {
+            log('sync: could not count a pending delete attempt', describeError(storeError));
+          }
           return { outcome: 'pending' };
+        } else if (DEBT_TRANSIENT.has(error.code)) {
+          // Not for ever: the copy stays until the server expires it, and the token leaves the disk.
+          log(describeFailure('sync gave up a pending delete', error));
+          outcome = { outcome: 'dropped', error: error.code };
         } else {
           log(describeFailure('sync dropped a pending delete', error));
           outcome = { outcome: 'dropped', error: error.code };
@@ -1038,6 +1059,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         localId,
         serverUrl: origin,
         authToken: b64urlEncode(deriveServer(secret, origin).authToken),
+        createdAt: now(),
+        attempts: 0,
       };
       // Debt first, request second: a failure, or the app being killed mid-request, leaves it to be retried.
       await store.pendingDeletes.add(debt);

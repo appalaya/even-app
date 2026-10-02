@@ -11,6 +11,7 @@ import {
   isLocalHost,
   localHttpUrl,
   MAX_RESPONSE_BYTES,
+  MAX_RETRY_AFTER_MS,
   parseRetryAfter,
 } from './httpTransport';
 
@@ -232,6 +233,27 @@ describe('HttpTransport errors', () => {
     expect(parseRetryAfter(null, now)).toBeUndefined();
   });
 
+  it('honours a Retry-After of a day at most (review L2)', async () => {
+    const now = Date.UTC(2026, 8, 26, 12, 0, 0);
+    const day = 24 * 60 * 60 * 1000;
+    expect(MAX_RETRY_AFTER_MS).toBe(day);
+    expect(parseRetryAfter('86400', now)).toBe(day);
+    expect(parseRetryAfter('86401', now)).toBe(day);
+    expect(parseRetryAfter('99999999', now)).toBe(day);
+    expect(parseRetryAfter('9'.repeat(400), now)).toBe(day); // Infinity, as a number
+    expect(parseRetryAfter(new Date(now + 3 * day).toUTCString(), now)).toBe(day);
+    expect(parseRetryAfter(new Date(now + day - 1000).toUTCString(), now)).toBe(day - 1000);
+    const t = new HttpTransport('https://s.example', {
+      fetch: stubFetch(() => json(503, { error: 'over_budget' }, { 'Retry-After': '99999999' }))
+        .fetch,
+      now: () => now,
+    });
+    expect(await rejection(t.push('G', token, []))).toMatchObject({
+      code: 'over_budget',
+      retryAfterMs: day,
+    });
+  });
+
   it('maps 404 and 405 on documented routes, and non-protocol success bodies, to not_an_even_server', async () => {
     const t = (response: () => Response) =>
       new HttpTransport('https://s.example', { fetch: stubFetch(response).fetch });
@@ -358,6 +380,7 @@ describe('HttpTransport errors', () => {
           localId: keys.localId,
           serverUrl: server,
           authToken: b64urlEncode(keys.token),
+          createdAt: Date.now(),
         });
         const { fetch } = stubFetch(({ url }) =>
           url.endsWith('/v1/info') ? json(200, INFO) : json(401, body),

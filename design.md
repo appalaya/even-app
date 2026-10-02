@@ -871,6 +871,8 @@ CREATE TABLE pending_deletes (        -- server copies we still owe a DELETE to
   local_id   TEXT NOT NULL,
   server_url TEXT NOT NULL,
   auth_token TEXT NOT NULL,           -- the per-server bearer token, derived before the secret is gone
+  created_at INTEGER NOT NULL,        -- when the debt was recorded, unix ms
+  attempts   INTEGER NOT NULL DEFAULT 0,  -- DELETEs that got no answer or a transient one
   PRIMARY KEY (local_id, server_url)
 );
 
@@ -926,6 +928,8 @@ version bump; shipped migrations are never edited.
 - v2: rebuilds `pending_deletes` with `auth_token NOT NULL`. A v1 debt has
   no token and nothing at migration time can derive one, so it is dropped (no
   build that wrote one shipped).
+- v3: adds `pending_deletes.created_at` and `attempts`. A debt recorded
+  before it counts its age from the migration, with no attempts.
 
 When the store cannot open (a database written by a newer build, a failed
 migration), the app shows the StartupError board instead of Groups: "Even
@@ -1035,8 +1039,8 @@ Groups sync sequentially; a failure in one does not block others.
 
 | Server error | App behaviour |
 |---|---|
-| network / 5xx / 429 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one. Within a cycle, a 5xx retries the same outbox head after 0.5 s → 1 s → 2 s; every third consecutive 5xx halves the batch size (floor 1, kept until the app restarts or the group moves); the cycle gives up after six consecutive 5xx while pushing (three while pulling) and backs off. Sync state shows "Not synced since …". |
-| `503 over_budget` | Pushes to that server pause until its `Retry-After` (30 s without one) while pulls go on ("reads still work"); the cycle reports `failed` with that retry time and the group is not backed off. |
+| network / 5xx / 429 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one, honoured up to a day (a longer one counts as a day). Within a cycle, a 5xx retries the same outbox head after 0.5 s → 1 s → 2 s; every third consecutive 5xx halves the batch size (floor 1, kept until the app restarts or the group moves); the cycle gives up after six consecutive 5xx while pushing (three while pulling) and backs off. Sync state shows "Not synced since …". |
+| `503 over_budget` | Pushes to that server pause until its `Retry-After` (30 s without one, a day at most) while pulls go on ("reads still work"); the cycle reports `failed` with that retry time and the group is not backed off. |
 | `unauthorized` | Cannot happen for a correctly joined group. Treated as a bug: log locally, back off, show "Can't reach this group's server" with the URL. |
 | `not_found` / `method_not_allowed` on a documented route, or a `200` that is not the documented shape | The transport reports `not_an_even_server`. Show "That URL isn't an Even server. Check the address." |
 | `group_blocked` | Terminal for this server; see above. |
@@ -1076,6 +1080,18 @@ group id, token, envelope or body (the same rule as the server's, in
 keep it for the next cycle. Any other answer (`401`, `410`, `405`, …) cannot
 change on retry, so the debt is dropped with a local log line. The group id
 for the `DELETE` is `base64url(SHA-256(auth_token))`, so no secret is needed.
+
+A kept debt is not kept for ever (pre-launch review L3): it is given up, with
+a local log line (`sync gave up a pending delete code=network`), at its 20th
+failed attempt or at its first failed attempt 30 days after it was recorded,
+whichever comes first. Giving up means the copy stays on that server until
+the server's own expiry removes it (`retention_days` after its last write;
+12 months on the public server), and the token leaves this phone's disk and
+its backups, which is the point: a server gone for good would otherwise keep
+its token in `pending_deletes` forever. An attempt with no answer counts, so
+twenty cycles offline give a debt up too; a debt older than 30 days whose
+server answers is still paid. Asking again ("Delete the copy on <old host>"
+after a move) records the debt anew only once the old one is gone.
 
 **Usage meter.** The client sums its own envelope sizes per group and shows
 usage against the server's published caps in settings, with a warning at 80%.

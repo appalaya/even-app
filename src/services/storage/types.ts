@@ -114,7 +114,14 @@ export interface PendingDeleteRow {
    * "Rotation, moving, closing").
    */
   authToken: string;
+  /** `created_at`: when the debt was recorded, unix ms. Given up 30 days after it (design.md "Pending deletes"). */
+  createdAt: number;
+  /** `attempts`: DELETEs that got no answer, or a transient one (5xx, 429, 503). Given up at 20. */
+  attempts: number;
 }
+
+/** Input to `pendingDeletes.add`: a new debt has made no attempt yet. */
+export type NewPendingDelete = Omit<PendingDeleteRow, 'attempts'>;
 
 /** Identifies a debt: `pending_deletes`' primary key. */
 export type PendingDeleteKey = Pick<PendingDeleteRow, 'localId' | 'serverUrl'>;
@@ -188,9 +195,11 @@ export interface PendingDeletes {
    * Records a debt with its token; a duplicate (localId, serverUrl) is a no-op (both derive from the same secret,
    * so the token for a pair never changes). Needs no `groups` row: debts outlive Leave.
    */
-  add(entry: PendingDeleteRow): Promise<void>;
+  add(entry: NewPendingDelete): Promise<void>;
   /** In the order the debts were recorded. */
   list(): Promise<PendingDeleteRow[]>;
+  /** Counts one more failed attempt on a debt. Missing rows are a no-op. */
+  recordAttempt(entry: PendingDeleteKey): Promise<void>;
   /** Clears a debt (the DELETE succeeded, or the server refused it for good). Missing rows are a no-op. */
   remove(entry: PendingDeleteKey): Promise<void>;
 }

@@ -48,7 +48,7 @@ describe('migrate', () => {
     expect(await readSchemaVersion(db)).toBe(0);
     await migrate(db);
     expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
 
     const objects = await db.all<{ type: string; name: string }>(
       `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
@@ -91,6 +91,8 @@ describe('migrate', () => {
       ['local_id', 1, 1],
       ['server_url', 2, 1],
       ['auth_token', 0, 1],
+      ['created_at', 0, 1],
+      ['attempts', 0, 1],
     ]);
   });
 
@@ -107,7 +109,7 @@ describe('migrate', () => {
       group.serverUrl,
     ]);
 
-    await migrate(db);
+    await migrate(db, MIGRATIONS.slice(0, 2));
 
     expect(await readSchemaVersion(db)).toBe(2);
     expect((await columns(db, 'pending_deletes')).map((c) => c.name)).toEqual([
@@ -117,9 +119,36 @@ describe('migrate', () => {
     ]);
     expect(await db.all('SELECT * FROM pending_deletes')).toEqual([]);
     // Nothing else is touched.
-    const upgraded = await openSqliteStore(db);
+    const upgraded = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 2) });
     expect(await upgraded.getGroup(group.localId)).toEqual(group);
     expect((await upgraded.countByStatus(group.localId)).byStatus.ok).toBe(1);
+  });
+
+  it('v3 upgrades a v2 database: a debt keeps its token, counts its age from the upgrade, and has no attempts', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 2));
+    const group = makeGroup();
+    const token = 'A'.repeat(43);
+    await db.run(
+      'INSERT INTO pending_deletes (local_id, server_url, auth_token) VALUES (?, ?, ?)',
+      [group.localId, group.serverUrl, token],
+    );
+    const before = Date.now();
+
+    await migrate(db);
+
+    expect(await readSchemaVersion(db)).toBe(3);
+    const [debt, ...rest] = await (await openSqliteStore(db)).pendingDeletes.list();
+    expect(rest).toEqual([]);
+    expect(debt).toMatchObject({
+      localId: group.localId,
+      serverUrl: group.serverUrl,
+      authToken: token,
+      attempts: 0,
+    });
+    // strftime('%s') has whole seconds.
+    expect(debt?.createdAt).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
+    expect(debt?.createdAt).toBeLessThanOrEqual(Date.now());
   });
 
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {

@@ -140,14 +140,22 @@ export class FakeStore implements Store {
       const exists = this.state.pendingDeletes.some(
         (d) => d.localId === entry.localId && d.serverUrl === entry.serverUrl,
       );
+      if (!Number.isSafeInteger(entry.createdAt))
+        throw new Error('FakeStore: createdAt must be an integer');
       if (!exists) {
-        const { localId, serverUrl, authToken } = entry;
-        this.state.pendingDeletes.push({ localId, serverUrl, authToken });
+        const { localId, serverUrl, authToken, createdAt } = entry;
+        this.state.pendingDeletes.push({ localId, serverUrl, authToken, createdAt, attempts: 0 });
       }
     },
     list: async () => {
       this.enter('pendingDeletes.list', []);
       return this.state.pendingDeletes.map((d) => ({ ...d }));
+    },
+    recordAttempt: async (entry) => {
+      this.enter('pendingDeletes.recordAttempt', [entry]);
+      for (const d of this.state.pendingDeletes) {
+        if (d.localId === entry.localId && d.serverUrl === entry.serverUrl) d.attempts += 1;
+      }
     },
     remove: async (entry) => {
       this.enter('pendingDeletes.remove', [entry]);

@@ -126,13 +126,19 @@ function codeForStatus(status: number): SyncErrorCode {
   }
 }
 
-/** `Retry-After` as ms: delta-seconds or an HTTP-date (RFC 9110 §10.2.3). Undefined when absent or unparseable. */
+/** Longest `Retry-After` honoured: a server's longer one, by mistake or not, binds the group for a day at most. */
+export const MAX_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `Retry-After` as ms: delta-seconds or an HTTP-date (RFC 9110 §10.2.3), at most `MAX_RETRY_AFTER_MS`. Undefined
+ * when absent or unparseable.
+ */
 export function parseRetryAfter(value: string | null, nowMs: number): number | undefined {
   if (value === null) return undefined;
   const text = value.trim();
-  if (/^[0-9]+$/.test(text)) return Number(text) * 1000;
+  if (/^[0-9]+$/.test(text)) return Math.min(MAX_RETRY_AFTER_MS, Number(text) * 1000);
   const at = Date.parse(text);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
+  return Number.isNaN(at) ? undefined : Math.min(MAX_RETRY_AFTER_MS, Math.max(0, at - nowMs));
 }
 
 /**

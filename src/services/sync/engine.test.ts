@@ -1270,6 +1270,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         localId: h.keys.localId,
         serverUrl: OLD,
         authToken: b64urlEncode(keys.token),
+        createdAt: h.clock.now(),
       });
       other.failNext('delete', { code: 'unauthorized', message: hostile });
       await h.engine.syncAll(manual);
@@ -1366,7 +1367,13 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       other.offline = true;
       expect(await h.engine.deleteServerCopy(h.keys.localId, OLD)).toEqual({ outcome: 'pending' });
       expect(await h.store.pendingDeletes.list()).toEqual([
-        { localId: h.keys.localId, serverUrl: OLD, authToken: b64urlEncode(keys.token) },
+        {
+          localId: h.keys.localId,
+          serverUrl: OLD,
+          authToken: b64urlEncode(keys.token),
+          createdAt: h.clock.now(),
+          attempts: 1,
+        },
       ]);
 
       // Leave: the row and the secret go; the debt stays.
@@ -1391,17 +1398,79 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
     ])('a DELETE answered with %s: the debt is %s', async (_answer, expected, failure) => {
       const h = await setup();
       const { other, keys } = await copyOn(h, OLD);
-      const debt = { localId: h.keys.localId, serverUrl: OLD, authToken: b64urlEncode(keys.token) };
+      const debt = {
+        localId: h.keys.localId,
+        serverUrl: OLD,
+        authToken: b64urlEncode(keys.token),
+        createdAt: h.clock.now(),
+      };
       await h.store.pendingDeletes.add(debt);
       other.failNext('delete', failure);
 
       await h.engine.syncAll(foreground);
 
       expect(other.requests.filter((r) => r.op === 'delete')).toHaveLength(1);
-      expect(await h.store.pendingDeletes.list()).toEqual(expected === 'kept' ? [debt] : []);
+      expect(await h.store.pendingDeletes.list()).toEqual(
+        expected === 'kept' ? [{ ...debt, attempts: 1 }] : [],
+      );
       expect(h.logs.some((l) => l.includes('dropped a pending delete'))).toBe(
         expected === 'dropped',
       );
+    });
+
+    it('gives a debt up at its 20th failed attempt; the copy stays until the server expires it (review L3)', async () => {
+      const h = await setup();
+      expect(DEFAULT_TUNING).toMatchObject({
+        debtMaxAttempts: 20,
+        debtMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
+      });
+      const { other, keys } = await copyOn(h, OLD);
+      await h.store.pendingDeletes.add({
+        localId: h.keys.localId,
+        serverUrl: OLD,
+        authToken: b64urlEncode(keys.token),
+        createdAt: h.clock.now(),
+      });
+      other.failNext('delete', { code: 'server_error' }, 20);
+
+      for (let i = 1; i < 20; i++) await h.engine.syncAll(foreground);
+      expect(await h.store.pendingDeletes.list()).toMatchObject([{ attempts: 19 }]);
+      expect(h.logs.some((l) => l.includes('gave up'))).toBe(false);
+
+      await h.engine.syncAll(foreground);
+      expect(await h.store.pendingDeletes.list()).toEqual([]);
+      expect(other.requests.filter((r) => r.op === 'delete')).toHaveLength(20);
+      expect(h.logs).toContain('sync gave up a pending delete code=server_error status=500');
+      expect(other.groups.has(keys.groupId)).toBe(true);
+    });
+
+    it('gives a debt up at its first failed attempt 30 days after it was recorded, and still pays one that answers', async () => {
+      const h = await setup();
+      const day = 24 * 60 * 60 * 1000;
+      const { other, keys } = await copyOn(h, OLD);
+      const debt = {
+        localId: h.keys.localId,
+        serverUrl: OLD,
+        authToken: b64urlEncode(keys.token),
+        createdAt: h.clock.now() - 30 * day + 1,
+      };
+      await h.store.pendingDeletes.add(debt);
+      other.offline = true;
+
+      await h.engine.syncAll(foreground);
+      expect(await h.store.pendingDeletes.list()).toEqual([{ ...debt, attempts: 1 }]);
+      await h.clock.advance(1);
+      await h.engine.syncAll(foreground);
+      expect(await h.store.pendingDeletes.list()).toEqual([]);
+      expect(h.logs).toContain('sync gave up a pending delete code=network');
+      expect(other.groups.has(keys.groupId)).toBe(true);
+
+      // Older than that, a server that answers is still paid: the age only ends a failing debt.
+      other.offline = false;
+      await h.store.pendingDeletes.add({ ...debt, createdAt: h.clock.now() - 40 * day });
+      await h.engine.syncAll(foreground);
+      expect(await h.store.pendingDeletes.list()).toEqual([]);
+      expect(other.groups.has(keys.groupId)).toBe(false);
     });
 
     it('a group cycle pays that group’s debts before pushing; syncAll tries each debt once', async () => {
@@ -1412,11 +1481,13 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         localId: stranger.localId,
         serverUrl: OLD,
         authToken: b64urlEncode(stranger.token),
+        createdAt: h.clock.now(),
       };
       const myDebt = {
         localId: h.keys.localId,
         serverUrl: OLD,
         authToken: b64urlEncode(mine.keys.token),
+        createdAt: h.clock.now(),
       };
       await h.store.pendingDeletes.add(strangerDebt);
       await h.store.pendingDeletes.add(myDebt);
@@ -1433,7 +1504,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         'current:push',
         'current:pull',
       ]);
-      expect(await h.store.pendingDeletes.list()).toEqual([strangerDebt]);
+      expect(await h.store.pendingDeletes.list()).toEqual([{ ...strangerDebt, attempts: 0 }]);
 
       // Unpaid debts are tried once by syncAll, and not again by the group cycles it runs.
       await h.store.pendingDeletes.add(myDebt);
@@ -1471,6 +1542,7 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
         localId: h.keys.localId,
         serverUrl: NEW,
         authToken: b64urlEncode(moved.token),
+        createdAt: h.clock.now(),
       });
       h.events.length = 0;
 

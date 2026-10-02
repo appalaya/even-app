@@ -91,9 +91,21 @@ const V2 = statements(
   'ALTER TABLE pending_deletes_v2 RENAME TO pending_deletes',
 );
 
+/**
+ * v3: `pending_deletes.created_at` and `pending_deletes.attempts` (design.md "Pending deletes"): a debt is given up
+ * after 30 days or 20 failed attempts, so a server that has gone for good does not keep its token on disk forever.
+ * A debt recorded before this version counts its age from the migration.
+ */
+const V3 = statements(
+  'ALTER TABLE pending_deletes ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE pending_deletes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0',
+  `UPDATE pending_deletes SET created_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000`,
+);
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, description: 'initial schema', up: V1 },
   { version: 2, description: 'pending_deletes.auth_token', up: V2 },
+  { version: 3, description: 'pending_deletes.created_at and attempts', up: V3 },
 ];
 
 /** The schema version this build writes. */

@@ -163,7 +163,12 @@ describe('FakeStore honours the Store contract', () => {
     expect(store.dump(L)).toEqual(before);
 
     await expect(
-      store.pendingDeletes.add({ localId: L, serverUrl: 'https://other.test', authToken: 'short' }),
+      store.pendingDeletes.add({
+        localId: L,
+        serverUrl: 'https://other.test',
+        authToken: 'short',
+        createdAt: 0,
+      }),
     ).rejects.toThrow('authToken');
   });
 

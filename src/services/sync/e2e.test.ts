@@ -242,6 +242,7 @@ describe.skipIf(SERVER === undefined).each(STORE_KINDS)('end to end on the %s st
       localId: keys.localId,
       serverUrl: origin,
       authToken: b64urlEncode(keys.token),
+      createdAt: Date.now(),
     });
     await a.store.deleteGroup(keys.localId);
     await a.secrets.deleteSecret(keys.localId);

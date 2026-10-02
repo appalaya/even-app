@@ -205,13 +205,18 @@ describe('groups', () => {
     await store.upsertGroup(other);
     await store.insertEvents(g, [localRow(T0), pulledRow(1, T0 + 1)]);
     await store.insertEvents(other.localId, [localRow(T0)]);
-    await store.pendingDeletes.add({ localId: g, serverUrl: OTHER_SERVER, authToken: TOKEN });
+    await store.pendingDeletes.add({
+      localId: g,
+      serverUrl: OTHER_SERVER,
+      authToken: TOKEN,
+      createdAt: T0,
+    });
     await store.deleteGroup(g);
     expect(await store.getGroup(g)).toBeNull();
     expect((await raw()).size).toBe(0);
     expect((await raw(other.localId)).size).toBe(1);
     expect(await store.pendingDeletes.list()).toEqual([
-      { localId: g, serverUrl: OTHER_SERVER, authToken: TOKEN },
+      { localId: g, serverUrl: OTHER_SERVER, authToken: TOKEN, createdAt: T0, attempts: 0 },
     ]);
     await store.deleteGroup(g); // idempotent
   });
@@ -874,44 +879,103 @@ describe('pendingDeletes', () => {
     const other = newLocalId();
     const t2 = b64urlEncode(randomBytes(32));
     const t3 = b64urlEncode(randomBytes(32));
-    await store.pendingDeletes.add({ localId: g, serverUrl: OTHER_SERVER, authToken: TOKEN });
-    await store.pendingDeletes.add({
-      localId: other,
-      serverUrl: PROTOCOL.defaultServer,
-      authToken: t2,
+    const debt = (localId: string, serverUrl: string, authToken: string, createdAt: number) => ({
+      localId,
+      serverUrl,
+      authToken,
+      createdAt,
     });
-    // A duplicate key is a no-op, token included.
-    await store.pendingDeletes.add({ localId: g, serverUrl: OTHER_SERVER, authToken: t3 });
-    await store.pendingDeletes.add({
-      localId: g,
-      serverUrl: PROTOCOL.defaultServer,
-      authToken: t3,
-    });
+    await store.pendingDeletes.add(debt(g, OTHER_SERVER, TOKEN, T0));
+    await store.pendingDeletes.add(debt(other, PROTOCOL.defaultServer, t2, T0 + 1));
+    // A duplicate key is a no-op, token and age included.
+    await store.pendingDeletes.add(debt(g, OTHER_SERVER, t3, T0 + 2));
+    await store.pendingDeletes.add(debt(g, PROTOCOL.defaultServer, t3, T0 + 3));
     expect(await store.pendingDeletes.list()).toEqual([
-      { localId: g, serverUrl: OTHER_SERVER, authToken: TOKEN },
-      { localId: other, serverUrl: PROTOCOL.defaultServer, authToken: t2 },
-      { localId: g, serverUrl: PROTOCOL.defaultServer, authToken: t3 },
+      { ...debt(g, OTHER_SERVER, TOKEN, T0), attempts: 0 },
+      { ...debt(other, PROTOCOL.defaultServer, t2, T0 + 1), attempts: 0 },
+      { ...debt(g, PROTOCOL.defaultServer, t3, T0 + 3), attempts: 0 },
     ]);
     await store.pendingDeletes.remove({ localId: g, serverUrl: OTHER_SERVER });
     await store.pendingDeletes.remove({ localId: g, serverUrl: OTHER_SERVER });
     expect(await store.pendingDeletes.list()).toHaveLength(2);
   });
 
+  it('counts failed attempts per debt', async () => {
+    const other = newLocalId();
+    await store.pendingDeletes.add({
+      localId: g,
+      serverUrl: OTHER_SERVER,
+      authToken: TOKEN,
+      createdAt: T0,
+    });
+    await store.pendingDeletes.add({
+      localId: other,
+      serverUrl: OTHER_SERVER,
+      authToken: TOKEN,
+      createdAt: T0,
+    });
+    await store.pendingDeletes.recordAttempt({ localId: g, serverUrl: OTHER_SERVER });
+    await store.pendingDeletes.recordAttempt({ localId: g, serverUrl: OTHER_SERVER });
+    await store.pendingDeletes.recordAttempt({ localId: g, serverUrl: PROTOCOL.defaultServer }); // no such debt
+    expect((await store.pendingDeletes.list()).map((d) => [d.localId, d.attempts])).toEqual([
+      [g, 2],
+      [other, 0],
+    ]);
+    // The same key added again keeps its count.
+    await store.pendingDeletes.add({
+      localId: g,
+      serverUrl: OTHER_SERVER,
+      authToken: TOKEN,
+      createdAt: T0 + 9,
+    });
+    expect((await store.pendingDeletes.list())[0]).toMatchObject({ createdAt: T0, attempts: 2 });
+  });
+
   it('does not need a group row (the debt outlives Leave)', async () => {
     const gone = newLocalId();
-    await store.pendingDeletes.add({ localId: gone, serverUrl: OTHER_SERVER, authToken: TOKEN });
+    await store.pendingDeletes.add({
+      localId: gone,
+      serverUrl: OTHER_SERVER,
+      authToken: TOKEN,
+      createdAt: T0,
+    });
     expect(await store.pendingDeletes.list()).toEqual([
-      { localId: gone, serverUrl: OTHER_SERVER, authToken: TOKEN },
+      { localId: gone, serverUrl: OTHER_SERVER, authToken: TOKEN, createdAt: T0, attempts: 0 },
     ]);
   });
 
   it('validates entries, without echoing a bad token', async () => {
     await rejectsWith(
-      store.pendingDeletes.add({ localId: 'x', serverUrl: OTHER_SERVER, authToken: TOKEN }),
+      store.pendingDeletes.add({
+        localId: 'x',
+        serverUrl: OTHER_SERVER,
+        authToken: TOKEN,
+        createdAt: T0,
+      }),
       'invalid_argument',
     );
     await rejectsWith(
-      store.pendingDeletes.add({ localId: g, serverUrl: 'sync.example.org', authToken: TOKEN }),
+      store.pendingDeletes.add({
+        localId: g,
+        serverUrl: 'sync.example.org',
+        authToken: TOKEN,
+        createdAt: T0,
+      }),
+      'invalid_argument',
+    );
+    for (const createdAt of [-1, 1.5, Number.NaN, undefined]) {
+      await rejectsWith(
+        store.pendingDeletes.add({
+          localId: g,
+          serverUrl: OTHER_SERVER,
+          authToken: TOKEN,
+          createdAt: createdAt as number,
+        }),
+        'invalid_argument',
+      );
+    }
+    await rejectsWith(
+      store.pendingDeletes.recordAttempt({ localId: 'x', serverUrl: OTHER_SERVER }),
       'invalid_argument',
     );
     for (const authToken of ['', TOKEN.slice(1), `${TOKEN.slice(1)}=`, 42, undefined]) {
@@ -920,6 +984,7 @@ describe('pendingDeletes', () => {
         localId: g,
         serverUrl: OTHER_SERVER,
         authToken: authToken as string,
+        createdAt: T0,
       });
       await expect(attempt).rejects.toSatisfy(
         (e) =>
@@ -1092,7 +1157,12 @@ describe('id validation', () => {
         s.latestTs(id),
         s.countByStatus(id),
         s.pruneUndecryptable(id, 0),
-        s.pendingDeletes.add({ localId: id, serverUrl: OTHER_SERVER, authToken: TOKEN }),
+        s.pendingDeletes.add({
+          localId: id,
+          serverUrl: OTHER_SERVER,
+          authToken: TOKEN,
+          createdAt: T0,
+        }),
         s.pendingDeletes.remove({ localId: id, serverUrl: OTHER_SERVER }),
       ];
       for (const call of calls) await rejectsWith(call, 'invalid_argument');

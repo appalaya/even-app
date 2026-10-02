@@ -23,6 +23,7 @@ import type {
   GroupRow,
   InsertEventsResult,
   NewEventRow,
+  NewPendingDelete,
   OutboxRow,
   PendingDeleteKey,
   PendingDeleteRow,
@@ -260,26 +261,45 @@ export interface SqliteStoreOptions {
 class SqlitePendingDeletes implements PendingDeletes {
   constructor(private readonly db: SqlDriver) {}
 
-  async add(entry: PendingDeleteRow): Promise<void> {
+  async add(entry: NewPendingDelete): Promise<void> {
     const localId = checkLocalId(entry?.localId);
     const serverUrl = checkServerUrl(entry.serverUrl);
     const authToken = checkAuthToken(entry.authToken);
+    const createdAt = checkInt(entry.createdAt, 'createdAt');
     await this.db.run(
-      'INSERT INTO pending_deletes (local_id, server_url, auth_token) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-      [localId, serverUrl, authToken],
+      `INSERT INTO pending_deletes (local_id, server_url, auth_token, created_at, attempts)
+       VALUES (?, ?, ?, ?, 0) ON CONFLICT DO NOTHING`,
+      [localId, serverUrl, authToken, createdAt],
     );
   }
 
   /** In the order the debts were recorded. */
   async list(): Promise<PendingDeleteRow[]> {
-    const rows = await this.db.all<{ local_id: string; server_url: string; auth_token: string }>(
-      'SELECT local_id, server_url, auth_token FROM pending_deletes ORDER BY rowid',
+    const rows = await this.db.all<{
+      local_id: string;
+      server_url: string;
+      auth_token: string;
+      created_at: number;
+      attempts: number;
+    }>(
+      'SELECT local_id, server_url, auth_token, created_at, attempts FROM pending_deletes ORDER BY rowid',
     );
     return rows.map((r) => ({
       localId: r.local_id,
       serverUrl: r.server_url,
       authToken: r.auth_token,
+      createdAt: r.created_at,
+      attempts: r.attempts,
     }));
+  }
+
+  async recordAttempt(entry: PendingDeleteKey): Promise<void> {
+    const localId = checkLocalId(entry?.localId);
+    const serverUrl = checkServerUrl(entry.serverUrl);
+    await this.db.run(
+      'UPDATE pending_deletes SET attempts = attempts + 1 WHERE local_id = ? AND server_url = ?',
+      [localId, serverUrl],
+    );
   }
 
   async remove(entry: PendingDeleteKey): Promise<void> {

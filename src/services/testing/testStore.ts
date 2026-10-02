@@ -56,6 +56,10 @@ function instrument(store: Store, hooks: Hooks): Store {
       enter('pendingDeletes.remove', [entry]);
       return store.pendingDeletes.remove(entry);
     },
+    recordAttempt: async (entry) => {
+      enter('pendingDeletes.recordAttempt', [entry]);
+      return store.pendingDeletes.recordAttempt(entry);
+    },
   };
   return new Proxy(store, {
     get(target, property) {
