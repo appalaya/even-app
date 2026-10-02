@@ -39,6 +39,12 @@ export interface PushResponse {
   /** The group's highest `seq` after the write. */
   seq: number;
   epoch: string;
+  /**
+   * R for every envelope sent, in request order (a duplicate reports its stored value): when the server first stored
+   * it in this epoch (§4, §6.2). Absent from a server that predates it. Entries are as the server sent them: the
+   * engine keeps the usable ones (core `isReceivedAt`) and only when there is exactly one per envelope.
+   */
+  received_at?: readonly unknown[];
 }
 
 /** `GET /v1/groups/{groupId}/events` → 200 (§6.3). A missing group is an empty page with `epoch: null`. */

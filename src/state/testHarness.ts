@@ -57,7 +57,8 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
   function server(url = SERVER): FakeServer {
     let found = servers.get(url);
     if (found === undefined) {
-      found = new FakeServer();
+      // The servers keep the world's time: their `received_at` is the fake clock's.
+      found = new FakeServer({}, clock.now);
       servers.set(url, found);
     }
     return found;

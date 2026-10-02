@@ -149,6 +149,27 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
     unsubscribeList();
   });
 
+  it("hands the reducer each entry's server arrival time once a server reports it", async () => {
+    const w = await setup(kind);
+    const a = await w.device('A');
+    const { localId } = await a.services.groups.createGroup({
+      name: 'Banff 2026',
+      currency: 'CAD',
+      myName: 'Maya',
+      serverUrl: SERVER,
+    });
+    const unsynced = await a.services.groupState.entries(localId);
+    expect(unsynced.length).toBeGreaterThan(0);
+    expect(unsynced.every((e) => e.receivedAt === undefined)).toBe(true);
+    await w.clock.advance(60_000);
+    expectSynced(await sync(a, localId));
+    const secret = await secretOn(a, localId);
+    const arrivals = w.server().receivedAt(deriveServer(secret, SERVER).groupId);
+    const synced = await a.services.groupState.entries(localId);
+    expect(synced.map((e) => e.receivedAt)).toEqual(synced.map((e) => arrivals.get(e.id)));
+    expect(synced.every((e) => typeof e.receivedAt === 'number')).toBe(true);
+  });
+
   it('re-derives on a local write', async () => {
     const w = await setup(kind);
     const { b, localId, maya, nathan } = await trip(w);

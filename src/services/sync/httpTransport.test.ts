@@ -174,6 +174,27 @@ describe('HttpTransport requests', () => {
     expect(JSON.parse(String(call?.init.body))).toEqual({ events: [envelope] });
   });
 
+  it("passes a push response's received_at list through, and treats anything but a list as absent", async () => {
+    const keys = groupKeys();
+    const envelope = sealFor(keys, new Events().expense('Dinner'));
+    const base = { accepted: 1, duplicates: 0, seq: 7, epoch: 'k3JdAAAAAAAAAAAAAAAAAA' };
+    const push = async (body: unknown) =>
+      new HttpTransport('https://s.example', {
+        fetch: stubFetch(() => json(200, body)).fetch,
+      }).push(keys.groupId, keys.token, [envelope]);
+    expect(await push({ ...base, received_at: [1_760_000_000_000] })).toEqual({
+      ...base,
+      received_at: [1_760_000_000_000],
+    });
+    // The list is the engine's to check entry by entry; a non-list is no list, not a malformed response.
+    expect(await push({ ...base, received_at: ['x', null] })).toEqual({
+      ...base,
+      received_at: ['x', null],
+    });
+    expect(await push({ ...base, received_at: 1_760_000_000_000 })).toEqual(base);
+    expect(await push(base)).toEqual(base);
+  });
+
   it('pulls with since and limit, passing envelopes through', async () => {
     const page = { events: [{ seq: 3, id: 'x' }], next: 3, more: false, epoch: null };
     const { fetch, calls } = stubFetch(() => json(200, page));

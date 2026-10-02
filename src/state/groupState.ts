@@ -514,7 +514,12 @@ export class GroupStateStore {
           if (decoded.event === null) {
             readFailures += 1;
           } else {
-            entries.push({ id: stored.id, event: decoded.event });
+            // The server's arrival time rides beside the body: the reducer orders and holds by it.
+            entries.push(
+              stored.receivedAt === null
+                ? { id: stored.id, event: decoded.event }
+                : { id: stored.id, event: decoded.event, receivedAt: stored.receivedAt },
+            );
             origins.set(stored.id, stored.origin);
           }
         } else if (isMoneyType(decoded.type)) {

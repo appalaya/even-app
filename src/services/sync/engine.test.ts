@@ -3,7 +3,15 @@
  * (sqliteStore.ts over node:sqlite), through the same instrumented wrapper (testing/testStore.ts), so the two
  * cannot drift apart on anything the engine relies on.
  */
-import { b64urlEncode, groupIdForToken, newId, open, parseEvent, type Envelope } from '@even/core';
+import {
+  b64urlEncode,
+  groupIdForToken,
+  LIMITS,
+  newId,
+  open,
+  parseEvent,
+  type Envelope,
+} from '@even/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GroupLifecycle } from '../storage/types';
@@ -21,6 +29,7 @@ import {
 } from '../testing/fixtures';
 import { openTestStore, STORE_KINDS, type StoreKind, type TestStore } from '../testing/testStore';
 import {
+  classifyPulled,
   CLIENT_MAX_BATCH,
   CLIENT_MAX_PAGE,
   createSyncEngine,
@@ -28,11 +37,13 @@ import {
   DEFAULT_TUNING,
   isUnsupportedBody,
   MAX_JUNK_TEXT_LENGTH,
+  receivedPairs,
   UNKNOWN_EPOCH,
   type SyncEngineHandle,
   type SyncTuning,
 } from './engine';
 import { DecodeCache } from './decodeCache';
+import { SyncError } from './errors';
 import type { ServerInfo, StoredEnvelope, SyncEvent, SyncResult, Transport } from './types';
 
 interface Device {
@@ -69,7 +80,7 @@ afterEach(async () => {
 
 async function setupWith(kind: StoreKind, options: SetupOptions = {}): Promise<Harness> {
   const clock = new FakeClock();
-  const server = new FakeServer(options.limits);
+  const server = new FakeServer(options.limits, clock.now);
   const servers = new Map<string, FakeServer>([[TEST_SERVER, server]]);
   const keys = groupKeys();
   const ev = new Events(clock.now());
@@ -104,7 +115,7 @@ async function setupWith(kind: StoreKind, options: SetupOptions = {}): Promise<H
   }
 
   function addServer(url: string): FakeServer {
-    const added = new FakeServer(options.limits);
+    const added = new FakeServer(options.limits, clock.now);
     servers.set(url, added);
     return added;
   }
@@ -179,6 +190,51 @@ describe('decideEpoch', () => {
     expect(decideEpoch('e1', null, 0)).toEqual({ kind: 'reset', epoch: UNKNOWN_EPOCH });
     expect(decideEpoch('e1', 'e2', 1)).toEqual({ kind: 'unstable' });
     expect(decideEpoch('e1', null, 1)).toEqual({ kind: 'unstable' });
+  });
+});
+
+describe('receivedPairs', () => {
+  const ids = ['a', 'b', 'c'].map((c) => c.repeat(22));
+  const R = 1_760_000_000_000;
+
+  it('pairs one R per envelope sent, in request order, keeping only usable values', () => {
+    expect(receivedPairs(ids, [R, R, R - 5])).toEqual([
+      [ids[0], R],
+      [ids[1], R],
+      [ids[2], R - 5],
+    ]);
+    expect(receivedPairs(ids, [R, 0.5, LIMITS.tsMax])).toEqual([[ids[0], R]]);
+  });
+
+  it('gives nothing for a server without the list, or a list of another length', () => {
+    expect(receivedPairs(ids, undefined)).toEqual([]);
+    expect(receivedPairs(ids, [R, R])).toEqual([]);
+    expect(receivedPairs(ids, [R, R, R, R])).toEqual([]);
+  });
+});
+
+describe('classifyPulled and received_at', () => {
+  const keys = groupKeys();
+  const ev = new Events();
+
+  it("takes the server's R off before checking the envelope, and keeps it when usable", () => {
+    const envelope = sealFor(keys, ev.expense('Dinner'));
+    const R = 1_760_000_000_000;
+    const ok = classifyPulled({ ...envelope, seq: 4, received_at: R }, keys.key, keys.groupId);
+    expect(ok?.row).toMatchObject({ status: 'ok', seq: 4, receivedAt: R });
+    expect(JSON.parse(ok?.row.envelope ?? '')).toEqual(envelope);
+    for (const bad of [R + 0.5, LIMITS.tsMax, 'soon', null]) {
+      const row = classifyPulled({ ...envelope, seq: 4, received_at: bad }, keys.key, keys.groupId);
+      expect(row?.row).toMatchObject({ status: 'ok', receivedAt: null });
+    }
+    expect(classifyPulled({ ...envelope, seq: 4 }, keys.key, keys.groupId)?.row).toMatchObject({
+      status: 'ok',
+      receivedAt: null,
+    });
+    // Any other extra field is still not an envelope.
+    expect(
+      classifyPulled({ ...envelope, seq: 4, extra: 1 }, keys.key, keys.groupId)?.row.status,
+    ).toBe('undecryptable');
   });
 });
 
@@ -1224,6 +1280,132 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
 
       expect(h.server.stored(h.keys.groupId).map((e) => e.id)).toEqual(ids.slice(1));
       expect(await h.store.countByStatus(h.keys.localId)).toMatchObject({ outbox: 0, rejected: 1 });
+    });
+  });
+
+  describe('received_at (design.md "Ordering", "Local storage")', () => {
+    const receivedOf = async (store: TestStore, localId: string) =>
+      new Map((await store.dump(localId)).map((r) => [r.id, r.receivedAt]));
+
+    it('stores R from the push response and from every pulled page, one value per request', async () => {
+      const h = await setup();
+      const first = await writeMany(h, 2);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const r1 = h.server.receivedAt(h.keys.groupId).get(first[0]!);
+      expect(typeof r1).toBe('number');
+      await h.clock.sleep(5_000);
+      const second = await writeMany(h, 1);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const r2 = h.server.receivedAt(h.keys.groupId).get(second[0]!) as number;
+      expect(r2).toBeGreaterThan(r1 as number);
+      const mine = await receivedOf(h.store, h.keys.localId);
+      expect([mine.get(first[0]!), mine.get(first[1]!), mine.get(second[0]!)]).toEqual([
+        r1,
+        r1,
+        r2,
+      ]);
+      // The push response alone supplies it, before any pull brings the envelope back.
+      const pushOnly = await writeMany(h, 1);
+      h.server.failNext('pull', { code: 'server_error' }, 3);
+      await h.engine.syncGroup(h.keys.localId, foreground);
+      expect((await receivedOf(h.store, h.keys.localId)).get(pushOnly[0]!)).toBe(
+        h.server.receivedAt(h.keys.groupId).get(pushOnly[0]!),
+      );
+
+      // Another device pulls the same values: the envelopes are ok rows, not junk for an extra field.
+      const b = await h.device();
+      expectSynced(await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }));
+      const theirs = await receivedOf(b.store, h.keys.localId);
+      for (const [id, r] of h.server.receivedAt(h.keys.groupId)) expect(theirs.get(id)).toBe(r);
+      expect((await b.store.dump(h.keys.localId)).every((r) => r.status === 'ok')).toBe(true);
+    });
+
+    it('a duplicate push reports the stored R, which overwrites what the phone held', async () => {
+      const h = await setup();
+      const shared = sealFor(h.keys, h.ev.expense('Shared'));
+      await h.server.transport().push(h.keys.groupId, h.keys.token, [shared]);
+      const stored = h.server.receivedAt(h.keys.groupId).get(shared.id);
+      await h.clock.sleep(60_000);
+      await h.store.insertEvents(h.keys.localId, [
+        {
+          id: shared.id,
+          origin: 'remote',
+          acked: false,
+          seq: null,
+          ts: 1_760_000_000_500,
+          envelope: JSON.stringify(shared),
+          status: 'ok',
+          receivedAt: h.clock.now(),
+        },
+      ]);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      expect((await receivedOf(h.store, h.keys.localId)).get(shared.id)).toBe(stored);
+    });
+
+    it('is cleared with seq on an epoch reset, and the re-push assigns the new epoch its own', async () => {
+      const h = await setup();
+      const ids = await writeMany(h, 3);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const before = await receivedOf(h.store, h.keys.localId);
+      h.server.wipe(h.keys.groupId);
+      await h.clock.sleep(3_600_000);
+      // The pull finds the copy gone and resets; the re-push after it gets no answer, so the cycle stops there.
+      h.server.onRequest = (request) => {
+        if (request.op === 'push') throw new SyncError('network', 'offline');
+      };
+      expectFailed(await h.engine.syncGroup(h.keys.localId, manual));
+      const cleared = await h.store.dump(h.keys.localId);
+      expect(cleared.map((r) => [r.acked, r.seq, r.receivedAt])).toEqual(
+        ids.map(() => [false, null, null]),
+      );
+      h.server.onRequest = null;
+      expectSynced(await h.engine.syncGroup(h.keys.localId, manual));
+      const after = await receivedOf(h.store, h.keys.localId);
+      for (const id of ids) {
+        expect(after.get(id)).toBe(h.server.receivedAt(h.keys.groupId).get(id));
+        expect(after.get(id)).toBeGreaterThan(before.get(id) as number);
+      }
+    });
+
+    it('a move clears it and the new server assigns its own', async () => {
+      const h = await setup();
+      const ids = await writeMany(h, 2);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const next = h.addServer(NEW);
+      await h.clock.sleep(60_000);
+      const moved = await h.engine.moveServer(h.keys.localId, NEW);
+      expect(moved).toMatchObject({ outcome: 'moved', sync: { outcome: 'synced' } });
+      const newKeys = groupKeys(NEW, h.keys.secret);
+      const after = await receivedOf(h.store, h.keys.localId);
+      for (const id of ids) expect(after.get(id)).toBe(next.receivedAt(newKeys.groupId).get(id));
+    });
+
+    it('a server from before received_at: rows keep none and sync as before', async () => {
+      const h = await setup();
+      h.server.legacy = true;
+      await writeMany(h, 2);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const b = await h.device();
+      expectSynced(await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }));
+      for (const store of [h.store, b.store]) {
+        const rows = await store.dump(h.keys.localId);
+        expect(rows.every((r) => r.receivedAt === null && r.acked && r.status === 'ok')).toBe(true);
+      }
+    });
+
+    it('an unusable R from the server is treated as absent, on push and on pull', async () => {
+      for (const bad of [0.5, LIMITS.tsMax, LIMITS.tsMin - 1, 'soon', null]) {
+        const h = await setup();
+        h.server.arrival = () => bad;
+        await writeMany(h, 1);
+        expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+        const b = await h.device();
+        expectSynced(await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }));
+        for (const store of [h.store, b.store]) {
+          const rows = await store.dump(h.keys.localId);
+          expect(rows.map((r) => [r.status, r.receivedAt])).toEqual([['ok', null]]);
+        }
+      }
     });
   });
 

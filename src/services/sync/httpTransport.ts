@@ -245,12 +245,18 @@ function parseInfo(body: unknown): ServerInfo | null {
   return info;
 }
 
+/**
+ * `received_at` is passed on only when it is an array: the engine checks its length and every entry. Anything else
+ * there (a server that predates it sends nothing) is treated as absent, not as a malformed response.
+ */
 function parsePush(body: unknown): PushResponse | null {
   if (!isRecord(body)) return null;
-  const { accepted, duplicates, seq, epoch } = body;
+  const { accepted, duplicates, seq, epoch, received_at: receivedAt } = body;
   if (!isCount(accepted) || !isCount(duplicates) || !isCount(seq)) return null;
   if (typeof epoch !== 'string' || epoch === '') return null;
-  return { accepted, duplicates, seq, epoch };
+  const response: PushResponse = { accepted, duplicates, seq, epoch };
+  if (Array.isArray(receivedAt)) response.received_at = receivedAt as unknown[];
+  return response;
 }
 
 /** Envelopes are passed through unvalidated: the engine classifies each one (design.md "Cycle", step 2). */

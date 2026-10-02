@@ -85,6 +85,12 @@ export type EventOf<T extends EventType> = Extract<Event, { type: T }>;
 export interface LogEntry {
   id: string;     // envelope id, 22-char base64url
   event: Event;
+  /**
+   * When the server first stored this envelope in its current epoch (R, Unix ms; PROTOCOL.md §4), as this phone last
+   * heard it: absent until a push response, a pulled page or a group file reports one. Outside the ciphertext, so
+   * never part of the body. A value that is not `isReceivedAt` counts as absent (design.md "Ordering").
+   */
+  receivedAt?: number;
 }
 
 // ---------- Wire shapes (PROTOCOL.md) ----------
@@ -97,6 +103,8 @@ export interface Envelope {
 }
 export interface StoredEnvelope extends Envelope {
   seq: number;
+  /** R, PROTOCOL.md §4: when the server first stored it in this epoch. Absent from a server that predates it. */
+  received_at?: number;
 }
 
 /** Invite payload (PROTOCOL.md §8.2). Encoded as base64url(JSON). */

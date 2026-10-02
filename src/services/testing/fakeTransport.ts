@@ -1,13 +1,16 @@
 /**
  * In-memory Even server (PROTOCOL.md §4–§7) behind the `Transport` interface, for the sync engine's tests.
  * Faithful where the engine depends on it: stateless token auth, implicit creation with a fresh epoch, atomic
- * consecutive `seq`, duplicates ignored and counted (within and across requests), whole-batch rejection with
+ * consecutive `seq`, `received_at` (one value per request that stores something, from the server's clock, strictly
+ * increasing across requests; reported per envelope on push, a duplicate reporting its stored value, and on every
+ * pulled envelope), duplicates ignored and counted (within and across requests), whole-batch rejection with
  * `index` (400 before 415), both caps with duplicates exempt, `since`/`limit` clamping, `next`/`more`, the
  * missing-group-is-empty rule, DELETE then a new epoch, and `410` for blocked ids.
  *
  * Scripting for failure paths: `failNext` queues error answers per operation, `onRequest` runs before every
  * request (mutate state there, e.g. `wipe` to lose the group or `setEpoch` to flip it), `injectRaw` stores
- * arbitrary objects so pulls can return junk, and `requests` records every call.
+ * arbitrary objects so pulls can return junk, `requests` records every call, `legacy` answers as a server from
+ * before `received_at`, and `arrival` overrides the R a request assigns (a hostile server's choice).
  */
 /// <reference types="node" />
 import { createHash } from 'node:crypto';
@@ -48,6 +51,8 @@ export interface ScriptedFailure {
 interface FakeGroup {
   epoch: string;
   seq: number;
+  /** The last `received_at` this epoch assigned; the next request's is above it. */
+  lastArrival: number;
   bytes: number;
   /** Stored entries: real envelopes, or raw junk from `injectRaw`. */
   events: ({ seq: number; id: string } & Record<string, unknown>)[];
@@ -96,9 +101,15 @@ export class FakeServer {
   private script: { op: FakeOp | 'any'; failure: ScriptedFailure }[] = [];
   /** Answer every request with a network error while true. */
   offline = false;
+  /** Answer as a server from before `received_at` (PROTOCOL.md §4): none on push responses or pulled envelopes. */
+  legacy = false;
+  /** When set, the `received_at` a storing request assigns, instead of the clock's (a hostile server's choice). */
+  arrival: ((groupId: string) => unknown) | null = null;
   private gateOpen: Promise<void> | null = null;
+  private readonly clock: () => number;
 
-  constructor(limits: Partial<ServerInfo['limits']> = {}) {
+  constructor(limits: Partial<ServerInfo['limits']> = {}, now: () => number = Date.now) {
+    this.clock = now;
     this.info = {
       protocol: [1],
       limits: { ...FAKE_LIMITS, ...limits },
@@ -144,6 +155,11 @@ export class FakeServer {
     group.events.push({ ...raw, seq: group.seq });
     group.ids.add(raw.id);
     return group.seq;
+  }
+
+  /** Every stored id's `received_at` in a group, in seq order, for assertions. */
+  receivedAt(groupId: string): Map<string, unknown> {
+    return new Map((this.groups.get(groupId)?.events ?? []).map((e) => [e.id, e.received_at]));
   }
 
   /** Stored entries of a group (with `seq`), for assertions. */
@@ -206,7 +222,7 @@ export class FakeServer {
   private ensureGroup(groupId: string): FakeGroup {
     let group = this.groups.get(groupId);
     if (group === undefined) {
-      group = { epoch: newId(), seq: 0, bytes: 0, events: [], ids: new Set() };
+      group = { epoch: newId(), seq: 0, lastArrival: 0, bytes: 0, events: [], ids: new Set() };
       this.groups.set(groupId, group);
     }
     return group;
@@ -242,6 +258,13 @@ export class FakeServer {
     if (count > max_group_events) throw fail('group_full', { reason: 'events' });
 
     const group = this.ensureGroup(groupId);
+    // One R per request that stores something: the clock, kept strictly above the epoch's last one.
+    let arrival: unknown = group.lastArrival;
+    if (fresh.length > 0) {
+      const assigned = Math.max(this.clock(), group.lastArrival + 1);
+      group.lastArrival = assigned;
+      arrival = this.arrival === null ? assigned : this.arrival(groupId);
+    }
     for (const envelope of fresh) {
       group.seq += 1;
       group.events.push({
@@ -250,16 +273,22 @@ export class FakeServer {
         n: envelope.n,
         c: envelope.c,
         seq: group.seq,
+        received_at: arrival,
       });
       group.ids.add(envelope.id);
     }
     group.bytes += addBytes;
-    return {
+    const response: PushResponse = {
       accepted: fresh.length,
       duplicates: envelopes.length - fresh.length,
       seq: group.seq,
       epoch: group.epoch,
     };
+    if (!this.legacy) {
+      const stored = new Map(group.events.map((e) => [e.id, e.received_at]));
+      response.received_at = envelopes.map((e) => stored.get(e.id));
+    }
+    return response;
   }
 
   private pull(groupId: string, token: Uint8Array, since: number, limit: number): PullResponse {
@@ -274,7 +303,11 @@ export class FakeServer {
     const page = after.slice(0, clamped);
     const next = page.length > 0 ? (page[page.length - 1]?.seq ?? since) : since;
     return {
-      events: page.map((e) => ({ ...e }) as unknown as StoredEnvelope),
+      events: page.map((e) => {
+        const copy: Record<string, unknown> = { ...e };
+        if (this.legacy || copy.received_at === undefined) delete copy.received_at;
+        return copy as unknown as StoredEnvelope;
+      }),
       next,
       more: after.length > page.length,
       epoch: group.epoch,

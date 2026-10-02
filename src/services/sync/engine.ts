@@ -54,6 +54,7 @@ import {
   groupIdForToken,
   InvalidServerUrlError,
   isId,
+  isReceivedAt,
   LIMITS,
   open,
   parseEvent,
@@ -288,7 +289,9 @@ function junkText(id: string, rest: Record<string, unknown>): string {
  * design.md "Cycle, per group", step 2, for one pulled envelope. Returns null only when the entry has no usable
  * id (it cannot be stored or deduplicated; a conforming server never sends one). `known` answers for an envelope
  * this launch already opened (the shared `DecodeCache`, by id, exact text and group id): a valid event found there
- * is not opened again, which is what a pull after a server move or an epoch reset brings back.
+ * is not opened again, which is what a pull after a server move or an epoch reset brings back. The server's own
+ * fields, `seq` and `received_at` (PROTOCOL.md §4), are taken off before the envelope's shape is checked; an R that is
+ * not usable (core `isReceivedAt`) is stored as none.
  */
 export function classifyPulled(
   raw: unknown,
@@ -297,7 +300,7 @@ export function classifyPulled(
   known?: (id: string, text: string) => Decoded | undefined,
 ): ClassifiedEnvelope | null {
   if (!isRecord(raw)) return null;
-  const { seq, ...rest } = raw;
+  const { seq, received_at: receivedAt, ...rest } = raw;
   const id = rest.id;
   if (typeof id !== 'string' || !isId(id)) return null;
   const base = {
@@ -305,6 +308,7 @@ export function classifyPulled(
     origin: 'remote' as const,
     acked: true,
     seq: typeof seq === 'number' && Number.isSafeInteger(seq) && seq > 0 ? seq : null,
+    receivedAt: isReceivedAt(receivedAt) ? receivedAt : null,
   };
 
   const shape = envelopeShape(rest);
@@ -351,6 +355,24 @@ export function classifyPulled(
   }
   const status = isUnsupportedBody(body) ? 'unsupported_body' : 'invalid';
   return { row: { ...base, ts: bodyTs(body), envelope: text, status }, event: null, type };
+}
+
+/**
+ * A push response's `received_at` paired with the ids sent, in request order (PROTOCOL.md §6.2): only when there is
+ * exactly one entry per envelope, and only the usable ones (core `isReceivedAt`). A server that predates it, or sends
+ * a list of another length, gives nothing, and the next pull of those envelopes supplies R instead.
+ */
+export function receivedPairs(
+  ids: readonly string[],
+  received: readonly unknown[] | undefined,
+): [string, number][] {
+  if (received === undefined || received.length !== ids.length) return [];
+  const pairs: [string, number][] = [];
+  ids.forEach((id, i) => {
+    const value = received[i];
+    if (isReceivedAt(value)) pairs.push([id, value]);
+  });
+  return pairs;
 }
 
 // ---------- Engine ----------
@@ -640,8 +662,10 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         return { kind: 'restart' };
       }
       const ids = sendable.map((s) => s.id);
+      const arrivals = receivedPairs(ids, response.received_at);
       await store.transaction(async (tx) => {
         await tx.ack(cycle.localId, ids);
+        if (arrivals.length > 0) await tx.setReceivedAt(cycle.localId, arrivals);
         if (decision.kind === 'adopt')
           await tx.setSyncState(cycle.localId, { epoch: decision.epoch });
       });
