@@ -4,6 +4,7 @@ export * from './encoding.js';
 export * from './ids.js';
 export * from './hlc.js';
 export * from './keys.js';
+export * from './aead.js';
 export * from './envelope.js';
 export * from './invite.js';
 export * from './money.js';

@@ -1,4 +1,4 @@
-import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { aead } from './aead.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { isId, newId, randomBytes } from './ids.js';
@@ -93,12 +93,15 @@ function checkKey(key: Uint8Array): void {
   if (!(key instanceof Uint8Array) || key.length !== 32) throw new RangeError('encryption key must be 32 bytes');
 }
 
-/** Pads `plain` and encrypts it with XChaCha20-Poly1305 under `key` for `groupId` and `id`, with a fresh random nonce. */
+/**
+ * Pads `plain` and encrypts it with XChaCha20-Poly1305 under `key` for `groupId` and `id`, with a fresh random nonce
+ * drawn here (never by the AEAD implementation, so where nonces come from does not depend on which one is installed).
+ */
 function sealBytes(key: Uint8Array, groupId: string, id: string, plain: Uint8Array): Envelope {
   const padded = pad(plain);
   const v = PROTOCOL.version;
   const nonce = randomBytes(LIMITS.nonceLength);
-  const ciphertext = xchacha20poly1305(key, nonce, aadFor(groupId, v, id)).encrypt(padded);
+  const ciphertext = aead().seal(key, nonce, aadFor(groupId, v, id), padded);
   return { id, v, n: b64urlEncode(nonce), c: b64urlEncode(ciphertext) };
 }
 
@@ -112,13 +115,13 @@ function openBytes(key: Uint8Array, groupId: string, envelope: Envelope): Uint8A
   if (shape.v !== PROTOCOL.version) {
     throw new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`);
   }
-  let padded: Uint8Array;
+  let padded: Uint8Array | null;
   try {
-    const cipher = xchacha20poly1305(key, b64urlDecode(envelope.n), aadFor(groupId, shape.v, envelope.id));
-    padded = cipher.decrypt(b64urlDecode(envelope.c));
+    padded = aead().open(key, b64urlDecode(envelope.n), aadFor(groupId, shape.v, envelope.id), b64urlDecode(envelope.c));
   } catch {
-    throw new EnvelopeError('undecryptable', 'authentication failed');
+    padded = null; // an implementation that throws instead of answering null is still a failed open, never a crash
   }
+  if (padded === null) throw new EnvelopeError('undecryptable', 'authentication failed');
   return unpad(padded);
 }
 
