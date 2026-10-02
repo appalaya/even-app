@@ -3,6 +3,8 @@ import { View, type ViewProps } from 'react-native';
 
 import { radii, strokes, useTheme, type ThemeTokens } from '@/theme';
 
+import { separatedRowKey } from './cardLogic';
+
 /**
  * - `surface`: a card on the canvas (lists on Group, settings sections, group cards).
  * - `fill`: a list or card inside a sheet or on a surface card (Split's member list, the You card under Create).
@@ -65,7 +67,7 @@ export function Card({
       {separatorInset === undefined
         ? children
         : items.map((child, i) => (
-            <Fragment key={i}>
+            <Fragment key={separatedRowKey(child, i)}>
               {i > 0 && <Separator inset={separatorInset} tone={separatorTone} />}
               {child}
             </Fragment>
