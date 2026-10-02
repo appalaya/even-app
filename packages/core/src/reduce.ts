@@ -45,8 +45,13 @@
  *   (placeholders included when a device claimed them).
  * - `group.archived`/`group.unarchived` toggle `archived`; the latest in (ts, id) order wins. It is
  *   independent of `closed`: neither event reads or changes the other.
+ * - Hold-back (pre-launch review H2): a last-writer-wins write (`writesLastWriterField`) past the log's
+ *   `holdBackHorizon`, more than `LIMITS.holdBackMs` ahead of every event by another device, is ignored like any
+ *   event that changes nothing: no state change, no activity item, no history entry, no placeholder. It applies in
+ *   its (ts, id) place once the log catches up. The horizon is taken over the de-duplicated log.
  */
 import { AVATAR_COLOR_COUNT } from './constants.js';
+import { holdBackHorizon, isHeldBack } from './hlc.js';
 import {
   CATEGORIES,
   type ActivityItem,
@@ -247,6 +252,8 @@ class Fold {
     private readonly formatter: (minor: number) => string,
     private readonly selfLocalId: string | undefined,
     private readonly firstAdded: ReadonlyMap<string, FirstAdd>,
+    /** The log's `holdBackHorizon`: a last-writer-wins write past it does not win yet. */
+    private readonly horizon: number,
   ) {}
 
   /** Caller-supplied formatting must not be able to abort the fold. */
@@ -300,9 +307,10 @@ class Fold {
     this.state.activity.push(item);
   }
 
-  /** Applies one entry and records an activity item unless the event was ignored or changed nothing. */
+  /** Applies one entry and records an activity item unless the event was ignored, held back or changed nothing. */
   apply(entry: LogEntry): void {
     const ev = entry.event;
+    if (isHeldBack(ev, this.horizon)) return;
     const actor = this.actorName(ev.by);
     const summary = this.dispatch(entry, ev, actor);
     if (summary !== null) this.emit(entry, summary);
@@ -665,7 +673,12 @@ export function reduce(log: readonly LogEntry[], options?: ReduceOptions): Group
     seen.add(entry.id);
     return true;
   });
-  const fold = new Fold(options?.format ?? ((n: number) => String(n)), options?.selfLocalId, firstAdds(entries));
+  const fold = new Fold(
+    options?.format ?? ((n: number) => String(n)),
+    options?.selfLocalId,
+    firstAdds(entries),
+    holdBackHorizon(entries),
+  );
   for (const entry of entries) fold.apply(entry);
   return fold.finish();
 }

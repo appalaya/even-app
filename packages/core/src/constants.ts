@@ -12,6 +12,14 @@ export const LIMITS = {
   tsMax: 4_102_444_800_000,
   /** Received events more than this far ahead of the local clock are applied but not absorbed into the group clock. */
   clockAbsorbWindowMs: 24 * 60 * 60 * 1000,
+  /**
+   * The hold-back window (design.md "Reducer"): an event more than this far ahead of every event written by another
+   * device does not win a last-writer-wins field until another device's event reaches within this of it. Ten years
+   * (of 365 days), not the absorb window's day: the rule reads only the log, so its "now" is the other members'
+   * latest event, which lags by however long they have been quiet. A lone writer's edits win for this long after
+   * the others' last event, and only a clock decades off (the review's 2099) writes further ahead.
+   */
+  holdBackMs: 10 * 365 * 24 * 60 * 60 * 1000,
   idLength: 22, // base64url of 16 random bytes
   secretLength: 32,
   nonceLength: 24, // XChaCha20-Poly1305

@@ -737,19 +737,29 @@ event is written, and no receive times are stored.
 An event that **targets an existing entity** (`expense.updated`,
 `expense.deleted`, `payment.deleted`, `member.*` with an `id`) additionally
 takes `ts = max(that, maxTs(entity) + 1)`, where `maxTs(entity)` is the
-largest `ts` among events already targeting that entity, however far ahead.
-This guarantees an edit or delete sorts after the thing it edits even when
-the original came from a fast clock; the elevated value is still not absorbed
-into the group clock.
+largest `ts` among events already targeting that entity, however far ahead,
+counting only the events that take effect: a last-writer-wins write the
+reducer holds back (see "Hold-back" under Reducer) is left out. This
+guarantees an edit or delete sorts after the thing it edits even when the
+original came from a fast clock; the elevated value is still not absorbed
+into the group clock. An edit never climbs over a write that cannot win, so
+one far-future edit no longer drags the next honest edit to the top of the
+range (pre-launch review H2).
 
 If the device clock is outside the validator's absolute range, the app
 refuses to write and shows a "check your phone's date" message rather than
 producing events that fail validation everywhere. The same applies when the
 computed `ts` would reach the top of the range: an entity whose latest event
-sits at `tsMax − 1` (only a far-future clock can put it there) cannot be
-edited, because its edit would need `ts = tsMax`. Every write is therefore
-gated on `canWrite(nowMs, log, targetId?)` from `core/hlc.ts`, which is
-`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`.
+that takes effect sits at `tsMax − 1` cannot be edited, because its edit
+would need `ts = tsMax`. Only a far-future clock puts one there, and since
+held-back writes do not count, what can is an event that is not a field
+write (an `expense.added`, a `member.claimed`), or field writes from two
+device ids at the top, which the log has caught up to. Every write is
+therefore gated on
+`canWrite(nowMs, log, targetId?)` from `core/hlc.ts`, which is
+`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`: the gate
+compares against the device's clock and the events that take effect, not
+the log's maximum.
 
 `at` is the plain wall clock and is what the activity feed shows. `ts` is
 never displayed.
@@ -757,7 +767,8 @@ never displayed.
 This is enough for last-writer-wins on `expense.updated`; it is not a full
 CRDT and does not need to be. Two devices editing the same field while both
 are offline resolve by `(ts, id)`, which is a coin toss weighted by clock. That
-is acceptable for a trip app, and the activity feed shows both edits.
+is acceptable for a trip app, and the activity feed shows both edits. A clock
+decades ahead does not win the toss: see "Hold-back" under Reducer.
 
 Server `seq` is never used for ordering state. It is only a sync cursor.
 
@@ -811,6 +822,45 @@ replays each envelope id once, and folds:
   `archived`. It is independent of `closed`: a closed group was rotated away
   and never syncs again; an archived one is read-only by choice, still
   syncs, and can be unarchived.
+- **Hold-back** (pre-launch review H2). A write to a last-writer-wins field
+  (`group.renamed`, `group.archived`, `group.unarchived`, `group.moved`,
+  `member.updated`, `member.archived`, `member.unarchived`, `member.done`,
+  `member.undone`, `expense.updated`; core `writesLastWriterField`) does not
+  win while its `ts` is more than `LIMITS.holdBackMs`, ten years, ahead of
+  every event written by another device. It takes effect in its `(ts, id)`
+  place once the log catches up, that is once some other device's event
+  reaches within ten years of it. Until then the fold ignores it like an
+  event that changes nothing: no state change, activity item, history entry
+  or placeholder. Only one device can be that far ahead of all the others, so
+  the rule is one number per log, core `holdBackHorizon`: the latest `ts` by
+  any device other than the one holding the log's latest `ts`, plus the
+  window; nothing is held when one device wrote the whole log or two share
+  its latest `ts`. It reads only the `(dev, ts)` pairs of the de-duplicated
+  log, so it is deterministic and permutation-invariant like the rest of the
+  fold, and every phone with the same log agrees. So the review's
+  `group.archived` at `tsMax − 1` (a hostile member's, or a phone whose clock
+  reads 2099) never archives the group, and an unarchive or a rename at now
+  stands; a phone hours, or even years, fast wins as it always did.
+  Creations, claims, tombstones and control events are not fields and take
+  effect whatever their `ts`: holding back an `expense.added` would drop its
+  money from balances without a word.
+  - *Why ten years, not the absorb window's day.* With no clock to read, the
+    log's "now" is the latest event of another device, and that lags by
+    however long the other members have been quiet. With a day, a member
+    editing alone two days after everyone else's last event would see their
+    renames, archives and expense edits held until someone else wrote, and in
+    a group whose other members only read, every edit its one writer made a
+    day after their last event would wait for them. Ten years is longer than
+    a group is likely to keep a member who never writes, and far shorter
+    than the distance to the top of the range, so the rule catches a clock
+    decades off and nothing an honest phone writes. A write less than ten
+    years ahead wins until real time passes it, as before; for an entity's
+    fields an honest edit climbs over it ("Ordering").
+  - *What it does not stop.* `dev` is the writer's own claim, so a member who
+    writes the same far event from two device ids has caught the log up
+    themselves and wins as before; field writes from two ids at `tsMax − 1`
+    also still freeze the entity they target ("Ordering"). Against a hostile
+    member the remedy is regenerating the invite.
 
 `GroupState` contains the group meta (including `archived`), members (with
 device sets and avatars), `doneMembers` (who has said "I'm done adding") and
@@ -851,6 +901,16 @@ and nobody needs it for a trip.
   `invalid`, the group screen shows a hard "Update Even to see everything in
   this group." banner, not just a counter, because balances are known to be
   incomplete.
+- The hold-back rule (Reducer) changed how existing logs reduce, on the
+  current `sv` and with no migration: a log holding a last-writer-wins write
+  more than ten years ahead of every other device's events now reads as if
+  that write had not arrived yet. It is additive in the sense that matters
+  here: it adds no field and rejects no event, so every build still accepts
+  every event it accepted before, and a build without the rule simply keeps
+  the old winner (the far write) and keeps climbing over it when it edits.
+  Until those builds are gone the two can show such a group differently. Only
+  a clock decades off writes such a log, so no honest group reads
+  differently, and no event is rewritten.
 - The validator checks a currency's shape only, so a group's currency (from
   `group.created`) may be one this build's frozen ISO 4217 table does not
   know: a newer table's, or a hostile member's. That group shows the same
