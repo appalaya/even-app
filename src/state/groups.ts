@@ -13,10 +13,11 @@
  * 5. the group's derived state is invalidated and a `local_write` sync is requested.
  *
  * Decisions where design.md leaves room (each is tested in groups.test.ts):
- * - Rotation writes the new group, its `group.rotated` (and the optional `member.archived`) AND the old group's
- *   `group.closed` in one local transaction, then pushes the new group, then syncs the old one. On the network the
- *   order is design.md's (new group first, closure after); locally a crash can never leave a new group without the
- *   old one's closure, which would otherwise make this device "recognise" its own rotation after a restart.
+ * - Rotation writes the new group, its `group.rotated` (then the re-stated name and archive state, and the optional
+ *   `member.archived`) AND the old group's `group.closed` in one local transaction, then pushes the new group, then
+ *   syncs the old one. On the network the order is design.md's (new group first, closure after); locally a crash can
+ *   never leave a new group without the old one's closure, which would otherwise make this device "recognise" its
+ *   own rotation after a restart.
  * - "Recognition done" for the rotating device is persistent and needs no extra column: the old group holds a
  *   `group.closed` of origin `local` naming the new group. Recognition is skipped exactly then.
  * - The one sync a closed group gets during recognition flips it to `active` for that cycle; it ends `hidden`.
@@ -93,7 +94,15 @@ import {
   type InviteProblem,
 } from './errors';
 import type { DerivedGroup, GroupStateStore } from './groupState';
-import { CONTROL_TYPES, isReadable, openType, parseEnvelopeText, typeOf } from './log';
+import {
+  CONTROL_TYPES,
+  firstEntry,
+  GROUP_TOGGLE_TYPES,
+  isReadable,
+  openType,
+  parseEnvelopeText,
+  typeOf,
+} from './log';
 import { checkEmoji, normaliseName, type PrefsService } from './prefs';
 import { deviceSeat } from './seat';
 import { resolveSplit, sameSplit, type SplitSpec } from './split';
@@ -1088,8 +1097,9 @@ export class GroupService {
           carried = [];
           carriedGroupId = newGroupId;
 
-          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events stay behind. The
-          // thread is handed back every few hundred, so the screen still draws while a large group is copied.
+          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events and the group's
+          // name and archive toggles stay behind. The thread is handed back every few hundred, so the screen still
+          // draws while a large group is copied.
           // What the derive already opened is not opened again: the copy only re-encrypts it, and the new group's
           // first derive finds the bodies under the new envelopes (`carried`, put once this commits).
           const copied: NewEventRow[] = [];
@@ -1116,7 +1126,8 @@ export class GroupService {
               const event = stored.status === 'ok' ? parseEvent(body) : null;
               opened = { text: stored.envelope, groupId: oldGroupId, event, type: typeOf(body) };
             }
-            if (CONTROL_TYPES.has(opened.type ?? '')) continue;
+            const type = opened.type ?? '';
+            if (CONTROL_TYPES.has(type) || GROUP_TOGGLE_TYPES.has(type)) continue;
             const resealed = resealEnvelope({
               key: oldKey,
               groupId: oldGroupId,
@@ -1154,8 +1165,16 @@ export class GroupService {
           });
           if (copied.length > 0) await tx.insertEvents(newLocalId, copied);
 
-          // 4. The link from the new group, and the removal the user picked.
+          // 4. The link from the new group; the group's name and archive state as they read now, re-stated at this
+          // clock since their toggles stayed behind (the new group's name is otherwise its `group.created` one); and
+          // the removal the user picked.
           const marks: Draft[] = [{ payload: { type: 'group.rotated', from: localId } }];
+          const created = firstEntry(newLog, (e) => e.event.type === 'group.created')?.event;
+          const createdName = created?.type === 'group.created' ? created.name : null;
+          if (state.created && state.name !== createdName) {
+            marks.push({ payload: { type: 'group.renamed', name: state.name } });
+          }
+          if (state.archived) marks.push({ payload: { type: 'group.archived' } });
           if (removed !== undefined && state.members.get(removed)?.archived !== true) {
             marks.push({ payload: { type: 'member.archived', id: removed } });
           }

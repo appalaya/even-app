@@ -855,12 +855,16 @@ replays each envelope id once, and folds:
     than the distance to the top of the range, so the rule catches a clock
     decades off and nothing an honest phone writes. A write less than ten
     years ahead wins until real time passes it, as before; for an entity's
-    fields an honest edit climbs over it ("Ordering").
+    fields an honest edit climbs over it ("Ordering"), and the group's name
+    and archive state are left behind by regenerating the invite ("Rotation,
+    moving, closing").
   - *What it does not stop.* `dev` is the writer's own claim, so a member who
     writes the same far event from two device ids has caught the log up
     themselves and wins as before; field writes from two ids at `tsMax − 1`
     also still freeze the entity they target ("Ordering"). Against a hostile
-    member the remedy is regenerating the invite.
+    member the remedy is regenerating the invite: the new group starts the
+    group's name and archive state afresh at the rotator's clock, while
+    member and expense events cross as they are.
 
 `GroupState` contains the group meta (including `archived`), members (with
 device sets and avatars), `doneMembers` (who has said "I'm done adding") and
@@ -1271,8 +1275,17 @@ the old invite.
    bodies**, with fresh nonces, keeping each row's `origin`. `undecryptable`
    and `unsupported_envelope` rows are dropped; they cannot be opened. Control
    events (`group.closed`, `group.rotated`, `group.moved`) from the old group
-   are **not** copied.
-4. Append `group.rotated { from: oldLocalId }` to the new group. The rotating
+   are **not** copied, and neither are the group's own toggles
+   (`group.renamed`, `group.archived`, `group.unarchived`): step 4 re-states
+   their current values instead. So a toggle written with a far-future clock
+   (pre-launch review H2), or one the log has caught up to, never crosses into
+   a group where nobody could outrank it. The new group's activity shows the
+   name and archive state as the rotator's, from the rotation on; who renamed
+   or archived the group before is not carried over.
+4. Append `group.rotated { from: oldLocalId }` to the new group, then, at
+   the rotator's own clock (`nextTs`), `group.renamed { name }` with the
+   group's current name when it differs from the copied `group.created`'s,
+   and `group.archived` when the group reads archived. The rotating
    device marks the new group as "recognition done" so its own marker does
    not trigger the procedure below. If the user picked someone to remove in
    the confirmation sheet, append `member.archived { id }` for that member to
@@ -1295,8 +1308,11 @@ old-group envelope with `origin = 'local'` whose id the new group lacks. This
 rescues this device's own writes, including any unpushed outbox, and nothing
 else: events written by the removed party after the rotation never cross,
 because no device claims them as its own. Control events are never copied.
-Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
-over `my_member_id`. Two `group.rotated` events with the same `from` in
+The straggler's own name and archive toggles are rescued with the rest of its
+writes: they are its own, at its own clock, and one written after the
+rotation outranks the rotator's re-statement as it should. Set `acked = 0` on
+the rescued rows, set the old group to `hidden`, and carry over
+`my_member_id`. Two `group.rotated` events with the same `from` in
 different groups mean two members rotated concurrently; the app shows both
 groups, lets the user pick, and sets the other to `hidden`.
 

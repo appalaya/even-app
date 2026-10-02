@@ -5,7 +5,16 @@
  * group archived, its name, a member or an expense; honest writes must not be refused because of it; and
  * regenerating the invite must neither carry it into the new group nor fail on it.
  */
-import { LIMITS, type EventPayload } from '@even/core';
+import {
+  deriveLocal,
+  deriveServer,
+  LIMITS,
+  newId,
+  open,
+  parseEvent,
+  type Event,
+  type EventPayload,
+} from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
@@ -15,6 +24,7 @@ import {
   createWorld,
   expectSynced,
   injectEvent,
+  secretOn,
   SERVER,
   sync,
   type Device,
@@ -43,6 +53,26 @@ async function state(d: Device, localId: string) {
   const derived = await d.services.groupState.get(localId);
   if (derived?.state == null) throw new Error('no state');
   return { derived, state: derived.state };
+}
+
+/** Every valid event stored for a group on a device, with its envelope id, in insertion order. */
+async function rows(d: Device, localId: string): Promise<{ id: string; event: Event }[]> {
+  const row = await d.store.getGroup(localId);
+  if (row === null) throw new Error('no group');
+  const secret = await secretOn(d, localId);
+  const key = deriveLocal(secret).encryptionKey;
+  const groupId = deriveServer(secret, row.serverUrl).groupId;
+  const out: { id: string; event: Event }[] = [];
+  for (const stored of await d.store.dump(localId)) {
+    let event: Event | null = null;
+    try {
+      event = parseEvent(open({ key, groupId, envelope: JSON.parse(stored.envelope) }));
+    } catch {
+      event = null;
+    }
+    if (event !== null) out.push({ id: stored.id, event });
+  }
+  return out;
 }
 
 function memberId(s: { members: Map<string, { id: string; name: string }> }, name: string): string {
@@ -182,6 +212,68 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
   });
 
   // ----- Regenerating the invite -----
+
+  it('rotation leaves the group-level toggles behind and re-states the name and archive state at its own clock', async () => {
+    const t = await trio(await setup(kind));
+    await g(t.b).renameGroup(t.g1, 'Banff!');
+    await syncAll(t, t.g1);
+    await g(t.a).archiveGroup(t.g1);
+    expectSynced(await sync(t.a, t.g1));
+    const toggles = (await rows(t.a, t.g1))
+      .filter((r) => ['group.renamed', 'group.archived', 'group.unarchived'].includes(r.event.type))
+      .map((r) => r.id);
+    expect(toggles).toHaveLength(2);
+    const before = t.w.clock.now();
+
+    const rotated = await g(t.a).rotateInvite(t.g1);
+    await t.a.services.idle();
+    const g2 = rotated.localId;
+    const newRows = await rows(t.a, g2);
+    for (const id of toggles) expect(newRows.map((r) => r.id)).not.toContain(id);
+    const tail = newRows.slice(-3).map((r) => r.event);
+    expect(tail.map((e) => e.type)).toEqual(['group.rotated', 'group.renamed', 'group.archived']);
+    expect(tail[1]).toMatchObject({ name: 'Banff!', by: t.maya });
+    for (const e of tail) expect(e.ts).toBeGreaterThanOrEqual(before);
+    const after = await state(t.a, g2);
+    expect(after.state.name).toBe('Banff!');
+    expect(after.state.archived).toBe(true);
+    await g(t.a).unarchiveGroup(g2);
+    expect((await state(t.a, g2)).state.archived).toBe(false);
+  });
+
+  it("rotation does not carry the review's far-future archive into the new group", async () => {
+    const t = await trio(await setup(kind));
+    const far = await farWrite(t, { type: 'group.archived' });
+    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+    await t.a.services.idle();
+    const g2 = rotated.localId;
+    expect((await rows(t.a, g2)).map((r) => r.id)).not.toContain(far);
+    const after = await state(t.a, g2);
+    expect(after.state.archived).toBe(false);
+    expect(after.derived.readOnly).toBeNull();
+    expect(after.state.members.get(t.priya)?.archived).toBe(true);
+    await g(t.a).addExpense(g2, expense(t.maya, 'Breakfast', [t.maya, t.nathan]));
+  });
+
+  it('a far archive a second (forged) device backs up holds in the old group; rotation is the way out', async () => {
+    const t = await trio(await setup(kind));
+    await farWrite(t, { type: 'group.archived' });
+    await farWrite(t, { type: 'group.archived' }, { dev: newId() });
+    // Two devices at the top of the range: the log has caught up to the archive, so it wins and an unarchive at
+    // now cannot outrank it (design.md "Reducer": the rule depends only on the log, and `dev` is the writer's claim).
+    await g(t.a).unarchiveGroup(t.g1);
+    expect((await state(t.a, t.g1)).state.archived).toBe(true);
+
+    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+    await t.a.services.idle();
+    const g2 = rotated.localId;
+    for (const r of await rows(t.a, g2)) expect(r.event.ts).toBeLessThan(TOP);
+    expect((await state(t.a, g2)).state.archived).toBe(true); // re-stated at the rotator's clock
+    await g(t.a).unarchiveGroup(g2);
+    const after = await state(t.a, g2);
+    expect(after.state.archived).toBe(false);
+    expect(after.derived.readOnly).toBeNull();
+  });
 
   it('removing a member whose own far-future rename is in the log: the rotation completes and archives them', async () => {
     const t = await trio(await setup(kind));

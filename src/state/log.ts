@@ -16,6 +16,18 @@ export const CONTROL_TYPES: ReadonlySet<string> = new Set([
   'group.moved',
 ]);
 
+/**
+ * The group's own last-writer-wins fields, its name and archive state. The rotator leaves these behind with the
+ * control events and re-states the current values in the new group at its own clock (design.md "Rotate invite",
+ * steps 3 and 4), so none crosses with a timestamp nobody in the new group can outrank (pre-launch review H2). A
+ * straggler's rescue still carries its own: they are its writes, at its clock.
+ */
+export const GROUP_TOGGLE_TYPES: ReadonlySet<string> = new Set([
+  'group.renamed',
+  'group.archived',
+  'group.unarchived',
+]);
+
 const READABLE: ReadonlySet<EventStatus> = new Set<EventStatus>([
   'ok',
   'invalid',
