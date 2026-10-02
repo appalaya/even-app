@@ -196,6 +196,10 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   the repository, it left `android/` unchanged.
 - R8 is on (`android.enableMinifyInReleaseBuilds=true` in `android/gradle.properties`, the Expo SDK 58 default).
   If a release build misbehaves where a debug build does not, add keep rules to `android/app/proguard-rules.pro`.
+  Every native change (anything under `android/`, a native dependency, `app.json`'s native config) gets a
+  release-build launch check before it is pushed: `cd android && ./gradlew assembleRelease`, install
+  `app/build/outputs/apk/release/app-release.apk` on the emulator and launch it, and it must reach Groups with no
+  WorkManager error in `adb logcat`.
 - Local smoke build, not a release path: `cd android && ./gradlew bundleRelease` needs JDK 17 and an Android SDK
   (`ANDROID_HOME`). Gradle installs missing SDK packages, including React Native's pinned NDK. Without the
   `EVEN_UPLOAD_*` variables it signs with the debug keystore and prints a warning; Play rejects that bundle.

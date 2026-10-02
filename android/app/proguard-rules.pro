@@ -12,3 +12,10 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# WorkManager (which expo-background-task runs on) makes these by reflection through their no-arg constructors, and
+# R8's full mode strips both: Room 2.5.0's consumer rule keeps the generated WorkDatabase_Impl class but not its
+# constructor, so WorkManager's initializer threw before any JS ran and the release build crashed at launch; and
+# without OverwritingInputMerger's constructor every worker failed ("Could not create Input Merger").
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class * extends androidx.work.InputMerger { <init>(); }
