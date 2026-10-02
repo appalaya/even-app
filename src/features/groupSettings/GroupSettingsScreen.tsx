@@ -6,7 +6,9 @@
  * Name (→ Rename group), Invite (with Show QR code), Members (with the edit rules; Add member), Server (host,
  * operator, limits, retention, usage with its 80 % warning, Move server with Check, and the old copy's delete after a
  * move), Export (CSV, group file), Access (regenerate the invite), Archive group, Leave group (unsent entries, the
- * server-copy checkbox), Report this group. Everything reads from the state hooks and acts through GroupService. A
+ * server-copy checkbox), Report this group. A group closed by a regenerated invite whose successor lacks entries this
+ * phone wrote has "Move entries" in place of Access (MoveEntriesPrompt, asked once over the new group; the row stays
+ * after Not now and asks the same question). Everything reads from the state hooks and acts through GroupService. A
  * member's rename uses the Rename sheet's layout; the old copy's delete is confirmed by a system alert (no board
  * draws it).
  */
@@ -20,8 +22,11 @@ import { LIMITS } from '@even/core';
 
 import { AppText, Card, Footnote, Icon, ListRow, Screen, SectionHeader } from '@/components';
 import { layout, radii, useTheme } from '@/theme';
-import { useApp, useGroup, type ReportInfo } from '../../state';
+import { useApp, useGroup, useMoveOffers, type ReportInfo } from '../../state';
 import { EmojiPickerSheet } from '../emoji/EmojiPickerSheet';
+import { moveFrom } from '../group/moveEntries';
+import { MoveEntriesSheet } from '../group/MoveEntriesSheet';
+import { groupHrefs } from '../group/routes';
 import { InviteQrSheet } from '../invite/InviteQrSheet';
 import { ReportGroupSheet } from '../report/ReportGroupSheet';
 
@@ -94,6 +99,10 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
   // Read when "Report this group" is tapped; stays set while the sheet slides away.
   const [reported, setReported] = useState<ReportInfo | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  // "Move entries": this closed group's entries the new group lacks (MoveEntriesPrompt).
+  const moveOffer = moveFrom(useMoveOffers(), localId);
+  const [moveEntriesOpen, setMoveEntriesOpen] = useState(false);
+  const [movingEntries, setMovingEntries] = useState(false);
 
   const name = derived?.name ?? '';
   const state = derived?.state ?? null;
@@ -299,6 +308,24 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
     setLeaveFor({ unsent: await groups.unsentCount(localId).catch(() => 0) });
   };
 
+  // ----- move entries -----
+
+  /** The rescue into the new group; this group is then hidden, so the new group opens over Groups. */
+  const moveEntries = async () => {
+    if (moveOffer === null) return;
+    setMovingEntries(true);
+    try {
+      await groups.moveEntries(moveOffer.to, moveOffer.from);
+      setMoveEntriesOpen(false);
+      router.dismissTo('/');
+      router.push(groupHrefs.group(moveOffer.to));
+    } catch (error) {
+      fail(error);
+    } finally {
+      setMovingEntries(false);
+    }
+  };
+
   // ----- report -----
 
   /** The group's id on its server, read first: the sheet shows it and the contact page is given it. */
@@ -426,6 +453,17 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
                 A group file contains the invite. Anyone who has it can open the group.
               </Footnote>
             </>
+          )}
+
+          {frozen && moveOffer !== null && (
+            <Card radius="group" style={[styles.card, styles.spaced]}>
+              <ActionRow
+                icon="arrowRight"
+                label="Move entries"
+                tone="accent"
+                onPress={() => setMoveEntriesOpen(true)}
+              />
+            </Card>
           )}
 
           {!frozen && (
@@ -558,6 +596,13 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
         report={reported}
         onDismiss={() => setReportOpen(false)}
       />
+      <MoveEntriesSheet
+        offer={moveOffer}
+        visible={moveEntriesOpen}
+        busy={movingEntries}
+        onMove={() => void moveEntries()}
+        onNotNow={() => setMoveEntriesOpen(false)}
+      />
       <EmojiPickerSheet
         visible={avatarOpen}
         value={avatarFor?.emoji ?? null}
@@ -603,8 +648,9 @@ function NameRow({ name, onPress }: { name: string; onPress: (() => void) | unde
 }
 
 /**
- * A settings row led by a 20 pt glyph: "Regenerate invite link" (accent), "Archive group", "Leave group", and
- * "Report this group" (its flag in `textSecondary`, a chevron at the end).
+ * A settings row led by a 20 pt glyph: "Regenerate invite link" (accent), "Archive group", "Leave group",
+ * "Report this group" (its flag in `textSecondary`, a chevron at the end), and a closed group's "Move entries"
+ * (accent; no board draws it).
  */
 function ActionRow({
   icon,
@@ -615,7 +661,7 @@ function ActionRow({
   chevron = false,
   onPress,
 }: {
-  icon: 'regenerate' | 'archive' | 'leave' | 'flag';
+  icon: 'regenerate' | 'archive' | 'leave' | 'flag' | 'arrowRight';
   label: string;
   tone: 'accent' | 'text';
   iconTone?: 'accent' | 'text' | 'textSecondary';

@@ -1036,6 +1036,20 @@ couldn't open your groups." and "Try again. If it keeps happening, restart
 your phone.", with Try again (opens the store again) and Get help (the contact
 page in the in-app browser). The error is logged.
 
+When anything under the root layout throws while rendering (a screen, a sheet,
+a layout: a bug nobody foresaw, as pre-launch review H1 found one), the app
+shows the AppError board instead of closing: "Something went wrong." and "If
+it keeps happening, let us know.", with Try again and Report a problem (the
+contact page with `#purpose=help` in the in-app browser). It is the root
+layout's `ErrorBoundary` (Expo Router renders it in place of the layout, so it
+brings its own providers, in the Appearance the app last applied). Try again
+draws the root layout again: every screen remounts, and the app comes back on
+Groups. The log line is fixed words and the error's name and code
+(`describeForLog`), never its message; in a release build React Native's own
+report of a caught render error, which carries the message and the component
+stack, is dropped (`services/caughtRenderErrors.ts`). Uncaught errors are
+reported as before.
+
 ## Sync engine
 
 `src/services/sync/` — one engine, one HTTP transport, plus group-file I/O.
@@ -1339,11 +1353,22 @@ else: events written by the removed party after the rotation never cross,
 because no device claims them as its own. Control events are never copied.
 The straggler's own name and archive toggles are rescued with the rest of its
 writes: they are its own, at its own clock, and one written after the
-rotation outranks the rotator's re-statement as it should. Set `acked = 0` on
-the rescued rows, set the old group to `hidden`, and carry over
-`my_member_id`. Two `group.rotated` events with the same `from` in
-different groups mean two members rotated concurrently; the app shows both
-groups, lets the user pick, and sets the other to `hidden`.
+rotation outranks the rotator's re-statement as it should.
+Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
+over `my_member_id`. When there are such envelopes (readable, not control
+events), the rescue waits for the person (MoveEntriesPrompt): the next time
+the new group is on screen it asks "Move your Banff 2026 entries into the new
+group?" with how many. Move is the rescue above. Not now, or closing the
+sheet, copies and hides nothing: the old group stays on Groups, closed,
+read-only and un-rescued, and its Group settings carry a "Move entries" row,
+where Access is for an open group, that asks the same question and runs the
+same move. It is asked once per rotation: the `prefs` row `rotation.notNow`
+keeps the old groups answered Not now (local ids only), and recognition, which
+runs again after each of the new group's syncs and at launch, then only keeps
+the move offered there. With no such envelopes nothing is asked, and the old
+group is synced once and hidden, as above. Two `group.rotated` events with the
+same `from` in different groups mean two members rotated concurrently; the app
+shows both groups, lets the user pick, and sets the other to `hidden`.
 
 The closure is the check. A `group.rotated` alone is a claim anyone in the
 new group can write, naming any group whose `localId` they know; acted on
@@ -1501,7 +1526,14 @@ checksum, and canonicalises the server URL.
   and never carries a payload (`even://i#…` goes to Groups); `even://join`
   opens the Groups screen with "Join with code" expanded, so the user pastes
   the code they just copied. `canonicalOrigin` uses a small pure-TypeScript URL
-  parser in `core`, not Hermes's incomplete `URL`.
+  parser in `core`, not Hermes's incomplete `URL`. A link or path the app has
+  no route for opens the NotFound board (`src/app/+not-found.tsx`, in place
+  of Expo Router's Unmatched page): "Even can't open this link." and "It may
+  be incomplete, or need a newer Even.", with Go to Groups, which replaces
+  the stack with Groups. It never shows the path, and there is no sitemap:
+  app.json turns Expo Router's `_sitemap` route off (in a release build it
+  crashed the app), so `even://_sitemap` lands there too, as `even://dev/seed`
+  does in a release build, whose bundle has no dev routes.
 - **Paste**: the Groups screen has "Join with code." It accepts the bare
   payload or a full link and strips the URL. A checksum failure says "That
   code isn't complete. Copy it again." A code that reads, pasted, typed,
@@ -1646,7 +1678,7 @@ src/app/
 │   ├── [expenseId].tsx      → Expense detail
 │   ├── settle.tsx           → Record a payment (sheet)
 │   └── settings.tsx         → Invite, members, server + usage + move, background updates, exports, regenerate invite link, leave
-└── +not-found.tsx
+└── +not-found.tsx           → NotFound: a link or route the app doesn't know
 ```
 
 Three primary screens: **Groups**, **Group**, **Add expense**. Everything else
@@ -1938,6 +1970,10 @@ Copy no board draws:
   knows about its model and sync. Nothing here leaves your phone." Android,
   whose Diagnostics has no model sections: "What the app knows about sync.
   Nothing here leaves your phone." (`diagnosticsCaption`)
+- "Move entries": the row in a closed group's Group settings while its
+  entries can still move into the new group, and so after MoveEntriesPrompt's
+  Not now (an accent row with the arrow glyph, its own card where Access is
+  for an open group, no footnote). It asks MoveEntriesPrompt's question again.
 
 Boards added 2 October 2026 (each with its dark twin):
 
@@ -1948,7 +1984,8 @@ Boards added 2 October 2026 (each with its dark twin):
 - MoveEntriesPrompt: "Move your Banff 2026 entries into the new group?", "3
   entries you added on this phone aren't in it yet. Everyone in the new group
   will see them." (one entry: "1 entry you added on this phone isn't in it
-  yet."), "Move" and "Not now".
+  yet."), "Move" and "Not now". Asked once per rotation; after Not now the old
+  group's settings keep "Move entries" (under Copy no board draws).
 - ContactStates draws strings the contact page already has, word for word:
   "To use a different link, reload this page." is both the closed link
   field's hint and the alert when a report is sent with no group, and "We'll

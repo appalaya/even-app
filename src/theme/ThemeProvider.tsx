@@ -19,6 +19,17 @@ interface ThemeContextValue extends ResolvedTheme {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+/**
+ * The Appearance choice the root provider last applied. AppError (the root layout's error boundary) draws in it once
+ * the layout, and the preference it read, are gone: the native override `Appearance.setColorScheme` leaves in place
+ * does not reach `useColorScheme`.
+ */
+let appliedAppearance: AppearancePreference = 'system';
+
+export function lastAppliedAppearance(): AppearancePreference {
+  return appliedAppearance;
+}
+
 export interface ThemeProviderProps {
   children: ReactNode;
   /**
@@ -54,6 +65,7 @@ export function ThemeProvider({
 
   useEffect(() => {
     if (!isRoot || appearance === undefined) return;
+    appliedAppearance = appearance;
     // 'auto' removes the override and follows the system again (RN 0.88).
     Appearance.setColorScheme(appearance === 'system' ? 'auto' : appearance);
   }, [isRoot, appearance]);

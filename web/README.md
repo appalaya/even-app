@@ -369,7 +369,8 @@ locally, so a second message within a minute gets 429.
 ## Contact page
 
 `/contact` (`contact.html`) is drawn on the design canvas as "Website: contact page" (`ContactWeb`, `ContactWebDark`,
-`ContactWebDesktop`, `ContactWebDesktopDark`) and, as opened from the app, `ReportInBrowser`. Three topics: **Report a
+`ContactWebDesktop`, `ContactWebDesktopDark`), its link field and bot check states (`ContactStates`,
+`ContactStatesDark`) and, as opened from the app, `ReportInBrowser`. Three topics: **Report a
 group** (an invite link, a reason, optional details), **Get help** and **Send feedback** (a message), each with an
 optional email, Cloudflare Turnstile, and a Send button. It replaces every mailbox the site used to name: no page
 carries an address, and `check.mjs` fails on one. Without JavaScript the page says it needs it; the form is hidden.
@@ -392,7 +393,8 @@ reported through the form, because the API takes an origin only; the page says s
 **Turnstile loads only once no invite can be on the page.** Its `api.js` runs in the page with the page's own
 access, so `contact.js` adds it only when a report names a group it can send (from the app's fragment, or from a
 pasted link already read and cleared), or when a help or feedback message is typed or sent. From then on the link
-field is disabled and reads "To use a different link, reload this page."; a send without a group says the same.
+field is disabled, empty, in `--fill` with `--muted` text (`site.css`, `.input:disabled`), and its hint reads "To use a
+different link, reload this page."; a send without a group says the same.
 Before that point nothing from Cloudflare is on the page. even-server `THREAT-MODEL.md` names Turnstile as a trusted
 component.
 

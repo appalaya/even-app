@@ -11,6 +11,9 @@ import { LINKS } from '../settings/about';
 /** The contact page. Help and feedback opens it as is; a report adds the group in the fragment. */
 export const CONTACT_PAGE = LINKS.contact;
 
+/** AppError's "Report a problem": the contact page on Get help (`#purpose=help`, as web/contact-lib.js reads it). */
+export const HELP_PAGE = `${CONTACT_PAGE}#purpose=help`;
+
 /** A group id on a server (PROTOCOL.md §2): 32 bytes, unpadded base64url. */
 const GROUP_ID = /^[A-Za-z0-9_-]{43}$/;
 

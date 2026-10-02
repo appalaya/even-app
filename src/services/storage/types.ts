@@ -186,7 +186,12 @@ export type PrefKey =
    * "Last notified", per group, as JSON: `{ [localId]: { at, count } }` (services/notifications/coalesce.ts). Local
    * ids and counts only, nothing decrypted.
    */
-  | 'notifications.ledger';
+  | 'notifications.ledger'
+  /**
+   * The old groups whose "Move your entries into the new group?" was answered Not now (state/moveOffers.ts), as a
+   * JSON array of local ids: asked once per rotation. Local ids only, nothing decrypted.
+   */
+  | 'rotation.notNow';
 
 // ---------- The store ----------
 
