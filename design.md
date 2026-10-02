@@ -1861,6 +1861,75 @@ ellipsis, as a screen's back button does. The centred title gives way to all
 of them: it moves off centre only as far as it must, then ends in an
 ellipsis, and is not drawn when they leave it no room.
 
+## Performance: large groups
+
+A group's whole log is decrypted when it is opened (no decrypted content on
+disk), so the cost of opening grows with the log. The public server's 2 MB cap
+holds about 3,400 events of an ordinary mix (about 612 stored bytes each); a
+self-hosted server with larger caps can hold 10,000 or more. The pre-launch
+review (H3) measured that size and these keep it workable without native
+crypto:
+
+- **Long loops hand the thread back** (`services/yieldToEventLoop.ts`): the
+  derive yields every 200 envelopes it opens, the pull every 200 it
+  classifies, and a server move's, a rotation's and a rescue's re-encryption
+  every 100, so React commits and touches are answered while they run. A
+  zero-delay timer, which React Native runs at once. While a group's first
+  derive runs, Group draws its loading state: the nav bar with the group's
+  cached name, nothing under it.
+- **One decode cache** (Sync engine, above): an envelope is opened once per
+  launch, by the pull or by the first derive, and a move or a rotation carries
+  the bodies over to the re-encrypted envelopes.
+- **Groups publishes as it goes**: every row at once from SQL (the cached
+  name, no count or net yet), then each group filled in as it is derived,
+  newest activity first.
+- **Group's lists are virtualised**: one `FlatList` is the screen's one
+  scrolling surface (the header, the segmented control as its sticky item,
+  then the tab's rows); Expenses and Activity rows are memoised slices of
+  their cards (`CardSlice`), and about two dozen mount on open.
+- **The usage meter is one SQL sum** over `events.size` (schema v4).
+
+Measured on 2 October 2026. Node: `src/state/largeGroup.perf.test.ts`, the
+review's mix at 10,000 events through the real store and the app's services,
+V8 without its JIT as the stand-in for Hermes (the commands are in the file;
+`EVEN_PERF` runs it). Milliseconds, then the longest stretch in which no timer
+could fire, which is what a frame waits for:
+
+| 10,000 events, V8 `--jitless` | before | after |
+|---|---:|---:|
+| Open a group, cold (decrypt, reduce, balances) | 2,619, all one block | 2,653, longest block 59 |
+| Groups, first rows on screen (with four small groups) | 2,724 | 3 |
+| Groups, newest group filled | 2,724 | 32 |
+| Join: first sync of every page, lifecycle | 8,265 (block 2,609) | 3,188 (block 58) |
+| Move to another server (re-encrypt, full push) | 8,090 (block 4,257) | 5,891 (block 265) |
+| The derive after the move | 2,743 | 61 |
+| Regenerate the invite (rotation) | 13,620 (block 6,466) | 6,417 (block 457) |
+| Usage meter | 241 | 1 |
+
+With the JIT every stage takes about a second or less, before and after; there a zero-delay
+timer waits Node's 1 ms minimum, so opening shows the yields' cost (168 → 237
+to 291 ms, about 50 of it idle) where React Native has none.
+
+Simulator: the iPhone 18 Pro Max simulator, a debug build (Hermes, React in
+development mode, so slower than a release build on a phone), the dev seed's
+`large` state (`even://dev/seed?state=large`: "Big trip", 3,400 events, 2,201
+live expenses, 3,365 activity items):
+
+| 3,400 events, debug build | before | after |
+|---|---:|---:|
+| Open a group, cold (a fresh state store) | 1,434–1,451, all one block | 1,394–1,472, longest block 83–92 |
+| Groups, first rows / every row filled | 1,463 / 1,463 | 2 / 1,408–1,454 |
+| Tap to Group (state derived): first rows drawn | 3,025–3,068 | 86–201 |
+| … longest block while it opens | 4.8–11.1 s | 223–309 |
+| … rows still being mounted until | 7.7–11.1 s | about 1.7 s |
+
+What is left is the crypto itself: about 0.2 ms an envelope to open without a
+JIT, 1.4 s for 3,400 on the simulator, now in slices. Native
+XChaCha20-Poly1305 is its own track (review H3, recommendation 1). Two blocks
+remain in the harness: a rotation's single `insertEvents` of the whole copied
+log validates every row in one go (457 ms at 10,000), and node:sqlite runs SQL
+on the JavaScript thread, which expo-sqlite does not.
+
 ## On-device capture (designed for, not in v1)
 
 Receipt scan and statement import are additive inputs to the add-expense
