@@ -1946,6 +1946,15 @@ one:
   board's code, which names the default server; joining it would reach
   production, so screenshots stop at the preview.
 
+Release bundles leave the seed and the dev routes out (pre-launch review
+L8): metro.config.js adds `src/dev/` and `src/app/dev/` to
+`resolver.blockList` when `NODE_ENV` is `production`, which `expo export` and
+`expo export:embed --dev false` (what release builds run) set before they
+load it; `expo start` keeps them. Nothing outside the two folders may import
+from them (`src/metroConfig.test.ts` checks both). In a release build
+`even://dev/…` therefore reaches Expo Router's unmatched-route screen, as any
+unknown path does, where the routes used to redirect home.
+
 ## Build order
 
 1. `packages/core`: ids, hlc, keys, envelope seal/open with padding, invite
