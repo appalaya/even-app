@@ -6,7 +6,8 @@
  *
  * No retries here: the engine owns retry, backoff, and `Retry-After`. Every request times out after 30 s (the body
  * read included) as a `network` error. A response over 16 MB (`MAX_RESPONSE_BYTES`) is refused as a
- * `server_error`, by its `Content-Length` before the body is read, or while the body streams in. Error messages
+ * `server_error`, by its `Content-Length` before the body is read, or while the body streams in. A request given
+ * up on for any reason is also aborted, so its download stops there. Error messages
  * are fixed words: the route pattern (`POST /v1/groups/{groupId}/events`), the HTTP status and the code, never
  * the path itself, which carries the group id, and never text from the response (a `message`, an `error` that is
  * not a protocol code). A message can reach a log line, React Native writes every console line to the device log
@@ -66,7 +67,8 @@ async function readBounded(response: Response, max: number, request: string): Pr
     typeof stream.getReader !== 'function' ||
     typeof TextDecoder !== 'function'
   ) {
-    // No streaming (React Native's fetch reads the body whole): refuse it once read. It is never parsed or kept.
+    // No streaming (React Native's own fetch, which reads the body whole; the app's global fetch is Expo's, which
+    // streams on both platforms): refuse it once read. It is never parsed or kept.
     const text = await response.text();
     if (text.length > max) throw tooLarge();
     return text;
@@ -347,6 +349,10 @@ export class HttpTransport implements Transport {
       response = await this.fetchFn(`${this.base}${path}`, init);
       text = await readBounded(response, MAX_RESPONSE_BYTES, `${method} ${route}`);
     } catch (cause) {
+      // Stop the download as well as the read. On iOS, Expo's fetch keeps a body downloading after its stream is
+      // cancelled mid-read, so a refused endless response would go on using data while the app runs; aborting the
+      // request ends it on both platforms (verified on device, 2 October 2026).
+      controller?.abort();
       if (cause instanceof SyncError) throw cause;
       throw new SyncError('network', `${method} ${route}: no response`, { cause });
     } finally {

@@ -483,6 +483,51 @@ describe('HttpTransport errors', () => {
     expect(sent).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + 2 * chunk.byteLength);
   });
 
+  it('aborts a request it refuses, by Content-Length or mid-stream, so the download stops too', async () => {
+    // On iOS, Expo's fetch keeps downloading a body whose stream was cancelled mid-read (seen on the simulator: a
+    // refused endless response went on at full speed); only the request's AbortSignal stops it.
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    const endless = () =>
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(chunk);
+        },
+      });
+    const declared = stubFetch(
+      () =>
+        new Response(endless(), {
+          status: 200,
+          headers: { 'Content-Length': String(MAX_RESPONSE_BYTES + 1) },
+        }),
+    );
+    const streamed = stubFetch(() => new Response(endless(), { status: 200 }));
+    for (const { fetch, calls } of [declared, streamed]) {
+      const t = new HttpTransport('https://sync.example.com', { fetch });
+      expect((await rejection(t.pull('G', new Uint8Array(32), 0, 500))).code).toBe('server_error');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.init.signal?.aborted).toBe(true);
+    }
+  });
+
+  it('aborts a request whose body fails mid-read, and leaves one that succeeds alone', async () => {
+    let pulls = 0;
+    const failing = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 2) controller.error(new Error('connection reset'));
+        else controller.enqueue(new Uint8Array(16).fill(0x20));
+      },
+    });
+    const broken = stubFetch(() => new Response(failing, { status: 200 }));
+    const t = new HttpTransport('https://sync.example.com', { fetch: broken.fetch });
+    expect((await rejection(t.pull('G', new Uint8Array(32), 0, 500))).code).toBe('network');
+    expect(broken.calls[0]!.init.signal?.aborted).toBe(true);
+
+    const fine = stubFetch(() => json(200, INFO));
+    await new HttpTransport('https://sync.example.com', { fetch: fine.fetch }).info();
+    expect(fine.calls[0]!.init.signal?.aborted).toBe(false);
+  });
+
   it('refuses an over-long body from a fetch that cannot stream (React Native)', async () => {
     const whole = {
       ok: true,
