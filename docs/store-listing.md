@@ -494,7 +494,9 @@ registered agent that allows its address as the business address, which also tak
 Secretary of State record, or a virtual street address; PO boxes are refused by Dun & Bradstreet and Google);
 update the D-U-N-S record; edit the organisation details in Play Console and re-verify; then make Apple's DSA
 trader declaration and add the EU countries back. Or the owner explicitly decides to publish the home address.
-Until one of those, no production rollout on Play.
+Decided on 2 October 2026: **Even launches on the App Store first**, with the EU excluded and the DSA declaration left
+undone, so no address shows. **Play's production release waits until the organisation address is a business address;**
+closed testing continues for Android testers meanwhile. Even is never published with the home address.
 
 Also before production: once Google approves the first closed-testing release and the app leaves draft, delete the
 `PLAY_RELEASE_STATUS` repository variable (set to `draft` on 1 October 2026 so the tag run could upload to a draft
