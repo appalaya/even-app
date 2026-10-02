@@ -475,5 +475,4 @@ download from the same place, unmodified.
 
 `node web/scripts/check.mjs` prints any `PLACEHOLDER` left in the site with its file and line. There are none now.
 
-The "Run your own server" link points at `https://github.com/appalaya/even-server`, which is private today; it
-returns 404 to the public until the repository is opened.
+The "Run your own server" link points at `https://github.com/appalaya/even-server`, which is public.

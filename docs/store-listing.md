@@ -456,8 +456,9 @@ ref, so a main run and a tag run don't wait for each other. Both conditions belo
    Dashboard's setup list should show nothing outstanding, and Publishing overview should show nothing
    blocked.
 3. **Make sure no Android run is uploading:** Actions → Android, with no run in progress on main. Don't push
-   the tag within about 25 minutes of a merge to main. Until the workflow shares one concurrency group for
-   Play uploads (a workflow change, not made here), timing is the only guard.
+   the tag within about 25 minutes of a merge to main. Since 265c7c9 the Android workflow queues every Play
+   upload in one concurrency group, so a tag run waits for a main run instead of colliding with it; the
+   check is belt and braces.
 4. **Run the closed track again for the tag.** Re-push it:
 
    ```bash
