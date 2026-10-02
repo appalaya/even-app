@@ -18,6 +18,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
+import { isStateError, type StateErrorCode } from './errors';
 import type { GroupService } from './groups';
 import {
   body,
@@ -47,6 +48,20 @@ async function setup(kind: StoreKind): Promise<World> {
 
 function g(d: Device): GroupService {
   return d.services.groups;
+}
+
+async function rejectsWith(promise: Promise<unknown>, code: StateErrorCode): Promise<void> {
+  let thrown: unknown = null;
+  try {
+    await promise;
+  } catch (error) {
+    thrown = error;
+  }
+  if (!isStateError(thrown, code)) {
+    throw new Error(
+      `expected ${code}, got ${thrown instanceof Error ? thrown.message : String(thrown)}`,
+    );
+  }
 }
 
 async function state(d: Device, localId: string) {
@@ -211,6 +226,35 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect((await state(t.a, t.g1)).state.expenses.has(t.dinner)).toBe(false);
   });
 
+  it('an expense added at the top of the range can be deleted; an edit of it is still refused', async () => {
+    const t = await trio(await setup(kind));
+    const fake = newId();
+    await farWrite(t, {
+      type: 'expense.added',
+      expense: {
+        id: fake,
+        title: 'Fake',
+        amount: 900_000,
+        currency: 'CAD',
+        paidBy: t.priya,
+        date: '2026-02-11',
+        category: 'other',
+        split: { [t.maya]: 450_000, [t.nathan]: 450_000 },
+      },
+    });
+    expect((await state(t.a, t.g1)).state.expenses.has(fake)).toBe(true);
+    // An edit has to sort after the add to take effect, and nothing below the top of the range does.
+    await rejectsWith(g(t.a).updateExpense(t.g1, fake, { title: 'Still fake' }), 'clock');
+    // A delete holds in either order: its tombstone keeps the add out.
+    await g(t.a).deleteExpense(t.g1, fake);
+    await syncAll(t, t.g1);
+    for (const d of [t.a, t.b, t.h]) {
+      const s = (await state(d, t.g1)).state;
+      expect(s.expenses.has(fake)).toBe(false);
+      expect(s.expenses.has(t.dinner)).toBe(true);
+    }
+  });
+
   // ----- Regenerating the invite -----
 
   it('rotation leaves the group-level toggles behind and re-states the name and archive state at its own clock', async () => {
@@ -283,5 +327,34 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expectSynced(rotated.pushed);
     const removed = (await state(t.a, rotated.localId)).state.members.get(t.priya);
     expect(removed).toMatchObject({ name: 'Priya', archived: true });
+  });
+
+  it('removing a member with a far-future claim of theirs: the mark is written at the group clock and holds', async () => {
+    const t = await trio(await setup(kind));
+    await farWrite(t, { type: 'member.claimed', id: t.priya }, { dev: newId() });
+    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+    await t.a.services.idle();
+    const mark = (await rows(t.a, rotated.localId)).find(
+      (r) => r.event.type === 'member.archived' && r.event.id === t.priya,
+    );
+    expect(mark?.event.ts).toBeLessThan(TOP);
+    expect((await state(t.a, rotated.localId)).state.members.get(t.priya)?.archived).toBe(true);
+  });
+
+  it('a removal a far-future unarchive outranks is still written; the member stays listed', async () => {
+    const t = await trio(await setup(kind));
+    await farWrite(t, { type: 'member.unarchived', id: t.priya });
+    await farWrite(t, { type: 'member.unarchived', id: t.priya }, { dev: newId() });
+    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+    await t.a.services.idle();
+    expectSynced(rotated.pushed);
+    const g2 = rotated.localId;
+    const mark = (await rows(t.a, g2)).find(
+      (r) => r.event.type === 'member.archived' && r.event.id === t.priya,
+    );
+    expect(mark?.event).toMatchObject({ by: t.maya });
+    // What the user sees: Priya still listed in the new group, though she holds no invite to it.
+    expect((await state(t.a, g2)).state.members.get(t.priya)?.archived).toBe(false);
+    expect(await t.h.secrets.getSecret(g2)).toBeNull();
   });
 });

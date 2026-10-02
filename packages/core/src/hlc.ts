@@ -159,8 +159,38 @@ export function isClockSane(nowMs: number): boolean {
 /**
  * The write gate (design.md "Ordering"): true iff the device clock is sane AND the timestamp the new event would get,
  * `nextTs(nowMs, log, targetId)`, is inside the validator's range. The app refuses to write otherwise, so it never
- * produces an event that fails validation on every phone. Pass the same `targetId` the write will use.
+ * produces an event that fails validation on every phone. Pass the same `targetId` the write will use. The app's
+ * write path asks `writeTs`, which also lets a write that holds in either order through.
  */
 export function canWrite(nowMs: number, log: readonly LogEntry[], targetId?: string): boolean {
   return isClockSane(nowMs) && nextTs(nowMs, log, targetId) < LIMITS.tsMax;
+}
+
+/**
+ * True for a write about an entity that takes effect only if it sorts after the event that created the entity: an
+ * `expense.updated` before its `expense.added` is ignored, and a `member.updated` before its `member.added` is
+ * overwritten by it. Every other targeted write holds in either order: a delete's tombstone keeps a later add out, and
+ * a member's archive mark, done mark or claim survives the `member.added` that fills its placeholder.
+ */
+export function mustFollowTarget(event: Event): boolean {
+  return event.type === 'expense.updated' || event.type === 'member.updated';
+}
+
+/**
+ * The write gate and the timestamp together, for the app's write path (design.md "Ordering"): the `ts` for `event`
+ * (whose own `ts` is ignored), or null when the app must refuse it ("check your phone's date"). Null when the device
+ * clock is outside the validator's range. Otherwise `nextTs(nowMs, log, target)`; when that would reach `tsMax`,
+ * because an event about the target that takes effect sits at `tsMax − 1`, a write that holds in either order
+ * (`mustFollowTarget` false) takes the group clock's `ts` instead, so it is never refused merely because another
+ * device wrote a far-future event (pre-launch review H2: rotation's removal, a delete). An edit that must follow its
+ * target is refused then: below the top of the range it would change nothing.
+ */
+export function writeTs(nowMs: number, log: readonly LogEntry[], event: Event): number | null {
+  if (!isClockSane(nowMs)) return null;
+  const target = entityIdOf(event) ?? undefined;
+  const ts = nextTs(nowMs, log, target);
+  if (ts < LIMITS.tsMax) return ts;
+  if (target === undefined || mustFollowTarget(event)) return null;
+  const groupClock = nextTs(nowMs, log);
+  return groupClock < LIMITS.tsMax ? groupClock : null;
 }

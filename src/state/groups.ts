@@ -6,8 +6,8 @@
  * 1. per group, one write at a time, so each event's `ts` sees the previous one;
  * 2. the permission and uniqueness rules are checked against the current derived state (honest clients enforce
  *    them; the reducer cannot);
- * 3. `ts = nextTs(now, log, target)`, gated on `canWrite`, and the body must pass `parseEvent` before it is sealed,
- *    so this device never produces an event that fails validation on another phone;
+ * 3. `ts` from core `writeTs(now, log, event)` (`nextTs` behind the write gate), and the body must pass `parseEvent`
+ *    before it is sealed, so this device never produces an event that fails validation on another phone;
  * 4. the envelope is sealed for the `server_url` read inside the same transaction as its insert (origin `local`,
  *    unacked), so no write can land sealed for an old server's group id;
  * 5. the group's derived state is invalidated and a `local_write` sync is requested.
@@ -28,12 +28,10 @@
  */
 import {
   canonicalOrigin,
-  canWrite,
   decodeInvite,
   deriveLocal,
   deriveServer,
   encodeInvite,
-  entityIdOf,
   hasBidiControl,
   inviteLink,
   isCategory,
@@ -45,13 +43,13 @@ import {
   makeInvite,
   newId,
   newSecret,
-  nextTs,
   open,
   parseEvent,
   PROTOCOL,
   resealEnvelope,
   seal,
   secretFromInvite,
+  writeTs,
   type Category,
   type Event,
   type EventPayload,
@@ -1175,6 +1173,8 @@ export class GroupService {
             marks.push({ payload: { type: 'group.renamed', name: state.name } });
           }
           if (state.archived) marks.push({ payload: { type: 'group.archived' } });
+          // The removal holds in either order, so `writeTs` writes it at the group clock when a far-future event about
+          // the member leaves nothing below the top of the range to outrank it: the rotation never fails on one.
           if (removed !== undefined && state.members.get(removed)?.archived !== true) {
             marks.push({ payload: { type: 'member.archived', id: removed } });
           }
@@ -1712,7 +1712,11 @@ export class GroupService {
     return run;
   }
 
-  /** Events for `drafts`, in order, each with `ts = nextTs(now, log so far, target)`, validated by `parseEvent`. */
+  /**
+   * Events for `drafts`, in order, each with `ts = writeTs(now, log so far, event)`, validated by `parseEvent`. A
+   * write that holds in either order (a delete, a member's archive, done mark or claim) is not refused for a target a
+   * far-future event pins at the top of the range: it takes the group clock's `ts` (design.md "Ordering").
+   */
   private buildEvents(
     now: number,
     log: readonly LogEntry[],
@@ -1733,11 +1737,9 @@ export class GroupService {
         dev: this.deviceId,
         ...draft.payload,
       } as Event;
-      const target = entityIdOf(provisional) ?? undefined;
-      if (!canWrite(now, working, target)) {
-        throw new StateError('clock', "check your phone's date");
-      }
-      const event = parseEvent({ ...provisional, ts: nextTs(now, working, target) });
+      const ts = writeTs(now, working, provisional);
+      if (ts === null) throw new StateError('clock', "check your phone's date");
+      const event = parseEvent({ ...provisional, ts });
       if (event === null) {
         throw new StateError(
           'invalid',

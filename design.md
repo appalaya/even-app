@@ -748,18 +748,30 @@ range (pre-launch review H2).
 
 If the device clock is outside the validator's absolute range, the app
 refuses to write and shows a "check your phone's date" message rather than
-producing events that fail validation everywhere. The same applies when the
-computed `ts` would reach the top of the range: an entity whose latest event
-that takes effect sits at `tsMax − 1` cannot be edited, because its edit
-would need `ts = tsMax`. Only a far-future clock puts one there, and since
-held-back writes do not count, what can is an event that is not a field
-write (an `expense.added`, a `member.claimed`), or field writes from two
-device ids at the top, which the log has caught up to. Every write is
-therefore gated on
-`canWrite(nowMs, log, targetId?)` from `core/hlc.ts`, which is
-`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`: the gate
-compares against the device's clock and the events that take effect, not
-the log's maximum.
+producing events that fail validation everywhere. The computed `ts` can also
+reach the top of the range: when an event about the target that takes
+effect sits at `tsMax − 1`, nothing valid sorts after it. Only a far-future
+clock puts one there, and since held-back writes do not count, what can is
+an event that is not a field write (an `expense.added`, a `member.claimed`),
+or field writes from two device ids at the top, which the log has caught up
+to. A write that holds in either order is then written at the group clock's
+`ts` instead (`ts = max(now, lastSeenTs + 1)`, untargeted): a delete, whose
+tombstone keeps the later add out (the expense or payment disappears from
+the lists and the activity feed, its add with it, and no "deleted" entry
+takes its place), and a member's
+archive, unarchive, done or undone mark or claim, which survives the
+`member.added` that fills its placeholder. It still loses to a competing
+mark the log has caught up to, as any last-writer-wins write does. Only an
+edit that must follow its target to take effect (`expense.updated`, ignored
+before its `expense.added`; `member.updated`, overwritten by its
+`member.added`) is refused then, with the same message: an expense or member
+created at `tsMax − 1` can be deleted or archived but not edited. Every write
+therefore takes its `ts` from `writeTs(nowMs, log, event)` in `core/hlc.ts`,
+null meaning refuse: it compares against the device's clock and the events
+that take effect, never merely the log's maximum (pre-launch review H2).
+`canWrite(nowMs, log, targetId?)`, which is
+`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`, is the strict
+form without the fallback.
 
 `at` is the plain wall clock and is what the activity feed shows. `ts` is
 never displayed.
@@ -1291,7 +1303,24 @@ the old invite.
    the confirmation sheet, append `member.archived { id }` for that member to
    the new group here: the member list, their expenses, and the history all
    carry over unchanged (balances must still add up), and archiving is what
-   takes them out of pickers and out of the "done adding" count.
+   takes them out of pickers and out of the "done adding" count. The mark is
+   written even when its `ts` cannot outrank a far-future event about that
+   member (the write gate gives it the group clock's `ts`, "Ordering"), so the
+   rotation never fails on one (pre-launch review H2). What the user sees:
+   - the usual case, one phone far ahead (the review's): its writes about the
+     member are held back ("Hold-back" under Reducer), and anything else it
+     wrote (a claim, the member's own add) does not compete with the mark, so
+     the member reads archived in the new group as soon as it opens, and stays
+     so while the log has not caught up to the far write. Should it catch up
+     (another device writing within ten years of it), a far unarchive would
+     take effect in its place and the member would read unarchived again;
+   - a far unarchive of the member that the log has already caught up to
+     (the same write from two device ids at the top): the mark is written
+     and loses. The removed member stays in the new group's pickers and
+     "done adding" count, though they hold no invite to it, and the activity
+     shows both the mark ("Maya archived Priya") and the far unarchive.
+     Archiving them again changes nothing, since nothing below the top of
+     the range outranks it.
 5. Push the new group. Present the new invite.
 6. Append `group.closed { reason: 'rotated', to: newLocalId }` to the **old**
    group and keep syncing the old group until that event is acknowledged;

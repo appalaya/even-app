@@ -7,8 +7,10 @@ import {
   holdBackHorizon,
   isClockSane,
   isHeldBack,
+  mustFollowTarget,
   nextTs,
   writesLastWriterField,
+  writeTs,
 } from './hlc.js';
 import type { Event, EventPayload, LogEntry } from './types.js';
 
@@ -372,5 +374,62 @@ describe('canWrite', () => {
   it('refuses when the absorbed group clock would reach tsMax', () => {
     const clock = LIMITS.tsMax - 1 - HOUR;
     expect(canWrite(clock, [entry(LIMITS.tsMax - 1, { type: 'group.renamed', name: 'A' })])).toBe(false);
+  });
+});
+
+describe('writeTs', () => {
+  const rename = { type: 'group.renamed', name: 'A' } as const;
+  const write = (payload: EventPayload): Event => entry(NOW, payload).event;
+  /** An expense another device added at the top of the range, and an honest device's event at now. */
+  const farAdd = (): LogEntry[] => {
+    const add = expenseAdded(TOP);
+    return [{ id: add.id, event: { ...add.event, dev: id('far') } }, fromDevice('honest', NOW - HOUR, rename)];
+  };
+
+  it('is nextTs when that fits, and null for a clock outside the range', () => {
+    const log = [expenseAdded(NOW - DAY)];
+    expect(writeTs(NOW, log, write({ type: 'expense.updated', id: EXPENSE, changes: { title: 'B' } }))).toBe(
+      nextTs(NOW, log, EXPENSE),
+    );
+    expect(writeTs(NOW, log, write(rename))).toBe(nextTs(NOW, log));
+    expect(writeTs(LIMITS.tsMax, log, write(rename))).toBeNull();
+    expect(writeTs(LIMITS.tsMin - 1, log, write(rename))).toBeNull();
+  });
+
+  it('gives a write that holds in either order the group clock when its target sits at the top (review H2)', () => {
+    const log = farAdd();
+    expect(nextTs(NOW, log, EXPENSE)).toBe(LIMITS.tsMax);
+    expect(writeTs(NOW, log, write({ type: 'expense.deleted', id: EXPENSE }))).toBe(NOW);
+    const member = [
+      fromDevice('far', TOP, { type: 'member.claimed', id: NATHAN }),
+      fromDevice('honest', NOW - HOUR, rename),
+    ];
+    for (const payload of [
+      { type: 'member.archived', id: NATHAN },
+      { type: 'member.unarchived', id: NATHAN },
+      { type: 'member.done', id: NATHAN },
+      { type: 'member.undone', id: NATHAN },
+      { type: 'member.claimed', id: NATHAN },
+    ] as const) {
+      expect(writeTs(NOW, member, write(payload))).toBe(NOW);
+    }
+  });
+
+  it('refuses an edit that must follow its target when nothing below the top can', () => {
+    expect(writeTs(NOW, farAdd(), write({ type: 'expense.updated', id: EXPENSE, changes: { title: 'B' } }))).toBeNull();
+    const member = [
+      fromDevice('far', TOP, { type: 'member.added', member: { id: NATHAN, name: 'Nathan' } }),
+      fromDevice('honest', NOW - HOUR, rename),
+    ];
+    expect(writeTs(NOW, member, write({ type: 'member.updated', id: NATHAN, changes: { name: 'Nate' } }))).toBeNull();
+  });
+
+  it('names the two edits that must follow their target', () => {
+    const must = (payload: EventPayload): boolean => mustFollowTarget(write(payload));
+    expect(must({ type: 'expense.updated', id: EXPENSE, changes: { title: 'B' } })).toBe(true);
+    expect(must({ type: 'member.updated', id: NATHAN, changes: { name: 'Nate' } })).toBe(true);
+    expect(must({ type: 'expense.deleted', id: EXPENSE })).toBe(false);
+    expect(must({ type: 'payment.deleted', id: PAYMENT })).toBe(false);
+    expect(must({ type: 'member.archived', id: NATHAN })).toBe(false);
   });
 });
