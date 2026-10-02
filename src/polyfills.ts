@@ -1,5 +1,6 @@
 /**
- * CSPRNG for @even/core. Imported first by `src/app/_layout.tsx`, ahead of anything that can call into core.
+ * CSPRNG for @even/core. Imported first by the app's entry (index.js), ahead of anything that can call into core, and
+ * first again by `src/app/_layout.tsx`.
  *
  * Core reads `globalThis.crypto.getRandomValues` at call time for ids, nonces, and group secrets
  * (packages/core/src/ids.ts). When the runtime already provides it, it is left alone; otherwise it is

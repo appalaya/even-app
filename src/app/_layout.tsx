@@ -1,4 +1,5 @@
-// Must stay the first import: installs crypto.getRandomValues before anything can call @even/core.
+// Installs crypto.getRandomValues before anything can call @even/core. The entry (index.js) imports it first; it
+// stays the first import here too.
 import '@/polyfills';
 
 import { Stack } from 'expo-router';
@@ -13,7 +14,7 @@ import { AppText, Button, Icon } from '@/components';
 import { useInAppBrowser } from '@/features/report/inAppBrowser';
 import { LINKS } from '@/features/settings/about';
 import { runStartupSelfCheck } from '@/selfCheck';
-// Imported for its side effect too: the task is defined when the bundle loads, before the OS asks for it.
+// The task itself is defined by the entry (index.js), which a headless start evaluates without this layout.
 import { registerBackgroundRefresh } from '@/services/background/task';
 import { ensureActivityChannel } from '@/services/notifications/local';
 import { AppProvider, describeForLog, usePrefs } from '@/state';

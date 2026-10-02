@@ -5,10 +5,11 @@
  * `syncAll({ trigger: 'background', deadline })`, which applies the 30-day window itself), then posts the local
  * notifications the cycle earned.
  *
- * `TaskManager.defineTask` must run when the JS bundle loads, before the OS asks for the task, so the root layout
- * imports this module at the top level for its side effect and calls `registerBackgroundRefresh()` once the app is
- * up. iOS decides when (and whether) the task runs; it never runs after a force-quit, and the simulator refuses
- * background tasks altogether (`BackgroundTaskStatus.Restricted`).
+ * `TaskManager.defineTask` must run when the JS bundle loads, before the OS asks for the task, so the app's entry
+ * (index.js) imports this module for its side effect, ahead of Expo Router: a headless start (Android's WorkManager
+ * waking a killed process) evaluates the entry but never the root layout. The root layout calls
+ * `registerBackgroundRefresh()` once the app is up. iOS decides when (and whether) the task runs; it never runs after
+ * a force-quit, and the simulator refuses background tasks altogether (`BackgroundTaskStatus.Restricted`).
  */
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';

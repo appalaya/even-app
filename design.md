@@ -1308,6 +1308,10 @@ takedown is a server-side blocklist, not a client action.
   rest, and stays under 25 seconds of work per run (a deadline no new group
   or debt starts after).
   Closed, hidden, and blocked groups are never touched.
+- The task is defined by the app's entry, `index.js` (package.json `main`),
+  before Expo Router loads. When Android's WorkManager starts a killed
+  process for the task, the entry runs but no screen does, so a task
+  defined by the root layout was never there.
 - After the cycle, for each new `ok` event authored by **another device** since
   the last notification (the `prefs` row `notifications.ledger`: local ids
   and counts only), schedule a local notification through
