@@ -2,7 +2,10 @@
  * Development self-check, run once at startup. Logs one line covering the three things no Node test can prove on
  * the device:
  * 1. crypto: seals and opens one envelope through @even/core, so a missing CSPRNG, a broken workspace resolution
- *    of @even/core, or a Hermes gap in an API core relies on (TextEncoder/TextDecoder, BigInt, Intl) shows up;
+ *    of @even/core, or a Hermes gap in an API core relies on (TextEncoder/TextDecoder, BigInt, Intl) shows up; and
+ *    which XChaCha20-Poly1305 does it (`installNativeAead`, which openAppServices also calls: whichever runs first
+ *    decides). A native module that is in the build but fails its self-test fails this check, though the app goes on
+ *    with @noble;
  * 2. storage: `runStorageSmokeTest()` opens a scratch database through expo-sqlite, migrates it, writes and reads
  *    one row, and deletes it (never `even.db`);
  * 3. secrets: `secrets.deviceId()` from expo-secure-store returns a 22-character id.
@@ -23,7 +26,9 @@ import {
   type Event,
 } from '@even/core';
 
+import EvenCrypto from '../modules/even-crypto';
 import { rngSource } from './polyfills';
+import { installNativeAead } from './services/crypto/nativeAead';
 import { secrets } from './services/secrets/secureStore';
 import { runStorageSmokeTest } from './services/storage/expoDriver.smoke';
 
@@ -40,6 +45,14 @@ function failure(what: string, error: unknown): Check {
 }
 
 function checkCrypto(): Check {
+  const status = installNativeAead(EvenCrypto);
+  const implementation =
+    status.kind === 'native'
+      ? `aead=${status.name}`
+      : status.reason === 'unavailable'
+        ? 'aead=@noble (no native module)'
+        : `aead=@noble (native self-test FAILED: ${status.code})`;
+  const nativeOk = status.kind === 'native' || status.reason === 'unavailable';
   try {
     const secret = newSecret();
     const { encryptionKey } = deriveLocal(secret);
@@ -61,11 +74,11 @@ function checkCrypto(): Check {
       throw new Error('opened body does not match the sealed one');
     }
     return {
-      ok: true,
-      summary: `crypto ok: rng=${rngSource}, sealed+opened ${envelope.c.length}-char ciphertext`,
+      ok: nativeOk,
+      summary: `crypto ${nativeOk ? 'ok' : 'FAILED'}: rng=${rngSource}, ${implementation}, sealed+opened ${envelope.c.length}-char ciphertext`,
     };
   } catch (error) {
-    return failure(`crypto (rng=${rngSource})`, error);
+    return failure(`crypto (rng=${rngSource}, ${implementation})`, error);
   }
 }
 

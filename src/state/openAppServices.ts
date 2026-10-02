@@ -11,6 +11,8 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import EvenClassifier from '../../modules/even-classifier';
+import EvenCrypto from '../../modules/even-crypto';
+import { installNativeAead } from '../services/crypto/nativeAead';
 import { expoFileIO } from '../services/groupFile/expoFileIO';
 import { secrets } from '../services/secrets/secureStore';
 import { openStore } from '../services/storage/openStore';
@@ -38,6 +40,9 @@ let opened: Promise<AppServices> | null = null;
 /** Opens (once per process) the app's services. A failed open is not cached, so a later call can retry. */
 export function openAppServices(): Promise<AppServices> {
   if (opened === null) {
+    // Native XChaCha20-Poly1305 for every seal and open from here on, once it agrees with @noble on its self-test;
+    // @noble otherwise (design.md "Crypto"). Before the store opens, so the first derive already runs on it.
+    installNativeAead(EvenCrypto);
     const transports = new Map<string, HttpTransport>();
     const transportFor = (serverUrl: string): HttpTransport => {
       let transport = transports.get(serverUrl);
