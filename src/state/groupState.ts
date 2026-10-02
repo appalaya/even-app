@@ -258,6 +258,8 @@ export class GroupStateStore {
   private readonly listListeners = new Set<() => void>();
   private listVersion = 0;
   private listInflight: Promise<GroupListSnapshot> | null = null;
+  /** Each listed group's `rotatedFrom`, from its last derive (the Groups rows' rotation siblings). */
+  private readonly rotatedFromOf = new Map<string, readonly string[]>();
 
   private finishedHook: ((localId: string, result: SyncResult) => void) | null = null;
   private disposed = false;
@@ -357,6 +359,7 @@ export class GroupStateStore {
     this.memo.delete(localId);
     this.memoVersions.delete(localId);
     this.decodeCache.drop(localId);
+    this.rotatedFromOf.delete(localId);
     this.lastResults.delete(localId);
     this.syncing.delete(localId);
     this.setSnapshot(localId, MISSING);
@@ -640,16 +643,9 @@ export class GroupStateStore {
     const run = (async (): Promise<GroupListSnapshot> => {
       for (;;) {
         const version = this.listVersion;
-        const rows = await this.buildList();
+        const rows = await this.buildList(version);
         if (version !== this.listVersion && !this.disposed) continue;
-        this.listSnapshot = { status: 'ready', rows };
-        for (const listener of [...this.listListeners]) {
-          try {
-            listener();
-          } catch (error) {
-            this.log('state: list listener threw', describeForLog(error));
-          }
-        }
+        this.publishList(rows);
         return this.listSnapshot;
       }
     })().finally(() => {
@@ -659,54 +655,141 @@ export class GroupStateStore {
     return run;
   }
 
-  private async buildList(): Promise<GroupListRow[]> {
-    const rows: GroupListRow[] = [];
-    const rotatedFrom = new Map<string, string[]>();
+  private publishList(rows: readonly GroupListRow[]): void {
+    this.listSnapshot = { status: 'ready', rows };
+    for (const listener of [...this.listListeners]) {
+      try {
+        listener();
+      } catch (error) {
+        this.log('state: list listener threw', describeForLog(error));
+      }
+    }
+  }
+
+  /**
+   * The Groups rows (pre-launch review H3: launch no longer waits for the sum of every group's decrypt). Groups whose
+   * derived state is current are rows at once. The others show first as they last were, or, the first time, as a
+   * placeholder from the `groups` row alone (the cached name, no member count or net yet, as a group whose log is not
+   * readable shows); then each is derived, newest activity first, and its row published as it lands. A newer
+   * `version` (an invalidation meanwhile) stops publishing; the caller builds again.
+   */
+  private async buildList(version: number): Promise<GroupListRow[]> {
+    const shown = new Map(this.listSnapshot.rows.map((row) => [row.localId, row]));
+    const rows = new Map<string, GroupListRow>();
+    const pending: GroupRow[] = [];
     for (const group of await this.store.listGroups()) {
       if (group.state === 'hidden') continue;
-      const derived = await this.get(group.localId);
-      if (derived === null) continue;
-      for (const from of derived.state?.rotatedFrom ?? []) {
-        rotatedFrom.set(from, [...(rotatedFrom.get(from) ?? []), derived.localId]);
+      if (this.isFresh(group.localId)) {
+        const derived = this.memo.get(group.localId)?.derived;
+        if (derived !== undefined) rows.set(group.localId, this.listRowOf(derived));
+        continue;
       }
-      let memberCount: number | null = null;
-      if (derived.state !== null) {
-        memberCount = 0;
-        for (const m of derived.state.members.values())
-          if (!m.archived && !m.unknown) memberCount += 1;
-      }
-      rows.push({
-        localId: derived.localId,
-        name: derived.name,
-        currency: derived.currency,
-        myNet: derived.myNet,
-        memberCount,
-        outbox: derived.counts.outbox,
-        hasActivity:
-          derived.state !== null &&
-          (derived.state.expenses.size > 0 || derived.state.payments.size > 0),
-        balancesUnavailable: derived.balancesUnavailable,
-        lifecycle: derived.row.state,
-        archived: derived.state?.archived ?? false,
-        closed: derived.readOnly === 'closed',
-        needsClaim: derived.needsClaim,
-        sync: syncStatusOf(
-          derived.row,
-          this.syncing.has(derived.localId),
-          this.lastResults.get(derived.localId) ?? null,
-        ),
-        lastActivityAt: derived.lastActivityAt ?? derived.row.createdAt,
-        rotationSiblings: [],
-      });
+      const before = shown.get(group.localId);
+      rows.set(
+        group.localId,
+        before === undefined
+          ? await this.placeholderRow(group)
+          : { ...before, lifecycle: group.state, sync: this.syncOf(group) },
+      );
+      pending.push(group);
     }
-    for (const row of rows) {
+    if (pending.length === 0) return this.listed(rows);
+
+    this.publishList(this.listed(rows));
+    const newestFirst = [...pending].sort(
+      (a, b) =>
+        (rows.get(b.localId)?.lastActivityAt ?? 0) - (rows.get(a.localId)?.lastActivityAt ?? 0),
+    );
+    for (const group of newestFirst) {
+      if (version !== this.listVersion || this.disposed) break;
+      const derived = await this.get(group.localId);
+      if (derived === null) rows.delete(group.localId);
+      else rows.set(group.localId, this.listRowOf(derived));
+      if (version === this.listVersion && !this.disposed) this.publishList(this.listed(rows));
+    }
+    return this.listed(rows);
+  }
+
+  /** Sorted, with each row's rotation siblings: other rows rotated from the same old group. */
+  private listed(rows: ReadonlyMap<string, GroupListRow>): GroupListRow[] {
+    const rotatedFrom = new Map<string, string[]>();
+    for (const localId of rows.keys()) {
+      for (const from of this.rotatedFromOf.get(localId) ?? []) {
+        rotatedFrom.set(from, [...(rotatedFrom.get(from) ?? []), localId]);
+      }
+    }
+    const out: GroupListRow[] = [];
+    for (const row of rows.values()) {
       const siblings = new Set<string>();
-      for (const [, ids] of rotatedFrom) {
+      for (const ids of rotatedFrom.values()) {
         if (!ids.includes(row.localId)) continue;
         for (const id of ids) if (id !== row.localId) siblings.add(id);
       }
-      row.rotationSiblings = [...siblings].sort();
+      out.push({ ...row, rotationSiblings: [...siblings].sort() });
     }
-    return sortGroupRows(rows);
+    return sortGroupRows(out);
+  }
+
+  private syncOf(row: GroupRow): SyncStatus {
+    return syncStatusOf(
+      row,
+      this.syncing.has(row.localId),
+      this.lastResults.get(row.localId) ?? null,
+    );
+  }
+
+  private listRowOf(derived: DerivedGroup): GroupListRow {
+    this.rotatedFromOf.set(derived.localId, derived.state?.rotatedFrom ?? []);
+    let memberCount: number | null = null;
+    if (derived.state !== null) {
+      memberCount = 0;
+      for (const m of derived.state.members.values())
+        if (!m.archived && !m.unknown) memberCount += 1;
+    }
+    return {
+      localId: derived.localId,
+      name: derived.name,
+      currency: derived.currency,
+      myNet: derived.myNet,
+      memberCount,
+      outbox: derived.counts.outbox,
+      hasActivity:
+        derived.state !== null &&
+        (derived.state.expenses.size > 0 || derived.state.payments.size > 0),
+      balancesUnavailable: derived.balancesUnavailable,
+      lifecycle: derived.row.state,
+      archived: derived.state?.archived ?? false,
+      closed: derived.readOnly === 'closed',
+      needsClaim: derived.needsClaim,
+      sync: this.syncOf(derived.row),
+      lastActivityAt: derived.lastActivityAt ?? derived.row.createdAt,
+      rotationSiblings: [],
+    };
+  }
+
+  /**
+   * A group not derived yet, from SQL alone: the cached name and currency, the unsent count, and its newest event's
+   * `ts` for the order. No member count, net or archive state: those are in the log.
+   */
+  private async placeholderRow(group: GroupRow): Promise<GroupListRow> {
+    const counts = await this.store.countByStatus(group.localId);
+    const latest = await this.store.latestTs(group.localId);
+    return {
+      localId: group.localId,
+      name: group.nameCache ?? '',
+      currency: group.currencyCache,
+      myNet: null,
+      memberCount: null,
+      outbox: counts.outbox,
+      hasActivity: false,
+      balancesUnavailable: false,
+      lifecycle: group.state,
+      archived: false,
+      closed: group.state === 'closed',
+      needsClaim: group.myMemberId === null,
+      sync: this.syncOf(group),
+      lastActivityAt: latest ?? group.createdAt,
+      rotationSiblings: [],
+    };
   }
 }
