@@ -43,7 +43,12 @@
             {
               "scheme": "https",
               "host": "even.appalaya.com",
-              "pathPrefix": "/i"
+              "path": "/i"
+            },
+            {
+              "scheme": "https",
+              "host": "even.appalaya.com",
+              "pathPrefix": "/i/"
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]

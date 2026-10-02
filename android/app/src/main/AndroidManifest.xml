@@ -32,7 +32,8 @@
       </intent-filter>
       <intent-filter android:autoVerify="true" data-generated="true">
         <action android:name="android.intent.action.VIEW"/>
-        <data android:scheme="https" android:host="even.appalaya.com" android:pathPrefix="/i"/>
+        <data android:scheme="https" android:host="even.appalaya.com" android:path="/i"/>
+        <data android:scheme="https" android:host="even.appalaya.com" android:pathPrefix="/i/"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <category android:name="android.intent.category.DEFAULT"/>
       </intent-filter>

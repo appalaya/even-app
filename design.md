@@ -1338,8 +1338,13 @@ checksum, and canonicalises the server URL.
   leave there as `/join?code=<payload>` (`routeForSystemUrl` in
   `features/join/invite.ts`), so the code travels in the route and the Join
   preview opens whether Even was closed, in the background or on screen, with
-  or without groups. Nothing listens for the link after a screen mounts: `/i`
-  used to (`Linking.useURL()`), and missed every link that reached a running
+  or without groups. The app claims exactly `/i` and `/i/…` on
+  even.appalaya.com, as the iOS association does: Android's App Link filter
+  (app.json, `intentFilters`) is `path: "/i"` plus `pathPrefix: "/i/"`, not a
+  `/i` prefix, which would also take `/index.html` and any later page whose
+  path starts `/i` (pre-launch review L5). Nothing listens for the link
+  after a screen mounts: `/i` used to (`Linking.useURL()`), and missed every
+  link that reached a running
   app, which arrives as one `url` event that had passed by the time `/i`
   mounted. `redirectSystemPath` also clears expo-linking's launch URL
   (`clearInitialURL`), which the router reads whenever its root mounts: iOS can
