@@ -1,15 +1,14 @@
-import { isCurrency, type Transfer } from '@even/core';
+import { isCurrency, type ExpenseState, type Transfer } from '@even/core';
 import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentRef,
-  type ReactNode,
-} from 'react';
-import { RefreshControl, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type ListRenderItemInfo,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -36,7 +35,8 @@ import {
   SettleList,
   SpentSection,
 } from './GroupHeader';
-import { ActivityTab, BalancesTab, ExpensesTab } from './GroupTabs';
+import { dayLabel, isoDateLabel } from './format';
+import { ActivityDay, ActivityItem, BalancesTab, ExpenseRow, NoExpenses } from './GroupTabs';
 import {
   useGroupNotifications,
   useGroupSync,
@@ -47,6 +47,13 @@ import {
   useStatusLine,
 } from './hooks';
 import { InviteCard, PeopleRow, shareInvite } from './InviteCard';
+import {
+  groupItemKey,
+  groupItems,
+  SEGMENT_INDEX,
+  type GroupItem,
+  type GroupTab,
+} from './listItems';
 import {
   activitySections,
   balanceRows,
@@ -65,7 +72,7 @@ import {
 import { groupHrefs } from './routes';
 import { ShareButton, ShareMenu } from './ShareMenu';
 
-export type GroupTab = 'expenses' | 'balances' | 'activity';
+export type { GroupTab } from './listItems';
 
 const SEGMENTS: readonly Segment<GroupTab>[] = [
   { key: 'expenses', label: 'Expenses' },
@@ -75,6 +82,12 @@ const SEGMENTS: readonly Segment<GroupTab>[] = [
 
 /** The segmented control sticks this far under the nav bar (Group, Balances tab: 8). */
 const STUCK_GAP = 8;
+
+/**
+ * Items mounted on open: the header, the segment and enough rows to fill the boards' screen and more (the Activity
+ * board, stuck, shows about ten). The list mounts the rest as they near the screen.
+ */
+const INITIAL_ITEMS = 24;
 
 export interface GroupScreenProps {
   localId: string;
@@ -161,7 +174,7 @@ export function GroupScreen({
   useGroupNotifications(localId, state === null ? null : peopleOf(state).length);
 
   // ----- scrolling: the sticky segment -----
-  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const scrollRef = useRef<FlatList<GroupItem>>(null);
   const segmentY = useRef(0);
   const contentHeight = useRef(0);
   const viewportHeight = useRef(0);
@@ -180,7 +193,7 @@ export function GroupScreen({
     if (want === null || viewportHeight.current === 0 || contentHeight.current === 0) return;
     const max = Math.max(0, contentHeight.current - viewportHeight.current);
     const y = want.to === 'top' ? 0 : Math.min(segmentY.current, max);
-    scrollRef.current?.scrollTo({ y, animated: want.animated });
+    scrollRef.current?.scrollToOffset({ offset: y, animated: want.animated });
     if (settleTimer.current === null) {
       settleTimer.current = setTimeout(() => {
         pending.current = null;
@@ -217,8 +230,9 @@ export function GroupScreen({
     contentHeight.current = h;
     applyScroll();
   };
-  const onSegmentLayout = (e: LayoutChangeEvent) => {
-    segmentY.current = e.nativeEvent.layout.y;
+  // The segment's cell starts where the header's ends, so the header's height is where the segment sticks.
+  const onHeaderLayout = (e: LayoutChangeEvent) => {
+    segmentY.current = e.nativeEvent.layout.height;
     applyScroll();
   };
 
@@ -233,9 +247,18 @@ export function GroupScreen({
       expenses: sortedExpenses(state),
     };
   }, [derived, state, myId]);
+  const onActivity = tab === 'activity';
   const sections = useMemo(
-    () => (state === null ? [] : activitySections(state, myId)),
-    [state, myId],
+    () => (state === null || !onActivity ? [] : activitySections(state, myId)),
+    [state, myId, onActivity],
+  );
+  const items = useMemo(
+    () => groupItems(tab, view?.expenses ?? [], sections),
+    [tab, view, sections],
+  );
+  const openExpense = useCallback(
+    (expenseId: string) => router.push(groupHrefs.expense(localId, expenseId)),
+    [localId],
   );
 
   // Until the first derive lands (a large group, decrypted in slices), the cached name heads the empty screen.
@@ -383,17 +406,72 @@ export function GroupScreen({
     footer = <Button label="Pick your name" icon="person" onPress={pick.reopen} />;
   }
 
+  // One scrolling surface: the header block, the segment (it sticks under the nav bar), then the tab's rows, mounted
+  // only near the screen. Expenses and Activity rows are memoised slices of their cards.
+  const payerOf = (expense: ExpenseState) =>
+    expense.paidBy === myId ? 'You' : (state.members.get(expense.paidBy)?.name ?? 'Someone');
+  const renderItem = ({ item }: ListRenderItemInfo<GroupItem>) => {
+    switch (item.kind) {
+      case 'header':
+        return (
+          <View onLayout={onHeaderLayout}>
+            <GroupBanners derived={derived} />
+            {header}
+            <View style={{ height: segmentGap - STUCK_GAP }} />
+          </View>
+        );
+      case 'segment':
+        return (
+          <View style={[styles.segment, { backgroundColor: tokens.background }]}>
+            <SegmentedControl segments={SEGMENTS} value={tab} onChange={changeTab} />
+          </View>
+        );
+      case 'noExpenses':
+        return <NoExpenses />;
+      case 'expense':
+        return (
+          <ExpenseRow
+            expense={item.expense}
+            payer={payerOf(item.expense)}
+            currency={currency}
+            dateLabel={isoDateLabel(item.expense.date, now)}
+            first={item.first}
+            last={item.last}
+            onOpen={openExpense}
+          />
+        );
+      case 'balances':
+        return (
+          <BalancesTab
+            rows={view.balances}
+            categories={view.categories}
+            currency={currency}
+            unavailable={derived.balancesUnavailable}
+            onSettle={onSettleUp}
+          />
+        );
+      case 'day':
+        return <ActivityDay label={dayLabel(item.section.at, now)} />;
+      case 'activity':
+        return <ActivityItem row={item.row} first={item.first} last={item.last} />;
+    }
+  };
+
   return (
     <View style={styles.flex}>
       <Screen back={back} title={name} headerRight={headerRight} footer={footer} scroll={false}>
-        <ScrollView
+        <FlatList
           ref={scrollRef}
+          data={items}
+          keyExtractor={groupItemKey}
+          renderItem={renderItem}
           style={styles.flex}
           contentContainerStyle={{
             paddingBottom:
               footer === undefined ? Math.max(insets.bottom, layout.homeIndicator) : 16,
           }}
-          stickyHeaderIndices={[1]}
+          stickyHeaderIndices={[SEGMENT_INDEX]}
+          initialNumToRender={INITIAL_ITEMS}
           onLayout={onScrollLayout}
           onContentSizeChange={onContentSize}
           refreshControl={
@@ -407,43 +485,7 @@ export function GroupScreen({
               progressBackgroundColor={tokens.surface}
             />
           }
-        >
-          <View>
-            <GroupBanners derived={derived} />
-            {header}
-          </View>
-          <View
-            onLayout={onSegmentLayout}
-            style={[
-              styles.segment,
-              { marginTop: segmentGap - STUCK_GAP, backgroundColor: tokens.background },
-            ]}
-          >
-            <SegmentedControl segments={SEGMENTS} value={tab} onChange={changeTab} />
-          </View>
-          <View>
-            {tab === 'expenses' && (
-              <ExpensesTab
-                expenses={view.expenses}
-                state={state}
-                myId={myId}
-                currency={currency}
-                now={now}
-                onOpen={(expenseId) => router.push(groupHrefs.expense(localId, expenseId))}
-              />
-            )}
-            {tab === 'balances' && (
-              <BalancesTab
-                rows={view.balances}
-                categories={view.categories}
-                currency={currency}
-                unavailable={derived.balancesUnavailable}
-                onSettle={onSettleUp}
-              />
-            )}
-            {tab === 'activity' && <ActivityTab sections={sections} now={now} />}
-          </View>
-        </ScrollView>
+        />
         <DoneSheet
           visible={doneOpen}
           summary={view.done}

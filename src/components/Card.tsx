@@ -77,6 +77,74 @@ export function Card({
 }
 
 /**
+ * One row of a `Card` as a view of its own, for a list too long to mount at once (a cell of a virtualised list, Group's
+ * Expenses and Activity): the card's fill, its top corners on the first row and its bottom corners on the last, and
+ * the separator above every row but the first. Stacked, slices draw exactly the card the same rows make inside one
+ * `Card`, the pressed fill clipped to the corners as there.
+ */
+export function CardSlice({
+  children,
+  first,
+  last,
+  tone = 'surface',
+  radius = 'card',
+  separatorInset,
+  style,
+}: {
+  children: ReactNode;
+  first: boolean;
+  last: boolean;
+  tone?: Exclude<CardTone, 'outline'>;
+  radius?: 'card' | 'group';
+  /** As `Card`'s: the separator above this row, starting this far from the leading edge. */
+  separatorInset?: number;
+  style?: ViewProps['style'];
+}) {
+  const { tokens } = useTheme();
+  const bg = BACKGROUND[tone];
+  const r = radii[radius];
+  const backgroundColor = bg === null ? undefined : (tokens[bg] as string);
+  const separator = !first && separatorInset !== undefined && (
+    <Separator
+      inset={separatorInset}
+      tone={tone === 'fill' || tone === 'inset' ? 'inset' : tone === 'tint' ? 'tint' : 'surface'}
+    />
+  );
+  // The corners are the card's own: one uniform radius, as `Card` draws it, run past the slice's open edge and
+  // clipped there. Per-corner radii would be drawn by another path on iOS and anti-alias a few pixels differently.
+  const rounded = { backgroundColor, overflow: 'hidden' as const, borderRadius: r };
+  if (first && last) {
+    return (
+      <View style={[rounded, style]}>
+        {separator}
+        {children}
+      </View>
+    );
+  }
+  if (!first && !last) {
+    return (
+      <View style={[{ backgroundColor, overflow: 'hidden' }, style]}>
+        {separator}
+        {children}
+      </View>
+    );
+  }
+  return (
+    <View style={[{ overflow: 'hidden' }, style]}>
+      <View
+        style={[
+          rounded,
+          first ? { marginBottom: -r, paddingBottom: r } : { marginTop: -r, paddingTop: r },
+        ]}
+      >
+        {separator}
+        {children}
+      </View>
+    </View>
+  );
+}
+
+/**
  * A 1 pt rule inside a list, inset from the leading edge; `inset` tone on fill and inset lists, `tint` inside the
  * soft-accent card (Group, everyone done).
  */

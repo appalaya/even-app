@@ -1,10 +1,12 @@
-import { CATEGORY_EMOJI, displayMinor, type ExpenseState, type GroupState } from '@even/core';
+import { CATEGORY_EMOJI, displayMinor, type ExpenseState } from '@even/core';
+import { memo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import {
   AppText,
   Button,
   Card,
+  CardSlice,
   CategoryBars,
   CategoryTile,
   Footnote,
@@ -16,59 +18,69 @@ import {
 } from '@/components';
 import { layout, useTheme } from '@/theme';
 
-import { clockTime, dayLabel, isoDateLabel } from './format';
+import { clockTime } from './format';
 import { MemberAvatar } from './GroupHeader';
-import type { ActivitySection, BalanceRow, CategoryRow } from './model';
+import type { ActivityRow, BalanceRow, CategoryRow } from './model';
 
 // ---------- Expenses ----------
 
 /**
- * Expenses (Group): 64 pt rows in one card, the category tile, "Maya paid", the amount over the day. Empty (Group,
- * just created): "No expenses yet." in a card padded 40 · 24.
+ * Expenses (Group): 64 pt rows in one card, the category tile, "Maya paid", the amount over the day. Each row is its
+ * own slice of the card (`CardSlice`), so the list mounts only the rows near the screen; memoised, so a re-render of
+ * Group leaves rows whose expense, payer and day did not change alone.
  */
-export function ExpensesTab({
-  expenses,
-  state,
-  myId,
+export const ExpenseRow = memo(function ExpenseRow({
+  expense,
+  payer,
   currency,
-  now,
+  dateLabel,
+  first,
+  last,
   onOpen,
 }: {
-  expenses: readonly ExpenseState[];
-  state: GroupState;
-  myId: string | null;
+  expense: ExpenseState;
+  /** "You", the payer's name, or "Someone". */
+  payer: string;
+  /** The group's currency, for an expense that carries none. */
   currency: string;
-  now: number;
+  dateLabel: string;
+  first: boolean;
+  last: boolean;
   onOpen: (expenseId: string) => void;
 }) {
-  if (expenses.length === 0) {
-    return (
-      <Card style={[styles.first, styles.empty]}>
-        <AppText variant="calloutLoose" color="textSecondary" align="center">
-          No expenses yet.
-        </AppText>
-      </Card>
-    );
-  }
   return (
-    <Card separatorInset={68} style={styles.first} accessibilityLabel="Expenses">
-      {expenses.map((e) => {
-        const payer = e.paidBy === myId ? 'You' : (state.members.get(e.paidBy)?.name ?? 'Someone');
-        return (
-          <ListRow
-            key={e.id}
-            variant="expense"
-            leading={<CategoryTile emoji={CATEGORY_EMOJI[e.category]} />}
-            title={e.title}
-            subtitle={`${payer} paid`}
-            detail={
-              <MoneyText amount={e.amount} currency={e.currency || currency} weight="medium" />
-            }
-            detailCaption={isoDateLabel(e.date, now)}
-            onPress={() => onOpen(e.id)}
+    <CardSlice
+      first={first}
+      last={last}
+      separatorInset={68}
+      style={first ? styles.first : styles.gutter}
+    >
+      <ListRow
+        variant="expense"
+        leading={<CategoryTile emoji={CATEGORY_EMOJI[expense.category]} />}
+        title={expense.title}
+        subtitle={`${payer} paid`}
+        detail={
+          <MoneyText
+            amount={expense.amount}
+            currency={expense.currency || currency}
+            weight="medium"
           />
-        );
-      })}
+        }
+        detailCaption={dateLabel}
+        onPress={() => onOpen(expense.id)}
+      />
+    </CardSlice>
+  );
+});
+
+/** Expenses, empty (Group, just created): "No expenses yet." in a card padded 40 · 24. */
+export function NoExpenses() {
+  return (
+    <Card style={[styles.first, styles.empty]}>
+      <AppText variant="calloutLoose" color="textSecondary" align="center">
+        No expenses yet.
+      </AppText>
     </Card>
   );
 }
@@ -150,67 +162,60 @@ export function BalancesTab({
 
 // ---------- Activity ----------
 
+/** Activity: a day's heading over its card (Today, Yesterday, Sep 20), newest day first. */
+export const ActivityDay = memo(function ActivityDay({ label }: { label: string }) {
+  return <SectionHeader>{label}</SectionHeader>;
+});
+
 /**
- * Activity: one card per day (Today, Yesterday, Sep 20), newest first. Each row leads with the subject's avatar,
- * bolds the subject, and under it gives the time, then "· ▯ 7QX2" when it came from another of that member's devices.
+ * One Activity row, a slice of its day's card: the subject's avatar, the subject bold, and under it the time, then
+ * "· ▯ 7QX2" when it came from another of that member's devices. Memoised like the expense rows.
  */
-export function ActivityTab({
-  sections,
-  now,
+export const ActivityItem = memo(function ActivityItem({
+  row,
+  first,
+  last,
 }: {
-  sections: readonly ActivitySection[];
-  now: number;
+  row: ActivityRow;
+  first: boolean;
+  last: boolean;
 }) {
   const { tokens } = useTheme();
   return (
-    <>
-      {sections.map((section) => (
-        <View key={section.key}>
-          <SectionHeader>{dayLabel(section.at, now)}</SectionHeader>
-          <Card
-            separatorInset={60}
-            style={styles.gutter}
-            accessibilityLabel={dayLabel(section.at, now)}
-          >
-            {section.rows.map((row) => (
-              <ListRow
-                key={row.key}
-                variant="activity"
-                leading={<MemberAvatar member={row.member} size={32} />}
-                title={
-                  <AppText variant="subheadLoose" tabular>
-                    {row.subject !== null && <Strong>{row.subject}</Strong>}
-                    {row.rest}
-                  </AppText>
-                }
-                subtitle={
-                  row.device === null ? (
-                    clockTime(row.at)
-                  ) : (
-                    <View style={styles.meta}>
-                      <AppText variant="caption" color="textMuted">
-                        {clockTime(row.at)}
-                      </AppText>
-                      <AppText variant="caption" color="textMuted" accessibilityElementsHidden>
-                        ·
-                      </AppText>
-                      <View style={styles.device} accessibilityLabel={`Device ${row.device}`}>
-                        <Icon name="device" size={12} color={tokens.textMuted} />
-                        <AppText variant="caption" color="textMuted">
-                          {row.device}
-                        </AppText>
-                      </View>
-                    </View>
-                  )
-                }
-              />
-            ))}
-          </Card>
-        </View>
-      ))}
-    </>
+    <CardSlice first={first} last={last} separatorInset={60} style={styles.gutter}>
+      <ListRow
+        variant="activity"
+        leading={<MemberAvatar member={row.member} size={32} />}
+        title={
+          <AppText variant="subheadLoose" tabular>
+            {row.subject !== null && <Strong>{row.subject}</Strong>}
+            {row.rest}
+          </AppText>
+        }
+        subtitle={
+          row.device === null ? (
+            clockTime(row.at)
+          ) : (
+            <View style={styles.meta}>
+              <AppText variant="caption" color="textMuted">
+                {clockTime(row.at)}
+              </AppText>
+              <AppText variant="caption" color="textMuted" accessibilityElementsHidden>
+                ·
+              </AppText>
+              <View style={styles.device} accessibilityLabel={`Device ${row.device}`}>
+                <Icon name="device" size={12} color={tokens.textMuted} />
+                <AppText variant="caption" color="textMuted">
+                  {row.device}
+                </AppText>
+              </View>
+            </View>
+          )
+        }
+      />
+    </CardSlice>
   );
-}
+});
 
 const styles = StyleSheet.create({
   first: { marginTop: 12, marginHorizontal: layout.gutter },

@@ -16,7 +16,7 @@ export {
   type BannerVariant,
 } from './Banner';
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button';
-export { Card, Separator, type CardProps, type CardTone } from './Card';
+export { Card, CardSlice, Separator, type CardProps, type CardTone } from './Card';
 export { Checkbox, type CheckboxProps } from './Checkbox';
 export {
   CategoryBar,
