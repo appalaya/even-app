@@ -29,7 +29,7 @@ export type GroupLifecycle = 'active' | 'closed' | 'hidden' | 'blocked';
  * - `ok`: opened and passed `parseEvent`.
  * - `undecryptable`: failed `envelopeShape`, or AEAD failed under the correct key. Capped per group.
  * - `invalid`: opened, failed `parseEvent`. Kept.
- * - `unsupported_envelope`: well-formed, `v ≠ 1`; cannot be opened by this client. Kept.
+ * - `unsupported_envelope`: well-formed, `v ≠ 1`; cannot be opened by this client. Kept, capped per group.
  * - `unsupported_body`: opened, unknown `sv` or `type`. Kept.
  */
 export type EventStatus =
@@ -305,10 +305,17 @@ export interface Store {
   countByStatus(localId: string): Promise<EventCounts>;
   /**
    * Keeps the `keep` most recently inserted `undecryptable` rows (SQLite rowid order; `seq` is not usable
-   * because `resetAcked` clears it) and deletes the rest; returns how many were deleted. The sync engine calls it with 1000 after each pull; settings'
-   * "clear unreadable entries" calls it with 0.
+   * because `resetAcked` clears it) and deletes the rest; returns how many were deleted. The sync engine calls it
+   * with 1000 in each pulled page's transaction that brought one; settings' "clear unreadable entries" calls it
+   * with 0.
    */
   pruneUndecryptable(localId: string, keep: number): Promise<number>;
+  /**
+   * `pruneUndecryptable` for `unsupported_envelope` rows: keeps the `keep` most recently inserted and deletes the
+   * rest. The sync engine calls it with 1000 after each pulled page that brought one, so a server sending nothing
+   * but envelopes of an unknown `v` cannot fill the disk (design.md "Local storage").
+   */
+  pruneUnsupportedEnvelopes(localId: string, keep: number): Promise<number>;
 
   // ----- prefs -----
 

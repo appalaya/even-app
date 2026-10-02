@@ -6,7 +6,13 @@ import { groupKeys, groupRow, sealFor, Events, writeLocal } from '../testing/fix
 import { openTestStore } from '../testing/testStore';
 import { createSyncEngine } from './engine';
 import { isSyncError, SyncError } from './errors';
-import { HttpTransport, isLocalHost, localHttpUrl, parseRetryAfter } from './httpTransport';
+import {
+  HttpTransport,
+  isLocalHost,
+  localHttpUrl,
+  MAX_RESPONSE_BYTES,
+  parseRetryAfter,
+} from './httpTransport';
 
 interface Call {
   url: string;
@@ -402,6 +408,97 @@ describe('HttpTransport errors', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('refuses a response whose Content-Length is over 16 MB without reading its body', async () => {
+    let reads = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads += 1;
+        controller.enqueue(new Uint8Array(1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const { fetch } = stubFetch(
+      () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Length': String(MAX_RESPONSE_BYTES + 1) },
+        }),
+    );
+    const t = new HttpTransport('https://sync.example.com', { fetch });
+    const error = await rejection(t.pull('G', new Uint8Array(32), 0, 500));
+    expect(error.code).toBe('server_error');
+    expect(error.message).toBe(
+      `GET /v1/groups/{groupId}/events: response over ${MAX_RESPONSE_BYTES} bytes`,
+    );
+    expect(cancelled).toBe(true);
+    expect(reads).toBeLessThanOrEqual(1); // a stream may pull once ahead; the body is never read
+  });
+
+  it('refuses a streamed body once it passes 16 MB, and stops reading it', async () => {
+    let sent = 0;
+    let cancelled = false;
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const { fetch } = stubFetch(() => new Response(endless, { status: 200 }));
+    const t = new HttpTransport('https://sync.example.com', { fetch });
+    const error = await rejection(t.pull('G', new Uint8Array(32), 0, 500));
+    expect(error.code).toBe('server_error');
+    expect(cancelled).toBe(true);
+    expect(sent).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + 2 * chunk.byteLength);
+  });
+
+  it('refuses an over-long body from a fetch that cannot stream (React Native)', async () => {
+    const whole = {
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: null,
+      text: async () => ' '.repeat(MAX_RESPONSE_BYTES + 1),
+    } as unknown as Response;
+    const t = new HttpTransport('https://sync.example.com', {
+      fetch: stubFetch(() => whole).fetch,
+    });
+    expect((await rejection(t.info())).code).toBe('server_error');
+  });
+
+  it('reads a full page of 1,000 maximal envelopes, the largest a conforming server sends', async () => {
+    const c = 'A'.repeat(Math.ceil((8192 * 4) / 3));
+    const events = Array.from({ length: 1_000 }, (_, i) => ({
+      seq: i + 1,
+      id: b64urlEncode(new Uint8Array(16).fill(i % 256)),
+      v: 1,
+      n: 'n'.repeat(32),
+      c,
+    }));
+    const text = JSON.stringify({
+      events,
+      next: 1_000,
+      more: false,
+      epoch: 'k3JdAAAAAAAAAAAAAAAAAA',
+    });
+    expect(text.length).toBeLessThan(MAX_RESPONSE_BYTES);
+    const { fetch } = stubFetch(
+      () =>
+        new Response(text, {
+          status: 200,
+          headers: { 'Content-Length': String(text.length) },
+        }),
+    );
+    const t = new HttpTransport('https://sync.example.com', { fetch });
+    expect((await t.pull('G', new Uint8Array(32), 0, 1_000)).events).toHaveLength(1_000);
   });
 
   it('times out as network', async () => {

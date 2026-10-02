@@ -21,15 +21,18 @@ import {
 } from '../testing/fixtures';
 import { openTestStore, STORE_KINDS, type StoreKind, type TestStore } from '../testing/testStore';
 import {
+  CLIENT_MAX_BATCH,
+  CLIENT_MAX_PAGE,
   createSyncEngine,
   decideEpoch,
+  DEFAULT_TUNING,
   isUnsupportedBody,
   MAX_JUNK_TEXT_LENGTH,
   UNKNOWN_EPOCH,
   type SyncEngineHandle,
   type SyncTuning,
 } from './engine';
-import type { ServerInfo, SyncEvent, SyncResult } from './types';
+import type { ServerInfo, StoredEnvelope, SyncEvent, SyncResult, Transport } from './types';
 
 interface Device {
   store: TestStore;
@@ -774,6 +777,22 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect((await h.store.countByStatus(h.keys.localId)).byStatus.undecryptable).toBe(2);
     });
 
+    it('caps unsupported_envelope rows per group, keeping the newest', async () => {
+      const h = await setup({ tuning: { unsupportedEnvelopeKeep: 2 } });
+      const ids: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const future = { ...sealFor(h.keys, h.ev.expense(`v2 ${i}`)), v: 2 };
+        h.server.injectRaw(h.keys.groupId, future);
+        ids.push(future.id);
+      }
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const kept = (await h.store.dump(h.keys.localId))
+        .filter((r) => r.status === 'unsupported_envelope')
+        .map((r) => r.id);
+      expect(kept.sort()).toEqual(ids.slice(2).sort());
+      expect(h.store.calls).toContain('pruneUnsupportedEnvelopes');
+    });
+
     it('stops a pull that reports more without progress', async () => {
       const h = await setup();
       const transport = h.server.transport();
@@ -792,6 +811,127 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect(await engine.syncGroup(h.keys.localId, foreground)).toMatchObject({
         error: 'server_error',
       });
+    });
+  });
+
+  describe('a hostile server (review M2)', () => {
+    const bounds: Partial<SyncTuning> = {
+      pullEntriesPerCycle: 60,
+      undecryptableKeep: 5,
+      unsupportedEnvelopeKeep: 5,
+    };
+
+    /** An engine over the fake server, except for pulls, which `pull` answers. */
+    function engineWith(h: Harness, pull: Transport['pull']): SyncEngineHandle {
+      const transport = h.server.transport();
+      return createSyncEngine({
+        store: h.store,
+        secrets: h.secrets,
+        transportFor: () => ({ ...transport, pull }),
+        now: h.clock.now,
+        sleep: h.clock.sleep,
+        schedule: h.clock.schedule,
+        log: () => undefined,
+        tuning: bounds,
+      });
+    }
+
+    type Shape = 'unknown v' | 'unopenable' | 'empty';
+    function pageOf(h: Harness, shape: Shape, since: number, limit: number): StoredEnvelope[] {
+      if (shape === 'empty') return [];
+      const other = groupKeys();
+      return Array.from({ length: limit }, (_, i) => {
+        const envelope =
+          shape === 'unknown v'
+            ? { ...sealFor(h.keys, h.ev.expense(`x${i}`)), v: 2 }
+            : sealFor(other, h.ev.expense(`x${i}`));
+        return { ...envelope, seq: since + i + 1 } as unknown as StoredEnvelope;
+      });
+    }
+
+    it('sends at most 100 per append and asks for at most 1,000 per page, whatever it publishes', async () => {
+      const h = await setup({ limits: { max_batch: 1_000_000, max_page: 1_000_000 } });
+      await writeMany(h, 250);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      expect(h.server.pushSizes()).toEqual([100, 100, 50]);
+
+      const b = await h.device();
+      const joined = expectSynced(
+        await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }),
+      );
+      expect(joined.pulled).toBe(250);
+      const limits = h.server.requests.filter((r) => r.op === 'pull').map((r) => r.limit);
+      expect(new Set(limits)).toEqual(new Set([CLIENT_MAX_PAGE]));
+      expect([CLIENT_MAX_BATCH, CLIENT_MAX_PAGE]).toEqual([100, 1_000]);
+      expect(DEFAULT_TUNING).toMatchObject({
+        pullEntriesPerCycle: 20_000,
+        undecryptableKeep: 1_000,
+        unsupportedEnvelopeKeep: 1_000,
+      });
+    });
+
+    it.each<Shape>(['unknown v', 'unopenable', 'empty'])(
+      'ends a cycle whose pages (%s) say more forever, and keeps the caps page by page',
+      async (shape) => {
+        const h = await setup({ limits: { max_page: 10 } });
+        const sinces: number[] = [];
+        let mostKept = 0;
+        const engine = engineWith(h, async (_groupId, _token, since, limit) => {
+          sinces.push(since);
+          const { byStatus } = await h.store.countByStatus(h.keys.localId);
+          mostKept = Math.max(mostKept, byStatus.undecryptable, byStatus.unsupported_envelope);
+          const events = pageOf(h, shape, since, limit);
+          return { events, next: since + Math.max(1, events.length), more: true, epoch: 'e' };
+        });
+
+        const failed = expectFailed(await engine.syncGroup(h.keys.localId, foreground));
+
+        expect(failed.error).toBe('server_error');
+        expect(sinces).toHaveLength(6); // each page is charged the 10 it asked for: 6 × 10 = 60
+        expect(mostKept).toBeLessThanOrEqual(5);
+        const { byStatus } = await h.store.countByStatus(h.keys.localId);
+        expect(byStatus.undecryptable + byStatus.unsupported_envelope).toBe(
+          shape === 'empty' ? 0 : 5,
+        );
+        // What was pulled is committed: the next cycle carries on from there.
+        const cursor = (await h.store.getGroup(h.keys.localId))?.cursor;
+        expect(cursor).toBe(shape === 'empty' ? 6 : 60);
+        expectFailed(await engine.syncGroup(h.keys.localId, manual));
+        expect(sinces[6]).toBe(cursor);
+        expect(sinces).toHaveLength(12);
+      },
+    );
+
+    it('a page bigger than asked for is charged what it brought', async () => {
+      const h = await setup({ limits: { max_page: 10 } });
+      const sinces: number[] = [];
+      const engine = engineWith(h, async (_groupId, _token, since) => {
+        sinces.push(since);
+        const events = pageOf(h, 'unknown v', since, 30);
+        return { events, next: since + events.length, more: true, epoch: 'e' };
+      });
+      expect(expectFailed(await engine.syncGroup(h.keys.localId, foreground)).error).toBe(
+        'server_error',
+      );
+      expect(sinces).toEqual([0, 30]);
+    });
+
+    it('a whole group pulled before and after one epoch reset fits a budget of twice the group', async () => {
+      const h = await setup({ limits: { max_page: 2 }, tuning: { pullEntriesPerCycle: 20 } });
+      await writeMany(h, 10);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      const b = await h.device();
+      let pulls = 0;
+      h.server.onRequest = (request) => {
+        // The epoch changes as B asks for the last page: the whole group comes again after the reset.
+        if (request.op === 'pull' && ++pulls === 5) h.server.setEpoch(h.keys.groupId);
+      };
+      const joined = expectSynced(
+        await b.engine.syncGroup(h.keys.localId, { trigger: 'first_open' }),
+      );
+      expect(joined.epochResets).toBe(1);
+      expect(pulls).toBe(10);
+      expect((await b.store.countByStatus(h.keys.localId)).byStatus.ok).toBe(10);
     });
   });
 

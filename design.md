@@ -903,9 +903,15 @@ CREATE INDEX events_ts     ON events (local_id, ts);
   `pending_deletes.auth_token` is the only credential.
 - `status = 'undecryptable'` rows (AEAD failure under the correct key) are
   capped at 1,000 per group; beyond that the oldest are dropped, and settings
-  offers "clear unreadable entries". `invalid`, `unsupported_envelope`
-  (unknown `v`, cannot be opened) and `unsupported_body` (opened, unknown
-  `sv` or `type`) rows are kept, since a future client may read them.
+  offers "clear unreadable entries". `unsupported_envelope` rows (unknown
+  `v`, cannot be opened) are capped the same way, at 1,000 per group, oldest
+  dropped first: only a server or a newer client can write them, and a
+  server can write them without end (pre-launch review M2). The group shows
+  the update banner from the first one, and a later build that reads them
+  needs any dropped ones pulled again. `invalid` and `unsupported_body` (opened,
+  unknown `sv` or `type`) rows are kept, since a future client may read
+  them; only a holder of the key can write one. Both caps are applied with
+  each pulled page that brings such a row, inside the page's transaction.
 - `origin` is what makes rotation safe: only `local` rows are ever carried
   from an old group into its rotated successor.
 - Secrets are **not** in SQLite.
@@ -964,10 +970,11 @@ under Rotation.
    `syncAll` retries every debt once before its first group instead, and its
    group cycles skip this step.
 1. **Push**: select outbox events in `ts` order, send in batches of
-   `min(max_batch, current batch size)`. On `200`, mark **every** envelope in
-   the batch `acked = 1` (accepted or duplicate). Apply the epoch rule below to
-   the response.
-2. **Pull**: `GET …?since=cursor` while `more`. Apply the epoch rule **before**
+   `min(max_batch, 100, current batch size)`. On `200`, mark **every**
+   envelope in the batch `acked = 1` (accepted or duplicate). Apply the epoch
+   rule below to the response.
+2. **Pull**: `GET …?since=cursor&limit=min(max_page, 1000)` while `more`,
+   within the cycle's budget (below). Apply the epoch rule **before**
    committing the page. For each envelope: check its structure and `v` with
    `envelopeShape` from `core/envelope.ts`, which accepts any positive
    integer `v` (not ok → `undecryptable`: junk a conforming server never
@@ -991,6 +998,19 @@ A pulled entry that is not an envelope at all is stored as `undecryptable`
 with its text cut to 4 KiB, so one oversized item cannot fail its page; one
 with no usable id is skipped. A page that says `more` without advancing
 `next` stops the cycle as `server_error`.
+
+**What a server publishes is bounded.** The server is whoever the invite
+names, so the client does not take its word for sizes (pre-launch review
+M2). It sends at most 100 envelopes per append and asks for at most 1,000
+per page, whatever `max_batch` and `max_page` say; the protocol lets a client
+send and ask for less. One cycle pulls at most 20,000 entries' worth of
+pages, epoch restarts included: twice the public server's 10,000-event cap,
+so a whole group pulled before and after one epoch reset fits. Each page is
+charged the entries it asked for, or those it brought if more, so pages that
+say `more` forever end the cycle whether they carry entries or not. Past the
+budget the cycle stops as `server_error` and backs off; what it pulled stays
+committed, and the next cycle carries on from that cursor (a group above
+20,000 events on a self-hosted server takes more than one cycle).
 
 **Epoch rule.** If no epoch is stored and the response carries one, store it
 and continue. If the stored epoch is `'unknown'` (recorded after a `null`)
@@ -1078,8 +1098,13 @@ interface Transport {
 options exist. Requests are sent with `redirect: 'error'` so the bearer
 token stays on its origin; React Native's `fetch` may not honour that option,
 which is checked on a real device.
-Every request times out after 30 s as `network`. It never retries; retry,
-backoff and `Retry-After` belong to the engine. Error messages are fixed
+Every request times out after 30 s as `network`. A response body over
+16 MB is refused as `server_error`: by its `Content-Length` before it is
+read, or as it streams in, and once read where `fetch` cannot stream (React
+Native's), never parsed or kept. A full page from a conforming server is at
+most about 11 MB (1,000 envelopes of 8,192 bytes of ciphertext). It never
+retries; retry, backoff and `Retry-After` belong to the engine. Error
+messages are fixed
 words: the route pattern (`/v1/groups/{groupId}/events`), the status and the
 code; never the path, and never text from the response body. An explicit
 option (`allowInsecureLocal`) accepts `http://` for a server on this machine or

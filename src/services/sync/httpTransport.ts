@@ -5,11 +5,13 @@
  * `SyncError` carrying the protocol `error` code, `index`, `reason`, and `Retry-After` in ms.
  *
  * No retries here: the engine owns retry, backoff, and `Retry-After`. Every request times out after 30 s (the body
- * read included) as a `network` error. Error messages are fixed words: the route pattern
- * (`POST /v1/groups/{groupId}/events`), the HTTP status and the code, never the path itself, which carries the
- * group id, and never text from the response (a `message`, an `error` that is not a protocol code). A message can
- * reach a log line, React Native writes every console line to the device log in release builds too, and the
- * server is whoever the invite names (../even-server/THREAT-MODEL.md "What we log").
+ * read included) as a `network` error. A response over 16 MB (`MAX_RESPONSE_BYTES`) is refused as a
+ * `server_error`, by its `Content-Length` before the body is read, or while the body streams in. Error messages
+ * are fixed words: the route pattern (`POST /v1/groups/{groupId}/events`), the HTTP status and the code, never
+ * the path itself, which carries the group id, and never text from the response (a `message`, an `error` that is
+ * not a protocol code). A message can reach a log line, React Native writes every console line to the device log
+ * in release builds too, and the server is whoever the invite names (../even-server/THREAT-MODEL.md "What we
+ * log").
  */
 import { b64urlEncode, canonicalOrigin, InvalidServerUrlError, type Envelope } from '@even/core';
 
@@ -40,6 +42,51 @@ export interface HttpTransportOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Largest response body read. A full page from a conforming server is at most about 11 MB (1,000 envelopes, the
+ * engine's page ceiling, of at most 8,192 bytes of ciphertext each); anything larger is a server filling memory.
+ */
+export const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/** The body as text, refused past `max` bytes: by `Content-Length` first, then while it streams in. */
+async function readBounded(response: Response, max: number, request: string): Promise<string> {
+  const tooLarge = () =>
+    new SyncError('server_error', `${request}: response over ${max} bytes`, {
+      status: response.status,
+    });
+  const declared = response.headers.get('Content-Length')?.trim();
+  if (declared !== undefined && /^[0-9]+$/.test(declared) && Number(declared) > max) {
+    await response.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  const stream = response.body;
+  if (
+    stream == null ||
+    typeof stream.getReader !== 'function' ||
+    typeof TextDecoder !== 'function'
+  ) {
+    // No streaming (React Native's fetch reads the body whole): refuse it once read. It is never parsed or kept.
+    const text = await response.text();
+    if (text.length > max) throw tooLarge();
+    return text;
+  }
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > max) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
 
 const PROTOCOL_ERRORS: ReadonlySet<string> = new Set<ProtocolErrorCode>([
   'invalid_request',
@@ -292,8 +339,9 @@ export class HttpTransport implements Transport {
       if (json !== undefined) init.body = JSON.stringify(json);
       if (controller !== undefined) init.signal = controller.signal;
       response = await this.fetchFn(`${this.base}${path}`, init);
-      text = await response.text();
+      text = await readBounded(response, MAX_RESPONSE_BYTES, `${method} ${route}`);
     } catch (cause) {
+      if (cause instanceof SyncError) throw cause;
       throw new SyncError('network', `${method} ${route}: no response`, { cause });
     } finally {
       clearTimeout(timer);

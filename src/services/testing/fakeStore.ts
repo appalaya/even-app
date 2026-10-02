@@ -449,9 +449,18 @@ export class FakeStore implements Store {
 
   async pruneUndecryptable(localId: string, keep: number): Promise<number> {
     this.enter('pruneUndecryptable', [localId, keep]);
+    return this.pruneStatus(localId, 'undecryptable', keep);
+  }
+
+  async pruneUnsupportedEnvelopes(localId: string, keep: number): Promise<number> {
+    this.enter('pruneUnsupportedEnvelopes', [localId, keep]);
+    return this.pruneStatus(localId, 'unsupported_envelope', keep);
+  }
+
+  private pruneStatus(localId: string, status: EventStatus, keep: number): number {
     const table = this.rows(localId);
     const junk = [...table.values()]
-      .filter((row) => row.status === 'undecryptable')
+      .filter((row) => row.status === status)
       .sort((a, b) => b.rowid - a.rowid);
     const doomed = junk.slice(Math.max(0, keep));
     for (const row of doomed) table.delete(row.id);

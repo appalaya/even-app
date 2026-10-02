@@ -681,15 +681,28 @@ export class SqliteStore implements Store {
   }
 
   async pruneUndecryptable(localId: string, keep: number): Promise<number> {
+    return this.pruneStatus(localId, 'undecryptable', keep);
+  }
+
+  async pruneUnsupportedEnvelopes(localId: string, keep: number): Promise<number> {
+    return this.pruneStatus(localId, 'unsupported_envelope', keep);
+  }
+
+  /** Keeps the `keep` most recently inserted rows of one unopenable status (rowid order) and deletes the rest. */
+  private async pruneStatus(
+    localId: string,
+    status: 'undecryptable' | 'unsupported_envelope',
+    keep: number,
+  ): Promise<number> {
     checkLocalId(localId);
     checkInt(keep, 'keep');
     const { changes } = await this.db.run(
       `DELETE FROM events
-       WHERE local_id = ? AND status = 'undecryptable' AND rowid NOT IN (
-         SELECT rowid FROM events WHERE local_id = ? AND status = 'undecryptable'
+       WHERE local_id = ? AND status = ? AND rowid NOT IN (
+         SELECT rowid FROM events WHERE local_id = ? AND status = ?
          ORDER BY rowid DESC LIMIT ?
        )`,
-      [localId, localId, keep],
+      [localId, status, localId, status, keep],
     );
     return changes;
   }

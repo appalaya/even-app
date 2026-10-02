@@ -23,6 +23,11 @@
  *   `pull_to_refresh`, `first_open` and `server_move` bypass it. The engine schedules its own retry at `retryAt`.
  * - `group_full`: pushing stops, the pull still runs, the cycle reports `failed` with `retryAt: null` (the user
  *   must act) and no backoff, so later triggers still pull.
+ * - A server is whoever the invite names, so what it publishes is bounded here (design.md "Cycle, per group"):
+ *   `max_batch` is used up to 100 and `max_page` up to 1,000 (the protocol lets a client send and ask for less),
+ *   one cycle pulls at most 20,000 entries' worth of pages (twice the public server's 10,000-event cap: a whole
+ *   group before and after one epoch reset), and `undecryptable` and `unsupported_envelope` rows are capped at
+ *   1,000 each, pruned with every page that brings one.
  * - `pending_deletes` are retried at the start of `syncAll` (every debt) and of a group's cycle (that group's):
  *   204, or 404 (nothing left), pays the debt; no answer, 5xx, 429 and 503 keep it; any other answer (401, 410, …)
  *   drops it with a local log line, since retrying cannot change it.
@@ -83,6 +88,11 @@ import type {
 /** Stored in `groups.epoch` after a reset caused by a `null` epoch (design.md, the epoch rule). */
 export const UNKNOWN_EPOCH = 'unknown';
 
+/** Most envelopes sent in one append, whatever the server publishes as `max_batch` (PROTOCOL.md §6.2: 1 to it). */
+export const CLIENT_MAX_BATCH = 100;
+/** Largest page asked for, whatever the server publishes as `max_page` (PROTOCOL.md §6.3: values above it clamp). */
+export const CLIENT_MAX_PAGE = 1_000;
+
 export interface SyncTuning {
   /** `requestSync` debounce (design.md "Triggers"). */
   writeDebounceMs: number;
@@ -107,6 +117,13 @@ export interface SyncTuning {
   maxInlineWaits: number;
   /** `undecryptable` rows kept per group (design.md "Local storage"). */
   undecryptableKeep: number;
+  /** `unsupported_envelope` rows kept per group, the same way. */
+  unsupportedEnvelopeKeep: number;
+  /**
+   * Entries one cycle may pull, epoch restarts included. Each page is charged the entries it asked for (or the
+   * entries it brought, if more), so a server that answers `more` forever, with or without entries, ends the cycle.
+   */
+  pullEntriesPerCycle: number;
 }
 
 export const DEFAULT_TUNING: SyncTuning = {
@@ -122,6 +139,8 @@ export const DEFAULT_TUNING: SyncTuning = {
   maxInlineWaitMs: 5_000,
   maxInlineWaits: 2,
   undecryptableKeep: 1_000,
+  unsupportedEnvelopeKeep: 1_000,
+  pullEntriesPerCycle: 2 * 10_000,
 };
 
 export interface SyncEngineDeps {
@@ -349,7 +368,8 @@ interface Cycle {
   newOkIds: string[];
   epochResets: number;
   nameEventPulled: boolean;
-  undecryptablePulled: boolean;
+  /** Entries charged against `pullEntriesPerCycle` so far. */
+  pullCharged: number;
   inlineWaits: number;
 }
 
@@ -457,7 +477,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
 
   function batchSize(cycle: Cycle): number {
     const limit = batchLimit.get(cycle.localId) ?? Number.POSITIVE_INFINITY;
-    return Math.max(1, Math.min(cycle.info.limits.max_batch, limit));
+    return Math.max(1, Math.min(cycle.info.limits.max_batch, CLIENT_MAX_BATCH, limit));
   }
 
   /** The epoch rule's reset: new epoch, cursor 0, every event unacked, in one transaction. */
@@ -596,14 +616,10 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     let refreshed = false;
     for (;;) {
       const since = cycle.cursor;
+      const limit = Math.max(1, Math.min(cycle.info.limits.max_page, CLIENT_MAX_PAGE));
       let page: PullResponse;
       try {
-        page = await cycle.transport.pull(
-          cycle.groupId,
-          cycle.token,
-          since,
-          cycle.info.limits.max_page,
-        );
+        page = await cycle.transport.pull(cycle.groupId, cycle.token, since, limit);
       } catch (thrown) {
         const error = toSyncError(thrown);
         if (error.code === 'invalid_request' && !refreshed) {
@@ -657,6 +673,12 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         await tx.setCursor(cycle.localId, page.next);
         if (decision.kind === 'adopt')
           await tx.setSyncState(cycle.localId, { epoch: decision.epoch });
+        // The caps hold page by page, so a server sending nothing else cannot fill the disk within a cycle.
+        const statuses = new Set(result.inserted.map((id) => byId.get(id)?.row.status));
+        if (statuses.has('undecryptable'))
+          await tx.pruneUndecryptable(cycle.localId, tuning.undecryptableKeep);
+        if (statuses.has('unsupported_envelope'))
+          await tx.pruneUnsupportedEnvelopes(cycle.localId, tuning.unsupportedEnvelopeKeep);
         return result.inserted;
       });
       cycle.cursor = page.next;
@@ -667,11 +689,15 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
         const classified = byId.get(id);
         if (classified === undefined) continue;
         if (classified.row.status === 'ok') cycle.newOkIds.push(id);
-        if (classified.row.status === 'undecryptable') cycle.undecryptablePulled = true;
         const type = classified.event?.type;
         if (type === 'group.created' || type === 'group.renamed') cycle.nameEventPulled = true;
       }
       if (!page.more) return { kind: 'done' };
+      cycle.pullCharged += Math.max(limit, page.events.length);
+      if (cycle.pullCharged >= tuning.pullEntriesPerCycle) {
+        // What was pulled stays committed: the next cycle carries on from this cursor.
+        return { kind: 'stop', error: new SyncError('server_error', 'pull over the cycle budget') };
+      }
     }
   }
 
@@ -735,7 +761,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       newOkIds: [],
       epochResets: 0,
       nameEventPulled: false,
-      undecryptablePulled: false,
+      pullCharged: 0,
       inlineWaits: 0,
     };
 
@@ -752,8 +778,6 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       break;
     }
 
-    if (cycle.undecryptablePulled)
-      await store.pruneUndecryptable(localId, tuning.undecryptableKeep);
     if (cycle.nameEventPulled) await refreshNameCache(cycle);
     if (pushStopped !== null) throw pushStopped;
 

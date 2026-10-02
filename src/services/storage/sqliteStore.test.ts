@@ -816,6 +816,36 @@ describe('pruneUndecryptable', () => {
   });
 });
 
+// ---------- pruneUnsupportedEnvelopes ----------
+
+describe('pruneUnsupportedEnvelopes', () => {
+  const v2Row = (seq: number) => {
+    const id = newId();
+    return pulledRow(seq, null, {
+      id,
+      status: 'unsupported_envelope',
+      envelope: envelopeText({ ...makeEnvelope(id), v: 2 as 1 }),
+    });
+  };
+
+  it('keeps the most recently inserted unsupported_envelope rows and nothing else is touched', async () => {
+    const first = [v2Row(1), v2Row(2), pulledRow(3, null)];
+    const second = [v2Row(4), localRow(T0)];
+    for (const batch of [first, second]) await store.insertEvents(g, batch);
+    expect(await store.pruneUnsupportedEnvelopes(g, 1)).toBe(2);
+    const left = await raw();
+    expect([...left.keys()].sort()).toEqual([first[2]!.id, second[0]!.id, second[1]!.id].sort());
+    expect((await store.countByStatus(g)).byStatus).toMatchObject({
+      ok: 1,
+      undecryptable: 1,
+      unsupported_envelope: 1,
+    });
+    expect(await store.pruneUnsupportedEnvelopes(g, 1)).toBe(0);
+    expect(await store.pruneUndecryptable(g, 0)).toBe(1);
+    expect((await store.countByStatus(g)).byStatus.unsupported_envelope).toBe(1);
+  });
+});
+
 // ---------- prefs and pending deletes ----------
 
 describe('prefs', () => {
