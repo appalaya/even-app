@@ -383,4 +383,115 @@ describe.each(STORE_KINDS)('rotation on the %s store', (kind) => {
     await g(b).hideGroup(second.localId);
     expect((await b.services.groupState.list()).map((r) => r.localId)).toEqual([first.localId]);
   });
+
+  it('a forged group.rotated in another group copies nothing and hides nothing (review M1)', async () => {
+    const w = await setup(kind);
+    const v = await w.device('V');
+    const m = await w.device('M');
+
+    // "Family": the victim creates it; Mallory is a member, so she knows its localId.
+    const { localId: family, memberId: vicInFamily } = await g(v).createGroup({
+      name: 'Family',
+      currency: 'CAD',
+      myName: 'Vic',
+      people: ['Mallory'],
+      serverUrl: SERVER,
+    });
+    expectSynced(await sync(v, family));
+    await g(m).joinInvite((await g(v).inviteFor(family)).code);
+    await g(m).claimMember(family, memberId((await state(m, family)).state, 'Mallory'));
+    const rentId = await g(v).addExpense(family, expense(vicInFamily, 'Rent', [vicInFamily]));
+    for (const d of [v, m, v]) expectSynced(await sync(d, family));
+    // ... and one Family write still in the victim's outbox.
+    const unsentId = await g(v).addExpense(
+      family,
+      expense(vicInFamily, 'Groceries', [vicInFamily]),
+    );
+    const familyIds = [await envelopeOf(v, family, rentId), await envelopeOf(v, family, unsentId)];
+
+    // "Climbing club": Mallory's group, with the forged link written in before the victim joins.
+    const { localId: club, memberId: malloryInClub } = await g(m).createGroup({
+      name: 'Climbing club',
+      currency: 'CAD',
+      myName: 'Mallory',
+      people: ['Vic'],
+      serverUrl: SERVER,
+    });
+    await injectEvent(
+      m,
+      club,
+      body(
+        { type: 'group.rotated', from: family },
+        malloryInClub,
+        m.services.deviceId,
+        w.clock.now(),
+      ),
+    );
+    expectSynced(await sync(m, club));
+    const familySyncs = () =>
+      v.events.filter((e) => e.type === 'started' && e.localId === family).length;
+    const syncsBefore = familySyncs();
+
+    await g(v).joinInvite((await g(m).inviteFor(club)).code);
+    await v.services.idle();
+    await g(v).claimMember(club, memberId((await state(v, club)).state, 'Vic'));
+    for (const d of [v, m, v]) expectSynced(await sync(d, club));
+
+    // The marker is in the club's log, and it links nothing: Family has no closure naming the club.
+    expect((await state(v, club)).state.rotatedFrom).toEqual([family]);
+    expect(familySyncs()).toBe(syncsBefore); // not even the "one last sync"
+    expect(await lifecycle(v, family)).toBe('active');
+    expect((await v.services.groupState.list()).map((r) => r.localId).sort()).toEqual(
+      [family, club].sort(),
+    );
+    const clubIds = (await rows(v, club)).map((r) => r.id);
+    for (const id of familyIds) expect(clubIds).not.toContain(id);
+    const clubSecret = await secretOn(m, club);
+    for (const id of familyIds) expect(serverIds(w, clubSecret)).not.toContain(id);
+    expect((await state(m, club)).state.expenses.size).toBe(0);
+    expect((await state(v, club)).derived.myMemberId).not.toBe(vicInFamily);
+
+    // Family's own syncs re-check (no closure arrives), and the victim keeps writing there.
+    expectSynced(await sync(v, family));
+    expect(await lifecycle(v, family)).toBe('active');
+    expect((await state(v, family)).derived.readOnly).toBeNull();
+    expect((await state(v, family)).state.expenses.size).toBe(2);
+  });
+
+  it('a rotation whose closure has not reached this phone yet is recognised once it arrives', async () => {
+    const w = await setup(kind);
+    const { a, b, g1, maya, nathan } = await trio(w);
+    const rotated = await g(a).rotateInvite(g1);
+    const g2 = rotated.localId;
+    await a.services.idle();
+    expectSynced(rotated.closing);
+
+    // B writes to the old group and takes the new invite before its old copy has synced again.
+    const lateId = await g(b).addExpense(g1, expense(nathan, 'Late dinner', [maya, nathan]));
+    const late = await envelopeOf(b, g1, lateId);
+    const oldSyncs = () => b.events.filter((e) => e.type === 'started' && e.localId === g1).length;
+    const syncsBefore = oldSyncs();
+    await g(b).joinInvite(rotated.invite.code);
+    await b.services.idle();
+    // The new group names g1, but g1's log here holds no closure naming g2 yet: nothing happens.
+    expect((await state(b, g2)).state.rotatedFrom).toEqual([g1]);
+    expect(oldSyncs()).toBe(syncsBefore);
+    expect(await lifecycle(b, g1)).toBe('active');
+    expect((await rows(b, g2)).map((r) => r.id)).not.toContain(late);
+    expectSynced(await sync(b, g2));
+    expect(await lifecycle(b, g1)).toBe('active');
+
+    // g1's next sync brings A's closure: g1's own lifecycle check re-runs the recognition at once.
+    expectSynced(await sync(b, g1));
+    expect(await lifecycle(b, g1)).toBe('hidden');
+    expect((await rows(b, g2)).find((r) => r.id === late)).toMatchObject({
+      origin: 'local',
+      acked: false,
+    });
+    expect((await b.store.getGroup(g2))?.myMemberId).toBe(nathan);
+    expectSynced(await sync(b, g2));
+    expectSynced(await sync(a, g2));
+    const titles = [...(await state(a, g2)).state.expenses.values()].map((e) => e.title).sort();
+    expect(titles).toEqual(['Dinner', 'Gas', 'Late dinner']);
+  });
 });

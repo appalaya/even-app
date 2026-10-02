@@ -297,6 +297,15 @@ function hostOf(serverUrl: string): string {
   return serverUrl.replace(/^https:\/\//, '');
 }
 
+/** Every localId a `group.closed { to }` in this log names: where the group says it was rotated to. */
+function closureTargets(entries: readonly LogEntry[]): Set<string> {
+  const targets = new Set<string>();
+  for (const { event } of entries) {
+    if (event.type === 'group.closed' && event.to !== undefined) targets.add(event.to);
+  }
+  return targets;
+}
+
 function requireMember(state: GroupState, id: string): MemberState {
   const member = state.members.get(id);
   if (member === undefined || member.unknown) throw new StateError('not_found', 'no such member');
@@ -1164,6 +1173,7 @@ export class GroupService {
       await this.refreshNameCache(derived);
       await this.handleClosure(localId, derived);
       if (derived.state.rotatedFrom.length > 0) await this.recognizeRotation(localId, derived);
+      if (derived.state.closed !== null) await this.recognizeRotationInto(localId);
     });
   }
 
@@ -1300,9 +1310,10 @@ export class GroupService {
 
   /**
    * "Recognising a rotation": for each `group.rotated { from }` in this group naming a local group that is not
-   * hidden, sync the old group one last time, then re-encrypt into this group every old-group envelope of origin
-   * `local` whose id this group lacks (this device's own writes, the unpushed outbox included, and nothing else;
-   * control events never), unacked; hide the old group and carry over `my_member_id`.
+   * hidden and whose own log holds a `group.closed { to }` naming this group, sync the old group one last time, then
+   * re-encrypt into this group every old-group envelope of origin `local` whose id this group lacks (this device's
+   * own writes, the unpushed outbox included, and nothing else; control events never), unacked; hide the old group
+   * and carry over `my_member_id`.
    */
   async recognizeRotation(localId: string, known?: DerivedGroup): Promise<void> {
     const derived = known ?? (await this.groupState.get(localId));
@@ -1311,16 +1322,43 @@ export class GroupService {
     }
   }
 
+  /**
+   * The same recognition seen from the old group: for each group this group's `group.closed { to }` names, held here
+   * and not hidden, whose log names this group in a `group.rotated`. The rotator pushes the new group before the
+   * old group's closure, so the closure often arrives second, and a closed group never syncs again: without this the
+   * rescue would wait for the new group's next sync.
+   */
+  private async recognizeRotationInto(oldLocalId: string): Promise<void> {
+    for (const to of closureTargets(await this.groupState.entries(oldLocalId))) {
+      if (to === oldLocalId) continue;
+      const target = await this.store.getGroup(to);
+      if (target === null || target.state === 'hidden') continue;
+      const derived = await this.groupState.get(to);
+      if (derived?.state?.rotatedFrom.includes(oldLocalId) === true) {
+        await this.rescueFrom(to, oldLocalId);
+      }
+    }
+  }
+
   private async rescueFrom(newLocalId: string, oldLocalId: string): Promise<void> {
     const old = await this.store.getGroup(oldLocalId);
     if (old === null || old.state === 'hidden' || this.recognizing.has(oldLocalId)) return;
     const oldDerived = await this.groupState.get(oldLocalId);
     if (oldDerived?.localClosure?.to === newLocalId) return; // this device rotated it: recognition done
+    // A `group.rotated` is only a claim: anyone in the new group can write one naming any group they know the localId
+    // of. The old group's own log must agree, through the `group.closed { to }` its rotator always writes there
+    // (design.md "Recognising a rotation"). Until that closure is on this phone nothing happens, and the next
+    // lifecycle check of either group looks again (`recognizeRotation`, `recognizeRotationInto`).
+    if (!closureTargets(await this.groupState.entries(oldLocalId)).has(newLocalId)) return;
+    if (this.recognizing.has(oldLocalId)) return; // again: the reads above awaited
     this.recognizing.add(oldLocalId);
     let rescued = 0;
     try {
+      // Another recognition may have hidden it while the reads above awaited.
+      const current = await this.store.getGroup(oldLocalId);
+      if (current === null || current.state === 'hidden') return;
       // The one exception to "closed groups never sync".
-      if (old.state !== 'active') await this.store.setGroupState(oldLocalId, 'active');
+      if (current.state !== 'active') await this.store.setGroupState(oldLocalId, 'active');
       await this.engine.syncGroup(oldLocalId, { trigger: 'pull_to_refresh' });
       const oldSecret = await this.secrets.getSecret(oldLocalId);
       const newSecret = await this.secrets.getSecret(newLocalId);

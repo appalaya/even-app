@@ -1137,8 +1137,9 @@ the old invite.
    do not sync. Carry over `my_member_id`.
 
 **Recognising a rotation.** When any event in a group is
-`group.rotated { from }` and `from` matches a local group whose state is not
-already `hidden`: sync the old group one last time (the one exception to
+`group.rotated { from }`, `from` matches a local group whose state is not
+already `hidden`, and that old group's own log holds a `group.closed { to }`
+naming this group: sync the old group one last time (the one exception to
 "closed groups never sync"), then re-encrypt into the new group every
 old-group envelope with `origin = 'local'` whose id the new group lacks. This
 rescues this device's own writes, including any unpushed outbox, and nothing
@@ -1148,6 +1149,19 @@ Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
 over `my_member_id`. Two `group.rotated` events with the same `from` in
 different groups mean two members rotated concurrently; the app shows both
 groups, lets the user pick, and sets the other to `hidden`.
+
+The closure is the check. A `group.rotated` alone is a claim anyone in the
+new group can write, naming any group whose `localId` they know; acted on
+alone, it would copy this device's writes from that group into a group whose
+other members never had its invite, and hide it here (pre-launch review M1).
+The old group's `group.closed { to }` is its agreement, and the rotator
+always writes it (step 6). Until it is on this phone nothing happens, and
+recognition runs again at the next lifecycle check of either group: the new
+group's after each of its syncs, and the old group's when its sync brings the
+closure. The cost: a straggler whose rotator's closure never reached the old
+server keeps the old group visible and un-rescued. The check raises the bar
+without closing it: a member of both groups can write both halves, which
+closes the old group for everyone in it and says so in its activity.
 
 **Recognising a closure.** A `group.closed` event sets state `closed`: the
 group is read-only, never syncs again, and shows "This group's invite was
