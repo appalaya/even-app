@@ -33,8 +33,54 @@ function goodNative(overrides: Partial<NativeCrypto> = {}): NativeCrypto {
       out.set(plain);
       return true;
     },
+    openMany: (k, input, lengths, out, opened) => packedOpenMany(k, input, lengths, out, opened),
     ...overrides,
   };
+}
+
+/** The native batch layout, done in JavaScript as the modules do it natively (EvenCryptoModule.swift / .kt). */
+function packedOpenMany(
+  key: Uint8Array,
+  input: Uint8Array,
+  lengths: Int32Array,
+  out: Uint8Array,
+  opened: Uint8Array,
+  open: (
+    k: Uint8Array,
+    n: Uint8Array,
+    a: Uint8Array,
+    s: Uint8Array,
+  ) => Uint8Array | null = nobleAead.open,
+): number {
+  const count = opened.length;
+  if (key.length !== 32 || lengths.length !== count * 2) return -1;
+  let inputTotal = 0;
+  let outTotal = 0;
+  for (let i = 0; i < count; i++) {
+    const [aadLength, sealedLength] = [lengths[2 * i] ?? -1, lengths[2 * i + 1] ?? -1];
+    if (aadLength < 0 || sealedLength < 16) return -1;
+    inputTotal += 24 + aadLength + sealedLength;
+    outTotal += sealedLength - 16;
+  }
+  if (inputTotal !== input.length || outTotal !== out.length) return -1;
+  let inAt = 0;
+  let outAt = 0;
+  let n = 0;
+  for (let i = 0; i < count; i++) {
+    const [aadLength, sealedLength] = [lengths[2 * i]!, lengths[2 * i + 1]!];
+    const nonce = input.subarray(inAt, inAt + 24);
+    const aad = input.subarray(inAt + 24, inAt + 24 + aadLength);
+    const sealed = input.subarray(inAt + 24 + aadLength, inAt + 24 + aadLength + sealedLength);
+    const plain = open(key, nonce, aad, sealed);
+    opened[i] = plain === null ? 0 : 1;
+    if (plain !== null) {
+      out.set(plain, outAt);
+      n += 1;
+    }
+    inAt += 24 + aadLength + sealedLength;
+    outAt += sealedLength - 16;
+  }
+  return n;
 }
 
 /** The bytes a view covers, read from the start of its buffer instead: a module that ignores byteOffset. */
@@ -145,6 +191,23 @@ describe('installNativeAead', () => {
       },
       'threw',
     ],
+    [
+      'a batch that ignores the tag',
+      {
+        openMany: (k, input, lengths, out, opened) =>
+          packedOpenMany(
+            k,
+            input,
+            lengths,
+            out,
+            opened,
+            (key, n, a, sealed) =>
+              nobleAead.open(key, n, a, sealed) ?? new Uint8Array(sealed.length - 16),
+          ),
+      },
+      'batch',
+    ],
+    ['a batch that refuses every layout', { openMany: () => -1 }, 'batch'],
     [
       'a module whose info throws',
       {

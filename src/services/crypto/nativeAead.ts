@@ -33,6 +33,14 @@ export interface NativeCrypto {
     sealed: Uint8Array,
     out: Uint8Array,
   ): boolean;
+  /** One call for a batch: see modules/even-crypto/src/EvenCryptoModule.ts for the layout. -1 for a bad layout. */
+  openMany(
+    key: Uint8Array,
+    input: Uint8Array,
+    lengths: Int32Array,
+    out: Uint8Array,
+    opened: Uint8Array,
+  ): number;
 }
 
 function lengthsOk(key: Uint8Array, nonce: Uint8Array): boolean {
@@ -58,10 +66,65 @@ export function nativeAeadFrom(native: NativeCrypto): Aead {
       return native.open(key, nonce, aad, sealed, out) ? out : null;
     },
     openMany(key, items: readonly AeadSealed[]) {
-      return items.map((item) => aead.open(key, item.nonce, item.aad, item.sealed));
+      return openBatch(native, key, items);
     },
   };
   return aead;
+}
+
+/**
+ * The batch in one native call: every item's nonce, additional data and sealed bytes packed into one array, their
+ * lengths into another, and one output array for all the plaintexts, so the boundary is crossed once and the key
+ * passed once. An item with a wrong-size nonce or too short to hold a tag is answered null here, as `open` would.
+ */
+function openBatch(
+  native: NativeCrypto,
+  key: Uint8Array,
+  items: readonly AeadSealed[],
+): (Uint8Array | null)[] {
+  const results: (Uint8Array | null)[] = items.map(() => null);
+  if (key.length !== AEAD_KEY_BYTES) return results;
+  const batch: number[] = [];
+  let inputBytes = 0;
+  let outBytes = 0;
+  items.forEach((item, i) => {
+    if (item.nonce.length !== AEAD_NONCE_BYTES || item.sealed.length < AEAD_TAG_BYTES) return;
+    batch.push(i);
+    inputBytes += AEAD_NONCE_BYTES + item.aad.length + item.sealed.length;
+    outBytes += item.sealed.length - AEAD_TAG_BYTES;
+  });
+  if (batch.length === 0) return results;
+
+  const input = new Uint8Array(inputBytes);
+  const lengths = new Int32Array(batch.length * 2);
+  const out = new Uint8Array(outBytes);
+  const opened = new Uint8Array(batch.length);
+  let at = 0;
+  batch.forEach((i, k) => {
+    const item = items[i]!;
+    input.set(item.nonce, at);
+    at += AEAD_NONCE_BYTES;
+    input.set(item.aad, at);
+    at += item.aad.length;
+    input.set(item.sealed, at);
+    at += item.sealed.length;
+    lengths[2 * k] = item.aad.length;
+    lengths[2 * k + 1] = item.sealed.length;
+  });
+
+  const count = native.openMany(key, input, lengths, out, opened);
+  let flagged = 0;
+  for (const flag of opened) if (flag === 1) flagged += 1;
+  // core's openMany opens one by one when this throws.
+  if (count < 0 || count !== flagged) throw new Error('native openMany refused the batch');
+
+  let outAt = 0;
+  batch.forEach((i, k) => {
+    const length = items[i]!.sealed.length - AEAD_TAG_BYTES;
+    if (opened[k] === 1) results[i] = out.subarray(outAt, outAt + length);
+    outAt += length;
+  });
+  return results;
 }
 
 // ---------- The self-test ----------

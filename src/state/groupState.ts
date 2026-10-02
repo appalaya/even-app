@@ -20,10 +20,11 @@ import {
   formatMinor,
   isCurrency,
   nets as computeNets,
-  open,
+  openMany,
   parseEvent,
   reduce,
   simplify,
+  type Envelope,
   type GroupState,
   type LogEntry,
   type MemberState,
@@ -37,10 +38,11 @@ import type {
   GroupLifecycle,
   GroupRow,
   Store,
+  StoredEnvelopeRow,
 } from '../services/storage/types';
 import { DecodeCache, type Decoded } from '../services/sync/decodeCache';
 import type { SyncEngine, SyncEvent, SyncResult } from '../services/sync/types';
-import { OPENS_PER_YIELD, pacer, yieldToEventLoop } from '../services/yieldToEventLoop';
+import { OPENS_PER_YIELD, yieldToEventLoop } from '../services/yieldToEventLoop';
 import { pendingAmong } from './acks';
 import { describeForLog } from './errors';
 import { firstEntry, isMoneyType, isReadable, lastEntry, parseEnvelopeText, typeOf } from './log';
@@ -223,16 +225,25 @@ const MISSING: GroupSnapshot = Object.freeze({ status: 'missing', derived: null,
 const ERROR: GroupSnapshot = Object.freeze({ status: 'error', derived: null, sync: null });
 const LOADING_LIST: GroupListSnapshot = Object.freeze({ status: 'loading', rows: [] });
 
-function decode(key: Uint8Array, groupId: string, text: string): Decoded {
-  const envelope = parseEnvelopeText(text);
-  if (envelope === null) return { text, groupId, event: null, type: null };
-  let body: unknown;
-  try {
-    body = open({ key, groupId, envelope });
-  } catch {
-    return { text, groupId, event: null, type: null };
-  }
-  return { text, groupId, event: parseEvent(body), type: typeOf(body) };
+/**
+ * Opens stored envelope texts of one group in one batch (core's `openMany`: one call into the AEAD, native when it
+ * is installed), each to what opening it alone gives: its validated event, or null for text that is not an envelope,
+ * does not open, or does not validate.
+ */
+function decodeMany(key: Uint8Array, groupId: string, texts: readonly string[]): Decoded[] {
+  const parsed = texts.map(parseEnvelopeText);
+  const outcomes = openMany({
+    key,
+    groupId,
+    envelopes: parsed.filter((envelope): envelope is Envelope => envelope !== null),
+  });
+  let next = 0;
+  return texts.map((text, i) => {
+    if (parsed[i] === null) return { text, groupId, event: null, type: null };
+    const outcome = outcomes[next++];
+    if (outcome === undefined || !outcome.ok) return { text, groupId, event: null, type: null };
+    return { text, groupId, event: parseEvent(outcome.body), type: typeOf(outcome.body) };
+  });
 }
 
 export class GroupStateStore {
@@ -499,34 +510,61 @@ export class GroupStateStore {
       // by the first derive that reads it. A re-derive after a sync opens only what is new.
       const since = this.decodeCache.mark();
       const seen = new Set<string>();
-      // Opening is the cost (about 0.2 ms an envelope without a JIT): hand the thread back every few hundred, so the
-      // screen can draw and answer while a large group derives (pre-launch review H3).
-      const pace = pacer(OPENS_PER_YIELD);
-      for (const stored of await this.store.listEnvelopes(localId)) {
-        if (!isReadable(stored.status)) continue;
-        let decoded = this.decodeCache.get(localId, stored.id, stored.envelope, groupId);
-        if (decoded === undefined) {
-          if (pace()) await yieldToEventLoop();
-          decoded = decode(key, groupId, stored.envelope);
-          this.decodeCache.put(localId, stored.id, decoded);
+      const readable = (await this.store.listEnvelopes(localId)).filter((stored) =>
+        isReadable(stored.status),
+      );
+      // In log order, a window at a time: each holds at most OPENS_PER_YIELD envelopes not cached yet, opened in one
+      // batch call into the AEAD, and the thread is handed back before each window after the first that opens any,
+      // so the screen can draw and answer while a large group derives (pre-launch review H3). With @noble the AEAD
+      // is most of a window (about 0.2 ms an envelope without a JIT); natively it is a few percent of it, and
+      // parsing and validating the bodies is the rest.
+      let windowsOpened = 0;
+      for (let start = 0; start < readable.length;) {
+        const window: { stored: StoredEnvelopeRow; decoded: Decoded | undefined }[] = [];
+        let misses = 0;
+        while (start + window.length < readable.length && misses < OPENS_PER_YIELD) {
+          const stored = readable[start + window.length]!;
+          const decoded = this.decodeCache.get(localId, stored.id, stored.envelope, groupId);
+          if (decoded === undefined) misses += 1;
+          window.push({ stored, decoded });
         }
-        seen.add(stored.id);
-        if (stored.status === 'ok') {
-          if (decoded.event === null) {
-            readFailures += 1;
-          } else {
-            // The server's arrival time rides beside the body: the reducer orders and holds by it.
-            entries.push(
-              stored.receivedAt === null
-                ? { id: stored.id, event: decoded.event }
-                : { id: stored.id, event: decoded.event, receivedAt: stored.receivedAt },
-            );
-            origins.set(stored.id, stored.origin);
+        start += window.length;
+        if (misses > 0) {
+          if (windowsOpened > 0) await yieldToEventLoop();
+          windowsOpened += 1;
+          const pending = window.filter((item) => item.decoded === undefined);
+          const opened = decodeMany(
+            key,
+            groupId,
+            pending.map((item) => item.stored.envelope),
+          );
+          pending.forEach((item, k) => {
+            item.decoded = opened[k]!;
+            this.decodeCache.put(localId, item.stored.id, item.decoded);
+          });
+        }
+        for (const { stored, decoded } of window) {
+          seen.add(stored.id);
+          if (decoded === undefined) continue; // cannot happen: every miss was just decoded
+          if (stored.status === 'ok') {
+            if (decoded.event === null) {
+              readFailures += 1;
+            } else {
+              // The server's arrival time rides beside the body: the reducer orders and holds by it.
+              entries.push(
+                stored.receivedAt === null
+                  ? { id: stored.id, event: decoded.event }
+                  : { id: stored.id, event: decoded.event, receivedAt: stored.receivedAt },
+              );
+              origins.set(stored.id, stored.origin);
+            }
+          } else if (isMoneyType(decoded.type)) {
+            skippedMoney = true;
           }
-        } else if (isMoneyType(decoded.type)) {
-          skippedMoney = true;
         }
       }
+      // And once more after the last of several, so a large group's last window and its reduce are separate blocks.
+      if (windowsOpened > 1) await yieldToEventLoop();
       this.decodeCache.retain(localId, seen, since);
     }
 

@@ -1,7 +1,7 @@
 import { xchacha20 } from '@noble/ciphers/chacha.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { aead, nobleAead, setAead, type Aead } from './aead.js';
-import { EnvelopeError, open, resealEnvelope, seal } from './envelope.js';
+import { EnvelopeError, open, openMany, resealEnvelope, seal } from './envelope.js';
 import { deriveLocal, deriveServer } from './keys.js';
 import { aeadCrossCheck, aeadVectorChecks, type CheckReport } from './testing/aeadConformance.js';
 import { bytesToHex, hexToBytes } from './testing/bytes.js';
@@ -151,6 +151,37 @@ describe('setAead', () => {
     }
     expect(caught).toBeInstanceOf(EnvelopeError);
     expect((caught as EnvelopeError).code).toBe('undecryptable');
+  });
+
+  it('openMany makes one batch call, and opens one by one if that call throws or miscounts', () => {
+    const envelopes = [seal({ key, groupId, body }), seal({ key, groupId, body: { ...body, name: 'Jasper' } })];
+    let batches = 0;
+    let singles = 0;
+    const base = {
+      ...nobleAead,
+      name: 'batch-counting',
+      open: (k: Uint8Array, n: Uint8Array, a: Uint8Array, s: Uint8Array) => {
+        singles += 1;
+        return nobleAead.open(k, n, a, s);
+      },
+    };
+    setAead({ ...base, openMany: (k, items) => ((batches += 1), nobleAead.openMany(k, items)) });
+    expect(openMany({ key, groupId, envelopes }).map((o) => o.ok)).toEqual([true, true]);
+    expect([batches, singles]).toEqual([1, 0]);
+
+    for (const broken of [
+      () => {
+        throw new Error('JSI went away');
+      },
+      () => [null],
+    ]) {
+      batches = 0;
+      singles = 0;
+      setAead({ ...base, openMany: () => ((batches += 1), broken()) });
+      const outcomes = openMany({ key, groupId, envelopes });
+      expect(outcomes.map((o) => (o.ok ? (o.body as Event & { name: string }).name : o.error.code))).toEqual(['Banff', 'Jasper']);
+      expect([batches, singles]).toEqual([1, 2]);
+    }
   });
 
   it('nobleAead refuses a wrong-size key or nonce on seal, and answers null on open', () => {

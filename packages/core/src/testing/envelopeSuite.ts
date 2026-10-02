@@ -9,8 +9,8 @@ import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import type * as FastCheck from 'fast-check';
 import { LIMITS } from '../constants.js';
 import { b64urlDecode, b64urlEncode, utf8Encode } from '../encoding.js';
-import { aadFor, EnvelopeError, envelopeShape, envelopeStoredSize, isEnvelope, open, pad, resealEnvelope, seal, unpad } from '../envelope.js';
-import type { EnvelopeErrorCode } from '../envelope.js';
+import { aadFor, EnvelopeError, envelopeShape, envelopeStoredSize, isEnvelope, open, openMany, pad, resealEnvelope, seal, unpad } from '../envelope.js';
+import type { EnvelopeErrorCode, OpenOutcome } from '../envelope.js';
 import { newId, randomBytes } from '../ids.js';
 import { deriveLocal, deriveServer } from '../keys.js';
 import type { Envelope, EventOf } from '../types.js';
@@ -557,6 +557,97 @@ export function envelopeSuite(t: SuiteApi, fc: typeof FastCheck): void {
       for (const bytes of [17, 18, 19, 20, 255, 256, 8192]) {
         expect(envelopeStoredSize({ ...VECTOR, c: b64urlEncode(new Uint8Array(bytes)) })).toBe(bytes + 64);
       }
+    });
+  });
+
+  describe('openMany', () => {
+    /** What `open` gives for one envelope, in openMany's shape. */
+    function single(key: Uint8Array, groupId: string, envelope: unknown): OpenOutcome {
+      try {
+        return { ok: true, body: open({ key, groupId, envelope: envelope as Envelope }) };
+      } catch (error) {
+        return { ok: false, error: error as EnvelopeError };
+      }
+    }
+
+    function expectSame(got: OpenOutcome[], want: OpenOutcome[]): void {
+      expect(got).toHaveLength(want.length);
+      got.forEach((g, i) => {
+        const w = want[i];
+        expect(g.ok).toBe(w?.ok);
+        if (g.ok && w?.ok) expect(g.body).toEqual(w.body);
+        if (!g.ok && w !== undefined && !w.ok) {
+          expect(g.error).toBeInstanceOf(EnvelopeError);
+          expect(g.error.code).toBe(w.error.code);
+          expect(g.error.message).toBe(w.error.message);
+        }
+      });
+    }
+
+    /** Every kind of envelope open distinguishes: good ones, forgeries, other versions, junk, bad plaintexts. */
+    function pool(): unknown[] {
+      const good = seal({ key: KEY, groupId: GROUP, body: BODY });
+      const emoji = seal({ key: KEY, groupId: GROUP, body: { ...BODY, name: 'Café 🏔️' } });
+      const big = seal({ key: KEY, groupId: GROUP, body: bodyOfJsonLength(8175) });
+      return [
+        good,
+        emoji,
+        big,
+        VECTOR,
+        { ...good, c: flipChar(good.c, 10) },
+        { ...good, n: flipChar(good.n, 5) },
+        { ...good, id: newId() },
+        { ...good, v: 2 },
+        { ...good, v: 0 },
+        { ...good, extra: 1 },
+        null,
+        {},
+        'x',
+        seal({ key: randomBytes(32), groupId: GROUP, body: BODY }),
+        sealRaw(new Uint8Array(240)),
+        sealRaw(pad(Uint8Array.of(0x22, 0xff, 0x22))),
+        sealRaw(pad(utf8Encode('{not json'))),
+        sealRaw(pad(utf8Encode('[1,"x",null]'))),
+        sealRaw(Uint8Array.of(...utf8Encode('{"a":1}'), 0x80)),
+      ];
+    }
+
+    it('gives exactly what open gives for each envelope of a mixed batch, in order', () => {
+      const batch = pool();
+      expectSame(
+        openMany({ key: KEY, groupId: GROUP, envelopes: batch as Envelope[] }),
+        batch.map((e) => single(KEY, GROUP, e)),
+      );
+    });
+
+    it('agrees with open for any order and mix (property)', () => {
+      const batch = pool();
+      fc.assert(
+        fc.property(fc.array(fc.integer({ min: 0, max: batch.length - 1 }), { maxLength: 60 }), (picks) => {
+          const envelopes = picks.map((i) => batch[i]);
+          expectSame(
+            openMany({ key: KEY, groupId: GROUP, envelopes: envelopes as Envelope[] }),
+            envelopes.map((e) => single(KEY, GROUP, e)),
+          );
+        }),
+        { numRuns: 40 },
+      );
+    });
+
+    it('opens a few hundred envelopes of one group, as a derive does', () => {
+      const bodies = Array.from({ length: 300 }, (_, i) => ({ ...BODY, name: `Trip ${i}` }));
+      const envelopes = bodies.map((body) => seal({ key: KEY, groupId: GROUP, body }));
+      const outcomes = openMany({ key: KEY, groupId: GROUP, envelopes });
+      expect(outcomes.every((o) => o.ok)).toBe(true);
+      expect(outcomes.map((o) => (o.ok ? o.body : null))).toEqual(bodies);
+    });
+
+    it('answers an empty batch with nothing, another group id with undecryptable, a short key with RangeError', () => {
+      expect(openMany({ key: KEY, groupId: GROUP, envelopes: [] })).toEqual([]);
+      const other = deriveServer(SECRET, 'https://home.example.net:8443/even').groupId;
+      const outcomes = openMany({ key: KEY, groupId: other, envelopes: [VECTOR, VECTOR] });
+      expect(outcomes.map((o) => (o.ok ? 'ok' : o.error.code))).toEqual(['undecryptable', 'undecryptable']);
+      expect(() => openMany({ key: new Uint8Array(16), groupId: GROUP, envelopes: [VECTOR] })).toThrow(RangeError);
     });
   });
 }

@@ -48,6 +48,54 @@ public class EvenCryptoModule: Module {
         bytes(nonce), bytes(key))
       return result == 0 && written == UInt64(out.byteLength)
     }
+
+    /// `open` for a batch under one key, in one call (the derive opens hundreds at a time). `input` holds, per item,
+    /// nonce (24 bytes) || aad || sealed; `lengths` holds, per item, the aad's and the sealed part's lengths; `out`
+    /// receives each plaintext (sealed length - 16 bytes) in turn; `opened[i]` is set to 1 or 0. Returns how many
+    /// opened, or -1 (nothing read or written) when the layout does not add up exactly.
+    Function("openMany") { (key: Uint8Array, input: Uint8Array, lengths: Int32Array, out: Uint8Array, opened: Uint8Array) -> Int in
+      let count = opened.byteLength
+      guard Self.ready, key.byteLength == Self.keyBytes, lengths.byteLength == count * 2 * MemoryLayout<Int32>.size
+      else { return -1 }
+      let lens = lengths.rawPointer.assumingMemoryBound(to: Int32.self)
+      var inputTotal = 0
+      var outTotal = 0
+      for i in 0..<count {
+        let aadLength = Int(lens[2 * i])
+        let sealedLength = Int(lens[2 * i + 1])
+        guard aadLength >= 0, sealedLength >= Self.tagBytes else { return -1 }
+        inputTotal += Self.nonceBytes + aadLength + sealedLength
+        outTotal += sealedLength - Self.tagBytes
+      }
+      guard inputTotal == input.byteLength, outTotal == out.byteLength else { return -1 }
+
+      let source = bytes(input)
+      let target = bytes(out)
+      let flags = bytes(opened)
+      let secret = bytes(key)
+      var inAt = 0
+      var outAt = 0
+      var openedCount = 0
+      for i in 0..<count {
+        let aadLength = Int(lens[2 * i])
+        let sealedLength = Int(lens[2 * i + 1])
+        let nonce = source + inAt
+        let aad = nonce + Self.nonceBytes
+        let sealed = aad + aadLength
+        var written: UInt64 = 0
+        let result = crypto_aead_xchacha20poly1305_ietf_decrypt(
+          target + outAt, &written, nil,
+          sealed, UInt64(sealedLength),
+          aad, UInt64(aadLength),
+          nonce, secret)
+        let ok = result == 0 && written == UInt64(sealedLength - Self.tagBytes)
+        flags[i] = ok ? 1 : 0
+        if ok { openedCount += 1 }
+        inAt += Self.nonceBytes + aadLength + sealedLength
+        outAt += sealedLength - Self.tagBytes
+      }
+      return openedCount
+    }
   }
 }
 

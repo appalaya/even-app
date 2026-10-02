@@ -32,6 +32,19 @@ declare class EvenCryptoModule extends NativeModule {
     sealed: Uint8Array,
     out: Uint8Array,
   ): boolean;
+  /**
+   * `open` for a batch under one key, in one call. `input` holds, per item, nonce (24 bytes) || aad || sealed;
+   * `lengths` holds, per item, the aad's and the sealed part's lengths; `out` receives each plaintext (sealed length
+   * minus 16 bytes) in turn, zeros for one that did not open; `opened[i]` is set to 1 or 0. Returns how many opened,
+   * or -1 when the layout does not add up exactly (then nothing is written).
+   */
+  openMany(
+    key: Uint8Array,
+    input: Uint8Array,
+    lengths: Int32Array,
+    out: Uint8Array,
+    opened: Uint8Array,
+  ): number;
 }
 
 /** Null where the native module is not in the build (web, Node tests, a binary built before it existed). */

@@ -1,7 +1,8 @@
 /**
  * One decode cache for the engine, the derived state and rotation (pre-launch review H3): an envelope is opened
- * once. Counted by wrapping core's `open`, which every one of them calls to decrypt a body (`resealEnvelope` opens
- * through core's own internals, so a re-encryption is not counted, only the reads around it).
+ * once. Counted by wrapping core's `open` and `openMany` (each envelope of a batch counts once), which every one of
+ * them calls to decrypt a body (`resealEnvelope` opens through core's own internals, so a re-encryption is not
+ * counted, only the reads around it).
  */
 import { deriveLocal, deriveServer, encodeInvite, makeInvite, newSecret, seal } from '@even/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,10 @@ vi.mock('@even/core', async (importOriginal) => {
     open: (...args: Parameters<typeof core.open>) => {
       opened.count += 1;
       return core.open(...args);
+    },
+    openMany: (...args: Parameters<typeof core.openMany>) => {
+      opened.count += args[0].envelopes.length;
+      return core.openMany(...args);
     },
   };
 });

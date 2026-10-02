@@ -3,7 +3,10 @@ package com.appalaya.even.crypto
 import com.google.crypto.tink.aead.internal.InsecureNonceXChaCha20Poly1305
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.typedarray.Int32Array
 import expo.modules.kotlin.typedarray.Uint8Array
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * XChaCha20-Poly1305 (IETF) through Google Tink, for JavaScript (modules/even-crypto/src/EvenCryptoModule.ts).
@@ -55,6 +58,65 @@ class EvenCryptoModule : Module() {
       } catch (e: Exception) {
         false // a tag that does not verify (AEADBadTagException), or any other refusal
       }
+    }
+
+    // `open` for a batch under one key, in one call (the derive opens hundreds at a time). `input` holds, per item,
+    // nonce (24 bytes) || aad || sealed; `lengths` holds, per item, the aad's and the sealed part's lengths; `out`
+    // receives each plaintext (sealed length - 16 bytes) in turn; `opened[i]` is set to 1 or 0. Returns how many
+    // opened, or -1 (nothing written) when the layout does not add up exactly. One copy in, one copy out, and the
+    // key schedule once for the batch.
+    Function("openMany") { key: Uint8Array, input: Uint8Array, lengths: Int32Array, out: Uint8Array, opened: Uint8Array ->
+      val count = opened.byteLength
+      if (key.byteLength != KEY_BYTES || lengths.byteLength != count * 2 * Int.SIZE_BYTES) return@Function -1
+      val lens = IntArray(count * 2)
+      if (count > 0) {
+        val raw = ByteArray(lengths.byteLength)
+        lengths.read(raw, 0, raw.size)
+        ByteBuffer.wrap(raw).order(ByteOrder.nativeOrder()).asIntBuffer().get(lens)
+      }
+      var inputTotal = 0L
+      var outTotal = 0L
+      for (i in 0 until count) {
+        val aadLength = lens[2 * i]
+        val sealedLength = lens[2 * i + 1]
+        if (aadLength < 0 || sealedLength < TAG_BYTES) return@Function -1
+        inputTotal += NONCE_BYTES + aadLength + sealedLength
+        outTotal += sealedLength - TAG_BYTES
+      }
+      if (inputTotal != input.byteLength.toLong() || outTotal != out.byteLength.toLong()) return@Function -1
+
+      val cipher = try {
+        InsecureNonceXChaCha20Poly1305(bytesOf(key))
+      } catch (e: Exception) {
+        return@Function -1
+      }
+      val source = bytesOf(input)
+      val target = ByteArray(out.byteLength)
+      val flags = ByteArray(count)
+      var inAt = 0
+      var outAt = 0
+      var openedCount = 0
+      for (i in 0 until count) {
+        val aadLength = lens[2 * i]
+        val sealedLength = lens[2 * i + 1]
+        val nonce = source.copyOfRange(inAt, inAt + NONCE_BYTES)
+        val aad = source.copyOfRange(inAt + NONCE_BYTES, inAt + NONCE_BYTES + aadLength)
+        try {
+          val plain = cipher.decrypt(ByteBuffer.wrap(source, inAt + NONCE_BYTES + aadLength, sealedLength), nonce, aad)
+          if (plain.size == sealedLength - TAG_BYTES) {
+            System.arraycopy(plain, 0, target, outAt, plain.size)
+            flags[i] = 1
+            openedCount += 1
+          }
+        } catch (e: Exception) {
+          // Not opened: its flag stays 0 and its slot in `out` zeros.
+        }
+        inAt += NONCE_BYTES + aadLength + sealedLength
+        outAt += sealedLength - TAG_BYTES
+      }
+      if (target.isNotEmpty()) out.write(target, 0, target.size)
+      if (count > 0) opened.write(flags, 0, count)
+      openedCount
     }
   }
 

@@ -1,4 +1,4 @@
-import { aead } from './aead.js';
+import { aead, type AeadSealed } from './aead.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { isId, newId, randomBytes } from './ids.js';
@@ -154,6 +154,88 @@ export function open(args: { key: Uint8Array; groupId: string; envelope: Envelop
   } catch {
     throw new EnvelopeError('undecryptable', 'body is not valid JSON');
   }
+}
+
+/** One envelope's answer from `openMany`: what `open` would have returned, or the EnvelopeError it would have thrown. */
+export type OpenOutcome = { ok: true; body: unknown } | { ok: false; error: EnvelopeError };
+
+/** After decryption: unpad, then strict UTF-8, then JSON, exactly as `open` does. */
+function bodyOf(padded: Uint8Array | null): OpenOutcome {
+  if (padded === null) return { ok: false, error: new EnvelopeError('undecryptable', 'authentication failed') };
+  let text: string;
+  try {
+    text = utf8Decode(unpad(padded));
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof EnvelopeError ? error : new EnvelopeError('undecryptable', 'body is not valid UTF-8'),
+    };
+  }
+  try {
+    return { ok: true, body: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false, error: new EnvelopeError('undecryptable', 'body is not valid JSON') };
+  }
+}
+
+/**
+ * `open` for many envelopes of one group under one key, in order, with the AEAD work in one `aead().openMany` call
+ * (one crossing into a native implementation for the whole batch). Each outcome is exactly what `open` would have
+ * returned or thrown for that envelope, never a throw for the batch; only a key that is not 32 bytes throws
+ * (RangeError), as `open` does. If the implementation's batch call itself throws, each envelope is opened on its own.
+ */
+export function openMany(args: { key: Uint8Array; groupId: string; envelopes: readonly Envelope[] }): OpenOutcome[] {
+  checkKey(args.key);
+  const outcomes: (OpenOutcome | null)[] = [];
+  const items: AeadSealed[] = [];
+  const at: number[] = [];
+  for (const envelope of args.envelopes) {
+    const shape = envelopeShape(envelope);
+    if (!shape.ok) {
+      outcomes.push({ ok: false, error: new EnvelopeError('malformed', 'not a structurally valid envelope') });
+    } else if (shape.v !== PROTOCOL.version) {
+      outcomes.push({
+        ok: false,
+        error: new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`),
+      });
+    } else {
+      let item: AeadSealed;
+      try {
+        item = {
+          nonce: b64urlDecode(envelope.n),
+          aad: aadFor(args.groupId, shape.v, envelope.id),
+          sealed: b64urlDecode(envelope.c),
+        };
+      } catch {
+        // Only a hostile object whose fields change between reads gets here; `open` says undecryptable for it too.
+        outcomes.push({ ok: false, error: new EnvelopeError('undecryptable', 'authentication failed') });
+        continue;
+      }
+      at.push(outcomes.length);
+      outcomes.push(null);
+      items.push(item);
+    }
+  }
+  let opened: (Uint8Array | null)[] | null;
+  try {
+    opened = items.length === 0 ? [] : aead().openMany(args.key, items);
+    if (opened.length !== items.length) opened = null;
+  } catch {
+    opened = null;
+  }
+  if (opened === null) {
+    opened = items.map((item) => {
+      try {
+        return aead().open(args.key, item.nonce, item.aad, item.sealed);
+      } catch {
+        return null;
+      }
+    });
+  }
+  at.forEach((index, i) => {
+    outcomes[index] = bodyOf(opened[i] ?? null);
+  });
+  return outcomes as OpenOutcome[];
 }
 
 /**
