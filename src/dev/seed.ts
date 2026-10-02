@@ -38,6 +38,7 @@ import {
   makeInvite,
   memberColor,
   newId,
+  newSecret,
   parseEvent,
   PROTOCOL,
   reduce,
@@ -62,6 +63,7 @@ import {
 
 import { refineCategory } from '../state/categories';
 import { assertNotProduction, productionHoldings, seedServerOrigin } from './devServer';
+import { largeGroup } from './largeGroup';
 import type { NewEventRow } from '../services/storage/types';
 import type { ServerInfo, SyncResult, Transport } from '../services/sync/types';
 import type { AppServices } from '../state';
@@ -162,6 +164,8 @@ export const SEED_STATES = [
   'task',
   'notify',
   'notify-quiet',
+  // Measuring (pre-launch review H3): a group at the public server's practical maximum
+  'large',
 ] as const;
 export type SeedState = (typeof SEED_STATES)[number];
 
@@ -2061,6 +2065,55 @@ function newerCode(): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// ---------- Measuring ----------
+
+/** Events in the `large` state's group: this mix at the public server's 2 MB cap (about 612 stored bytes each). */
+export const LARGE_EVENTS = 3_400;
+
+/**
+ * The `large` state (pre-launch review H3): one group, "Big trip", of `LARGE_EVENTS` events in `largeGroup`'s mix
+ * over the last 60 days, with Sam's seat. Its key is random, and it is stored as already synced with the dev server:
+ * nothing is pushed, and the next pull finds the server copy empty. For timing how long it takes to open.
+ */
+async function seedLarge(s: AppServices, server: string): Promise<string> {
+  assertNotProduction(server);
+  const secret = newSecret();
+  const { localId, encryptionKey: key } = deriveLocal(secret);
+  const { groupId } = deriveServer(secret, server);
+  const now = Date.now();
+  const group = largeGroup({ events: LARGE_EVENTS, end: now - MINUTE, name: 'Big trip' });
+  const rows: NewEventRow[] = group.entries.map(({ id, event }) => ({
+    id,
+    origin: 'remote',
+    acked: true,
+    seq: null,
+    ts: event.ts,
+    envelope: JSON.stringify(seal({ key, groupId, body: event, id })),
+    status: 'ok',
+  }));
+  await s.secrets.setSecret(localId, secret, server);
+  await s.store.transaction(async (tx) => {
+    await tx.upsertGroup({
+      localId,
+      serverUrl: server,
+      epoch: null,
+      cursor: 0,
+      myMemberId: group.members.find((m) => m.name === 'Sam')?.id ?? null,
+      nameCache: group.name,
+      currencyCache: group.currency,
+      createdAt: group.entries[0]?.event.at ?? now,
+      lastSyncedAt: now,
+      lastSyncError: null,
+      state: 'active',
+      epochResetsThisCycle: 0,
+    });
+    await tx.insertEvents(localId, rows);
+  });
+  s.groupState.invalidate(localId);
+  s.groupState.groupsChanged();
+  return localId;
+}
+
 // ---------- The dispatcher ----------
 
 const q = encodeURIComponent;
@@ -2107,6 +2160,9 @@ export async function seed(
     case 'groups-archived':
       await mainGroups(s, server);
       return { steps: [replace('/?archived=open')] };
+    case 'large':
+      await seedLarge(s, server);
+      return { steps: [replace('/')] };
     case 'groups-empty':
       return {
         steps: [replace(options.motionAt === undefined ? '/' : `/?motionAt=${options.motionAt}`)],
