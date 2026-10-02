@@ -3,19 +3,25 @@
  * (GroupNoSeat, SeatPick, SeatSameDevice, GroupShareMenu), over logs reduced by the same core reducer the screen reads.
  */
 import {
+  emptyState,
+  memberColor,
   nets,
   newId,
   parseEvent,
   reduce,
   simplify,
+  type ActivityItem,
   type Event,
   type EventPayload,
   type GroupState,
   type LogEntry,
+  type MemberState,
 } from '@even/core';
+import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import {
+  activitySections,
   everyoneSettled,
   hasActivity,
   namePick,
@@ -276,5 +282,125 @@ describe('Which name is yours? marks and taps (SeatPick, SeatSameDevice)', () =>
       "This phone was also Sam. If that's a leftover, archive it in Group settings.",
     );
     expect(namePick(state, member(state, jordan), THIS_PHONE)).toEqual({ kind: 'claim' });
+  });
+});
+
+describe("Activity: the sentence's subject", () => {
+  /** The subject rule as first written (one set-and-sort of every name per item), kept as the reference. */
+  function referenceSubject(item: ActivityItem, state: GroupState) {
+    const byMember = state.members.get(item.by) ?? null;
+    const names = new Set<string>(['Someone', 'Unknown']);
+    for (const m of state.members.values()) names.add(m.name);
+    const sorted = [...names].sort((a, b) => b.length - a.length);
+    for (const name of sorted) {
+      if (!item.summary.startsWith(name)) continue;
+      const next = item.summary.charAt(name.length);
+      if (next !== '' && next !== ' ' && next !== "'") continue;
+      if (byMember !== null && byMember.name === name) return { name, member: byMember };
+      const match = [...state.members.values()].find((m) => m.name === name) ?? null;
+      return { name, member: match ?? byMember };
+    }
+    return { name: null, member: byMember };
+  }
+
+  function member(id: string, name: string): MemberState {
+    return {
+      id,
+      name,
+      archived: false,
+      devices: [],
+      unknown: false,
+      color: memberColor(id),
+      initials: '?',
+    };
+  }
+
+  function stateOf(members: MemberState[], items: ActivityItem[]): GroupState {
+    return { ...emptyState(), members: new Map(members.map((m) => [m.id, m])), activity: items };
+  }
+
+  function item(n: number, by: string, summary: string): ActivityItem {
+    const at = 1_790_000_000_000 + n * 60_000;
+    return {
+      eventId: String(n).padStart(22, '0'),
+      type: 'expense.added',
+      ts: at,
+      at,
+      by,
+      dev: by,
+      summary,
+    };
+  }
+
+  it('picks the longest name that ends at a space, an apostrophe or the end, and the actor when it has that name', () => {
+    const maya = member('m'.repeat(22), 'Maya');
+    const mayaK = member('k'.repeat(22), 'Maya K.');
+    const twin = member('t'.repeat(22), 'Maya K.');
+    const state = stateOf(
+      [maya, mayaK, twin],
+      [
+        item(1, maya.id, "Maya K.'s dinner was edited"),
+        item(2, twin.id, 'Maya K. added Lunch'),
+        item(3, maya.id, 'Mayan ruins'),
+        item(4, 'x'.repeat(22), 'Someone deleted a payment'),
+        item(5, maya.id, 'Maya'),
+      ],
+    );
+    const rows = activitySections(state, null).flatMap((section) => section.rows);
+    expect(rows.map((r) => [r.subject, r.member?.id ?? null, r.rest])).toEqual([
+      ['Maya', maya.id, ''],
+      ['Someone', null, ' deleted a payment'],
+      [null, maya.id, 'Mayan ruins'],
+      ['Maya K.', twin.id, ' added Lunch'],
+      ['Maya K.', mayaK.id, "'s dinner was edited"],
+    ]);
+  });
+
+  it('agrees with the reference rule for any names and summaries', () => {
+    const text = fc.string({
+      unit: fc.constantFrom('M', 'a', 'K', '.', ' ', "'", 'S', 'o'),
+      maxLength: 9,
+    });
+    fc.assert(
+      fc.property(
+        fc.array(
+          text.filter((t) => t.length > 0),
+          { maxLength: 6 },
+        ),
+        fc.array(fc.tuple(fc.nat(6), text, text), { maxLength: 12 }),
+        (names, lines) => {
+          const members = names.map((name, i) => member(String(i).padStart(22, 'i'), name));
+          const ids = [...members.map((m) => m.id), 'z'.repeat(22)];
+          const items = lines.map(([who, head, tail], n) =>
+            item(n, ids[who % ids.length] ?? '', `${head}${tail}`),
+          );
+          const state = stateOf(members, items);
+          const rows = activitySections(state, null).flatMap((section) => section.rows);
+          const expected = [...items].reverse().map((i) => referenceSubject(i, state));
+          expect(rows.map((r) => r.member)).toEqual(expected.map((e) => e.member));
+          expect(rows.map((r) => (r.subject === null ? null : r.subject))).toEqual(
+            expected.map((e) => e.name),
+          );
+        },
+      ),
+      { numRuns: 500 },
+    );
+  });
+
+  it('reads 10,000 items among 10,000 members without a per-item pass over the members', () => {
+    const count = 10_000;
+    const members = Array.from({ length: count }, (_, i) =>
+      member(String(i).padStart(22, 'p'), `Person ${i}`),
+    );
+    const items = Array.from({ length: 10_000 }, (_, n) =>
+      item(n, members[n]?.id ?? '', `Person ${n} added Dinner · 1.00`),
+    );
+    const start = performance.now();
+    const rows = activitySections(stateOf(members, items), null).flatMap((section) => section.rows);
+    const ms = performance.now() - start;
+    expect(rows).toHaveLength(10_000);
+    expect(rows[0]?.subject).toBe('Person 9999');
+    // About 10 ms; the per-item set-and-sort of every name took about 3 s here.
+    expect(ms).toBeLessThan(500);
   });
 });

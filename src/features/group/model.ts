@@ -329,23 +329,33 @@ export interface ActivitySection {
   rows: ActivityRow[];
 }
 
-function subjectOf(
-  item: ActivityItem,
-  state: GroupState,
-): { name: string | null; member: MemberState | null } {
-  const byMember = state.members.get(item.by) ?? null;
-  const names = new Set<string>(['Someone', 'Unknown']);
-  for (const m of state.members.values()) names.add(m.name);
-  const sorted = [...names].sort((a, b) => b.length - a.length);
-  for (const name of sorted) {
-    if (!item.summary.startsWith(name)) continue;
-    const next = item.summary.charAt(name.length);
-    if (next !== '' && next !== ' ' && next !== "'") continue;
-    if (byMember !== null && byMember.name === name) return { name, member: byMember };
-    const match = [...state.members.values()].find((m) => m.name === name) ?? null;
-    return { name, member: match ?? byMember };
-  }
-  return { name: null, member: byMember };
+type Subject = { name: string | null; member: MemberState | null };
+
+/**
+ * The sentence's subject: the longest known name (or "Someone" / "Unknown") the summary starts with, followed by the
+ * end, a space or an apostrophe ("Maya K.'s"); its member is the actor when the actor has that name, else the first
+ * member by that name. The names are indexed once per state, not per item: a log of 10,000 items in a group whose
+ * placeholders run to thousands made the per-item set-and-sort the slowest derivation on Group.
+ */
+function subjectFinder(state: GroupState): (item: ActivityItem) => Subject {
+  const firstByName = new Map<string, MemberState>();
+  for (const m of state.members.values()) if (!firstByName.has(m.name)) firstByName.set(m.name, m);
+  const names = new Set<string>(['Someone', 'Unknown', ...firstByName.keys()]);
+  let longest = 0;
+  for (const name of names) longest = Math.max(longest, name.length);
+  return (item) => {
+    const byMember = state.members.get(item.by) ?? null;
+    const summary = item.summary;
+    // Candidate ends, longest first: the end of the summary, or a space or apostrophe within reach of a name.
+    for (let end = Math.min(summary.length, longest); end > 0; end -= 1) {
+      if (end < summary.length && summary[end] !== ' ' && summary[end] !== "'") continue;
+      const name = summary.slice(0, end);
+      if (!names.has(name)) continue;
+      if (byMember !== null && byMember.name === name) return { name, member: byMember };
+      return { name, member: firstByName.get(name) ?? byMember };
+    }
+    return { name: null, member: byMember };
+  };
 }
 
 /**
@@ -358,9 +368,10 @@ export function activitySections(state: GroupState, myId: string | null): Activi
     if (!firstDevice.has(item.by)) firstDevice.set(item.by, item.dev);
   }
   const sections: ActivitySection[] = [];
+  const subjectOf = subjectFinder(state);
   const items = [...state.activity].reverse();
   for (const item of items) {
-    const { name, member } = subjectOf(item, state);
+    const { name, member } = subjectOf(item);
     const isMe = member !== null && member.id === myId && name === member.name;
     let rest = name === null ? item.summary : item.summary.slice(name.length);
     if (isMe && rest.startsWith(' is ')) rest = ` are ${rest.slice(4)}`;
