@@ -17,7 +17,7 @@ including the parts the server never sees.
 - **Language**: TypeScript, strict
 - **Local database**: SQLite via expo-sqlite
 - **Secrets**: expo-secure-store, accessibility `AFTER_FIRST_UNLOCK` so background refresh can read keys while the phone is locked
-- **Crypto**: `@noble/ciphers` (XChaCha20-Poly1305), `@noble/hashes` (SHA-256, HKDF); randomness via `globalThis.crypto.getRandomValues`, polyfilled once at app entry from `expo-crypto`
+- **Crypto**: XChaCha20-Poly1305 natively where the build has it (`modules/even-crypto`: libsodium on iOS, Google Tink on Android), `@noble/ciphers` as the reference and the fallback ("Crypto", below); `@noble/hashes` (SHA-256, HKDF); randomness via `globalThis.crypto.getRandomValues`, polyfilled once at app entry from `expo-crypto`
 - **State**: React Context + hooks over a memoised per-group derived state; SQLite is the source of truth
 - **Background**: expo-background-task, expo-notifications (local only)
 - **Camera and QR**: expo-camera for reading invite QR codes only (permission text "Even uses the camera only to read invite QR codes."; no microphone; Android blocks `RECORD_AUDIO` and `WRITE_SETTINGS`), `uqr` to encode the invite link (`jsqr` in tests only), expo-brightness to lift the screen while a code is shown
@@ -148,6 +148,81 @@ database, the own name and emoji included: a restored Android phone starts
 with no groups and a new device id, and recovery there is a re-shared invite
 or the group file (checked on the emulator, 2 October 2026). The privacy
 page states both.
+
+## Crypto
+
+Every event body is sealed with XChaCha20-Poly1305, the IETF construction
+(PROTOCOL.md §3): the group's 32-byte encryption key (above), a fresh 24-byte
+nonce from the platform CSPRNG for every seal, the 16-byte tag appended, the
+associated data `even/v1|<groupId>|<v>|<id>`, and the plaintext padded so the
+ciphertext is a multiple of 256 bytes. `core/envelope.ts` does all of that
+framing; the AEAD below it sees only bytes, and choosing one changes nothing
+on the wire.
+
+**One interface, two implementations.** `core/aead.ts` defines `Aead`: seal,
+open, and `openMany`, many envelopes under one key. `nobleAead`
+(@noble/ciphers) is the default, the reference every other implementation is
+tested against, and what runs wherever no native one is installed: Node
+tests, the web, a build without the module, a module that fails its
+self-test. Key derivation (@noble/hashes HKDF) and nonces stay in JavaScript
+whichever is installed.
+
+**Native.** `modules/even-crypto`, a local Expo module of synchronous JSI
+functions over typed arrays: JavaScript allocates every output and the module
+fills it in place, with no base64 and nothing through the bridge. Each
+function checks every length before it touches a buffer, keeps nothing and
+logs nothing, and both libraries verify the tag in constant time.
+
+- iOS: libsodium's `crypto_aead_xchacha20poly1305_ietf_*`, from swift-sodium
+  0.11.0's `Clibsodium` (libsodium 1.0.22), a Swift package the podspec adds
+  with React Native's `spm_dependency`; `Package.resolved` pins the commit.
+  swift-sodium's only CocoaPods release (0.9.1, libsodium 1.0.18, 2020) does
+  not link: its `libSodium.a` and `libsodium.a` collide on a case-insensitive
+  file system.
+- Android: Google Tink 1.23.0, `InsecureNonceXChaCha20Poly1305` (the class
+  Tink's public `subtle.XChaCha20Poly1305` wraps, taking the nonce from the
+  caller). Pure Java: no `.so` per ABI, nothing to align for 16 KB pages, no
+  JNA, which is why it was chosen over lazysodium-android. An internal Tink
+  API, so the version is pinned exactly.
+
+**Installed only after a self-test.** `openAppServices` (the background task
+included) calls `installNativeAead` (`services/crypto/nativeAead.ts`) once per
+process, before the store opens. The native implementation must seal the
+draft-irtf-cfrg-xchacha-03 A.3.1 vector to its published bytes and open it,
+refuse a changed tag, ciphertext byte, AAD byte and nonce byte, and agree
+with @noble on empty inputs, offset views, a batch with a forgery in it and
+one random case in both directions; otherwise the app keeps @noble. Either
+way one line of fixed words is logged, with a code on failure:
+`[even] crypto: native libsodium 1.0.22, self-test passed in 9.2 ms`, or
+`[even] crypto: @noble, the native module failed its self-test (vector-open)`.
+It takes 5 to 13 ms. (It caught a real fault on its first Android run: the
+module passed Tink's decrypt arguments in the wrong order.)
+
+**Batches.** The derive opens up to 200 envelopes not yet in the decode cache
+with one core `openMany`, which is one native call: every nonce, AAD and
+ciphertext packed into one array, their lengths into another, the plaintexts
+back in a third. Each envelope's outcome is exactly what `open` would return
+or throw; if the batch call fails, they are opened one by one. The pull,
+rotation and moves still open and seal one envelope per call.
+
+**Tested in both places.** `@even/core/testing` (test data and checks only;
+nothing the app ships imports it) holds the vectors @noble is tested against
+(all 315 Wycheproof XChaCha20-Poly1305 tests, StableLib's vector, which is
+draft A.3.1, and the HChaCha20 vector), `aeadVectorChecks` and
+`aeadCrossCheck` for any implementation, and the envelope tests as a portable
+suite. Node runs them on @noble and on a node:crypto implementation (OpenSSL's
+ChaCha20-Poly1305 under an HChaCha20 subkey). A phone runs them on the native
+one through `even://dev/crypto` (development builds only), with a seeded
+cross-check of thousands of random cases against @noble, plaintexts of 0 to
+8,192 bytes, and the timings in "Performance: large groups".
+
+**Threat model.** Nothing changes on the wire or on disk, and nothing new
+reaches the network. On iOS libsodium reads and writes the JavaScript buffers
+in place and wipes the subkey it derives; on Android the key, the ciphertext
+and the plaintext are copied into Java arrays for the length of one call and
+left to the garbage collector, as JavaScript's own copies are. Nothing is
+kept between calls or logged. The native code is new trusted code in the app:
+libsodium and Tink, each pinned.
 
 ## Event log
 
@@ -2182,12 +2257,40 @@ live expenses, 3,365 activity items):
 | … longest block while it opens | 4.8–11.1 s | 223–309 |
 | … rows still being mounted until | 7.7–11.1 s | about 1.7 s |
 
-What is left is the crypto itself: about 0.2 ms an envelope to open without a
-JIT, 1.4 s for 3,400 on the simulator, now in slices. Native
-XChaCha20-Poly1305 is its own track (review H3, recommendation 1). Two blocks
-remain in the harness: a rotation's single `insertEvents` of the whole copied
-log validates every row in one go (457 ms at 10,000), and node:sqlite runs SQL
-on the JavaScript thread, which expo-sqlite does not.
+What was left then was the crypto itself: about 0.2 ms an envelope to open
+without a JIT, 1.4 s for 3,400 on the simulator, in slices. Native
+XChaCha20-Poly1305 ("Crypto", above; review H3, recommendation 1) takes that to
+milliseconds. Measured on 2 October 2026 with `even://dev/crypto`: the dev
+seed's `large` mix in a scratch database, opened cold in a fresh state store
+on @noble and natively in the same session, debug builds, the time inside the
+AEAD in brackets, then the longest block:
+
+| Cold open, ms (AEAD) / longest block | @noble | native |
+|---|---:|---:|
+| 3,400 events, iPhone 17 simulator (libsodium) | 1,370–1,383 (711–714) / 80–93 | 679–687 (6.5–6.6) / 55–65 |
+| 10,000 events, iPhone 17 simulator | 4,203–4,449 (2,124–2,158) / 184–449 | 2,110–2,249 (20) / 169–341 |
+| 3,400 events, Pixel 10 emulator (Tink), debuggable | 1,890–1,917 (756–776) / 199–273 | 1,240–1,254 (96–100) / 166–167 |
+| 10,000 events, Pixel 10 emulator, debuggable | 5,509–5,635 (2,266–2,326) / 402–426 | 3,678–3,692 (293–296) / 352 |
+| 3,400 events, Pixel 10 emulator, not debuggable | 1,770–1,838 (736–769) / 162–186 | 1,143–1,175 (31–35) / 125–141 |
+| 10,000 events, Pixel 10 emulator, not debuggable | 5,263–5,468 (2,207–2,274) / 287–330 | 3,515–3,545 (94–102) / 247–275 |
+
+The seeded `large` group itself in the app's own store on the simulator opens
+cold in 675–704 ms instead of 1,399–1,410, and Groups fills its row in 711–732
+instead of 1,379–1,427. A debuggable Android build runs Java with ART's
+optimisations off, so Tink there is three times slower than in a release build;
+the "not debuggable" rows are the same debug build with `debuggable false`, for
+ART as a release build has it. One native call per envelope instead of one per
+slice of 200 costs twice the AEAD time (iOS 16.7 against 7.4 ms for 3,400,
+Android 68 against 36).
+
+What is left of a cold open is JavaScript: parsing each stored envelope's JSON
+and decoding its base64url (about 330 ms of the 680 at 3,400 on the simulator),
+then each body's UTF-8, JSON and schema validation, and the reduce (about
+55 ms). A release build runs Hermes bytecode and is faster at all of it; the
+harness is development-only, so that was not measured. Two blocks remain in
+the Node harness: a rotation's single `insertEvents` of the whole copied log
+validates every row in one go (457 ms at 10,000), and node:sqlite runs SQL on
+the JavaScript thread, which expo-sqlite does not.
 
 ## On-device capture (designed for, not in v1)
 

@@ -194,6 +194,13 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   `res/font/even_inter.xml`; the colours mirror `src/theme/themes.ts`, so change them together). Prebuild with
   `--no-clean` keeps items it does not set in `styles.xml` and never touches the `even_*` files; run on a copy of
   the repository, it left `android/` unchanged.
+- `modules/even-crypto` (the native XChaCha20-Poly1305, design.md "Crypto") depends on Google Tink,
+  `com.google.crypto.tink:tink-android:1.23.0` from Maven Central, pinned in its `android/build.gradle`. It is pure
+  Java: no native library, so nothing per ABI and nothing to align for 16 KB pages. R8 keeps the few Tink classes the
+  module uses and drops the rest (gson included) with no keep rules. It uses an internal Tink class,
+  `InsecureNonceXChaCha20Poly1305`, so on any upgrade check its constructor and its (nonce, data, aad) argument
+  order; if they change, the startup self-test fails and the app keeps @noble (`[even] crypto: @noble, the native
+  module failed its self-test (...)` in logcat), slower but correct.
 - R8 is on (`android.enableMinifyInReleaseBuilds=true` in `android/gradle.properties`, the Expo SDK 58 default).
   If a release build misbehaves where a debug build does not, add keep rules to `android/app/proguard-rules.pro`.
   Every native change (anything under `android/`, a native dependency, `app.json`'s native config) gets a

@@ -141,7 +141,7 @@ accounts, no ads, and no one but the group able to read it.
 |---|---|
 | Expo / React Native | Same stack as Stow; one codebase for both stores. |
 | Event log, not a mutable table | Additive merges need no conflict resolution; history is the audit trail. |
-| Client-side encryption with `@noble/ciphers` | Pure TypeScript runs identically in the app and in tests; audited; no native module. |
+| Client-side encryption with `@noble/ciphers`, natively where the build has it | Pure TypeScript runs identically in the app and in tests; audited; it stays the reference and the fallback. The native XChaCha20-Poly1305 (libsodium on iOS, Tink on Android; review H3) only makes a large group open in milliseconds, changes nothing on the wire, and is used only after it agrees with @noble at startup. |
 | Hybrid timestamp per event | Last-writer-wins that survives wrong phone clocks. |
 | Random envelope ids, not ULIDs | The one field outside the ciphertext leaks no time. |
 | Invite code alongside link | There is no deferred deep linking without a third party; a fresh install has nothing to open. |

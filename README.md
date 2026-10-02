@@ -40,7 +40,8 @@ server copy disappears, the next member to sync rebuilds it. See `design.md` for
 
 - React Native + Expo SDK 58 (Expo Router), TypeScript strict; iOS 27 and later
 - SQLite via expo-sqlite for the local log
-- `@noble/ciphers` and `@noble/hashes` for XChaCha20-Poly1305 and HKDF
+- `@noble/ciphers` and `@noble/hashes` for XChaCha20-Poly1305 and HKDF; XChaCha20-Poly1305 also natively
+  (`modules/even-crypto`: libsodium on iOS, Google Tink on Android) once it agrees with @noble at startup
 - expo-secure-store for group secrets
 - Vitest for the pure core package
 

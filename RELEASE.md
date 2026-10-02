@@ -225,6 +225,20 @@ when removing a plugin or native dependency or upgrading the SDK, since
 Never edit files in `ios/` by hand; the next clean prebuild discards them. Put
 native settings in `app.json` or a config plugin.
 
+One native dependency is a Swift package rather than a pod: libsodium, for the
+native XChaCha20-Poly1305 (`modules/even-crypto`, design.md "Crypto").
+`modules/even-crypto/ios/EvenCrypto.podspec` adds swift-sodium's `Clibsodium`
+product to the Pods project with React Native's `spm_dependency`, so
+`xcodebuild` fetches it from GitHub before it builds (about 76 MB; the Pods
+cache in `ios.yml` does not hold it), at the commit that
+`ios/Even.xcworkspace/xcshareddata/swiftpm/Package.resolved` pins. Commit that
+file whenever it changes. To move to another release: change `version` in the
+podspec, `pod install`, build once (Xcode rewrites `Package.resolved`), check
+that the tag is signed and that a development build logs the new libsodium
+(`[even] crypto: native libsodium <version>, self-test passed`), and commit
+both files. The link prints `libtool: warning: ... has no symbols` for
+libsodium's objects built for other CPUs; that is expected.
+
 The workflow sets `CFBundleShortVersionString` and `CFBundleVersion` in its own
 checkout just before archiving (prebuild writes literal values into
 `Info.plist`, so build settings alone would not reach the app).
