@@ -177,6 +177,15 @@ const ICONS = {
       path('M12 17.2v.3'),
     ],
   },
+  /** An unknown link or route 24 (NotFound). */
+  question: {
+    stroke: 2,
+    join: 'round',
+    shapes: [
+      path('M7.8 8.4a4.2 4.2 0 1 1 6.9 3.22c-1.5 1-2.7 1.6-2.7 3.3v.4'),
+      path('M12 19.2v.3'),
+    ],
+  },
   /** "Import group file" (Groups 18, App settings 20). */
   import: {
     stroke: 2,

@@ -1410,7 +1410,14 @@ checksum, and canonicalises the server URL.
   and never carries a payload (`even://i#…` goes to Groups); `even://join`
   opens the Groups screen with "Join with code" expanded, so the user pastes
   the code they just copied. `canonicalOrigin` uses a small pure-TypeScript URL
-  parser in `core`, not Hermes's incomplete `URL`.
+  parser in `core`, not Hermes's incomplete `URL`. A link or path the app has
+  no route for opens the NotFound board (`src/app/+not-found.tsx`, in place
+  of Expo Router's Unmatched page): "Even can't open this link." and "It may
+  be incomplete, or need a newer Even.", with Go to Groups, which replaces
+  the stack with Groups. It never shows the path, and there is no sitemap:
+  app.json turns Expo Router's `_sitemap` route off (in a release build it
+  crashed the app), so `even://_sitemap` lands there too, as `even://dev/seed`
+  does in a release build, whose bundle has no dev routes.
 - **Paste**: the Groups screen has "Join with code." It accepts the bare
   payload or a full link and strips the URL. A checksum failure says "That
   code isn't complete. Copy it again." A code that reads, pasted, typed,
@@ -1555,7 +1562,7 @@ src/app/
 │   ├── [expenseId].tsx      → Expense detail
 │   ├── settle.tsx           → Record a payment (sheet)
 │   └── settings.tsx         → Invite, members, server + usage + move, background updates, exports, regenerate invite link, leave
-└── +not-found.tsx
+└── +not-found.tsx           → NotFound: a link or route the app doesn't know
 ```
 
 Three primary screens: **Groups**, **Group**, **Add expense**. Everything else

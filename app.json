@@ -59,7 +59,8 @@
       [
         "expo-router",
         {
-          "root": "./src/app"
+          "root": "./src/app",
+          "sitemap": false
         }
       ],
       "expo-sqlite",
