@@ -1894,7 +1894,12 @@ crypto:
   derive yields every 200 envelopes it opens, the pull every 200 it
   classifies, and a server move's, a rotation's and a rescue's re-encryption
   every 100, so React commits and touches are answered while they run. A
-  zero-delay timer, which React Native runs at once. While a group's first
+  zero-delay timer, which React Native runs at once, in the foreground only:
+  Android fires no timer out of it, a background task included, so there a
+  yield is `setImmediate` (a microtask in React Native; nothing on screen
+  needs the thread), and a yield waiting on a timer when the app is put
+  away goes on at once (`services/appForeground.ts`, from AppState). The
+  timings below are the foreground's. While a group's first
   derive runs, Group draws its loading state: the nav bar with the group's
   cached name, nothing under it.
 - **One decode cache** (Sync engine, above): an envelope is opened once per

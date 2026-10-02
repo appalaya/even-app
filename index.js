@@ -5,6 +5,8 @@
 
 // crypto.getRandomValues, before anything can call @even/core.
 import './src/polyfills';
+// Whether the app is in the foreground, for yieldToEventLoop: out of it, Android fires no timer to yield on.
+import './src/services/appForeground';
 // TaskManager.defineTask for the background refresh (idempotent), before the OS asks for the task.
 import './src/services/background/task';
 // Expo Router's own entry: registers the root component.
