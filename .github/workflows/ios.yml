@@ -66,7 +66,7 @@ jobs:
     env:
       HAS_DEV_CERT: ${{ secrets.IOS_DEV_CERT_P12 != '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Select Xcode
         run: |
@@ -145,7 +145,7 @@ jobs:
           rm -f "$p12"
           security find-identity -v -p codesigning "$keychain"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -154,7 +154,7 @@ jobs:
         run: npm ci
 
       - name: Restore CocoaPods
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ios/Pods
           key: pods-${{ runner.os }}-${{ runner.arch }}-xcode27-${{ hashFiles('ios/Podfile.lock') }}
@@ -216,7 +216,7 @@ jobs:
           echo "IPA_PATH=$ipa" >> "$GITHUB_ENV"
 
       - name: Keep the .ipa and dSYMs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: even-ios-${{ steps.version.outputs.version }}-${{ steps.version.outputs.build }}
           path: |
@@ -240,7 +240,7 @@ jobs:
 
       - name: Keep the build logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: xcodebuild-logs-${{ steps.version.outputs.build }}
           path: ${{ runner.temp }}/logs/
@@ -258,7 +258,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Write the App Store Connect API key
         env:
