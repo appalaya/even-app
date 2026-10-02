@@ -65,7 +65,7 @@ association file not parsing or not naming the app. It lists every `PLACEHOLDER`
 
 ```bash
 # Cloudflare's asset server and the Worker script, locally: _headers, /i, 404, /api/*
-npx wrangler@4 dev --config web/wrangler.jsonc --port 4173 --persist-to .wrangler/state
+npx wrangler@4.146.0 dev --config web/wrangler.jsonc --port 4173 --persist-to .wrangler/state
 ```
 
 It needs no Cloudflare account and deploys nothing. `--persist-to` keeps Wrangler's local state out of `web/`:
@@ -348,7 +348,7 @@ Plan limits (read 2026-09-27):
 ### Trying the form locally
 
 ```bash
-npx wrangler@4 dev --config web/wrangler.jsonc --port 4173 --persist-to .wrangler/state \
+npx wrangler@4.146.0 dev --config web/wrangler.jsonc --port 4173 --persist-to .wrangler/state \
   --var SITE_ORIGIN:http://localhost:4173 \
   --var TURNSTILE_SITE_KEY:1x00000000000000000000AA \
   --var TURNSTILE_SECRET_KEY:1x0000000000000000000000000000000AA \
