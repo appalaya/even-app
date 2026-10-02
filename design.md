@@ -1825,6 +1825,22 @@ Copy no board draws:
   whose Diagnostics has no model sections: "What the app knows about sync.
   Nothing here leaves your phone." (`diagnosticsCaption`)
 
+Boards added 2 October 2026 (each with its dark twin):
+
+- AppError, the root error screen: "Something went wrong.", "If it keeps
+  happening, let us know.", "Try again" and "Report a problem".
+- NotFound, an unknown link or route: "Even can't open this link.", "It may
+  be incomplete, or need a newer Even." and "Go to Groups".
+- MoveEntriesPrompt: "Move your Banff 2026 entries into the new group?", "3
+  entries you added on this phone aren't in it yet. Everyone in the new group
+  will see them." (one entry: "1 entry you added on this phone isn't in it
+  yet."), "Move" and "Not now".
+- ContactStates draws strings the contact page already has, word for word:
+  "To use a different link, reload this page." is both the closed link
+  field's hint and the alert when a report is sent with no group, and "We'll
+  receive the group id ab12…u7Qx on sync.even.appalaya.com, never its key or
+  contents." is the line under the field once a pasted link is read.
+
 ## Key patterns
 
 **Minor units, always.** Integers below the formatting layer.
