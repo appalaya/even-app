@@ -223,6 +223,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 }
 .input::placeholder { color: var(--muted); opacity: 1; }
 .input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* The link field once closed (ContactStates): a fill-coloured, muted box; WebKit would otherwise dim it with opacity. */
+.input:disabled { background: var(--fill); color: var(--muted); -webkit-text-fill-color: var(--muted); opacity: 1; cursor: default; }
 input.input, select.input { height: 52px; padding: 0 16px; }
 textarea.input { height: 120px; padding: 14px 16px; resize: vertical; }
 textarea.input-tall { height: 168px; }
