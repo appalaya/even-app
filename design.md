@@ -960,6 +960,20 @@ couldn't open your groups." and "Try again. If it keeps happening, restart
 your phone.", with Try again (opens the store again) and Get help (the contact
 page in the in-app browser). The error is logged.
 
+When anything under the root layout throws while rendering (a screen, a sheet,
+a layout: a bug nobody foresaw, as pre-launch review H1 found one), the app
+shows the AppError board instead of closing: "Something went wrong." and "If
+it keeps happening, let us know.", with Try again and Report a problem (the
+contact page with `#purpose=help` in the in-app browser). It is the root
+layout's `ErrorBoundary` (Expo Router renders it in place of the layout, so it
+brings its own providers, in the Appearance the app last applied). Try again
+draws the root layout again: every screen remounts, and the app comes back on
+Groups. The log line is fixed words and the error's name and code
+(`describeForLog`), never its message; in a release build React Native's own
+report of a caught render error, which carries the message and the component
+stack, is dropped (`services/caughtRenderErrors.ts`). Uncaught errors are
+reported as before.
+
 ## Sync engine
 
 `src/services/sync/` — one engine, one HTTP transport, plus group-file I/O.

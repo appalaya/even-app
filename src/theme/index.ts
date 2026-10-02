@@ -1,4 +1,5 @@
 export {
+  lastAppliedAppearance,
   ThemeProvider,
   useTheme,
   type ResolvedTheme,

@@ -3,7 +3,14 @@ import { describe, expect, it } from 'vitest';
 
 import type { ServerInfo } from '../../services/sync/types';
 
-import { CONTACT_PAGE, isAppalayaServer, reportUrl, serverDetails, shortGroupId } from './contact';
+import {
+  CONTACT_PAGE,
+  HELP_PAGE,
+  isAppalayaServer,
+  reportUrl,
+  serverDetails,
+  shortGroupId,
+} from './contact';
 
 const GROUP_ID = 'ab12cdEFghIJklMNopQRstUVwxYZ012345678-_u7Qx';
 
@@ -38,6 +45,14 @@ describe('isAppalayaServer', () => {
     expect(isAppalayaServer('https://sync.even.appalaya.com.example.net')).toBe(false);
     expect(isAppalayaServer('http://sync.even.appalaya.com')).toBe(false);
     expect(isAppalayaServer('')).toBe(false);
+  });
+});
+
+describe('HELP_PAGE', () => {
+  it("is the contact page on Get help, with nothing else in the fragment (AppError's Report a problem)", () => {
+    expect(HELP_PAGE.split('#')[0]).toBe(CONTACT_PAGE);
+    const params = new URLSearchParams(HELP_PAGE.slice(HELP_PAGE.indexOf('#') + 1));
+    expect([...params.entries()]).toEqual([['purpose', 'help']]);
   });
 });
 
