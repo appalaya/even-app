@@ -167,6 +167,10 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
   // A different invite pasted into the address bar only changes the fragment, which does not reload the page.
   window.addEventListener('hashchange', function () { location.reload(); });
 
+  // A right-to-left override or an isolate (packages/core/src/schema.ts, hasBidiControl) reorders the text around
+  // it, so a crafted g could make this page show one name while the app, after decodeInvite drops it, shows none.
+  var BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069]/;
+
   // PROTOCOL.md section 8.2: base64url(JSON {v, s, k, h, g?, cur?}). Shape only; the app verifies the checksum.
   function parse(code) {
     if (!/^[A-Za-z0-9_-]{16,4096}$/.test(code)) return null;
@@ -187,7 +191,11 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
     if (typeof p.h !== 'string' || !/^[A-Za-z0-9_-]{6}$/.test(p.h)) return null;
     if (has(p, 'g') && (typeof p.g !== 'string' || Array.from(p.g).length > 80)) return null;
     if (has(p, 'cur') && (typeof p.cur !== 'string' || !/^[A-Z]{3}$/.test(p.cur))) return null;
-    return { g: has(p, 'g') ? p.g.trim() : '', cur: has(p, 'cur') ? p.cur : '' };
+    // A g holding a bidirectional-control character is dropped, never shown, the same as decodeInvite.
+    return {
+      g: has(p, 'g') && !BIDI_CONTROL_RE.test(p.g) ? p.g.trim() : '',
+      cur: has(p, 'cur') ? p.cur : '',
+    };
   }
 
   // "Canadian dollar", as the app's currencyName: Intl's unit name for one, sentence case; the code if there is none.
