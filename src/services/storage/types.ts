@@ -313,6 +313,11 @@ export interface Store {
   latestTs(localId: string): Promise<number | null>;
   countByStatus(localId: string): Promise<EventCounts>;
   /**
+   * The usage meter's figures: the group's rows that hold a structurally valid envelope (any status, any `v`; not
+   * junk), and the sum of their stored sizes (PROTOCOL.md §4: decoded `c` + 64), from `events.size` in one query.
+   */
+  usage(localId: string): Promise<{ bytes: number; events: number }>;
+  /**
    * Keeps the `keep` most recently inserted `undecryptable` rows (SQLite rowid order; `seq` is not usable
    * because `resetAcked` clears it) and deletes the rest; returns how many were deleted. The sync engine calls it
    * with 1000 in each pulled page's transaction that brought one; settings' "clear unreadable entries" calls it

@@ -15,8 +15,12 @@ import {
   SCHEMA_VERSION,
   type Migration,
 } from './schema';
-import { openSqliteStore } from './sqliteStore';
-import { localRow, makeGroup } from './testFixtures';
+import { envelopeStoredSize, newId } from '@even/core';
+
+import { storedSizeOfText } from './envelopeSize';
+import { envelopeText, openSqliteStore } from './sqliteStore';
+import { localRow, makeEnvelope, makeGroup, pulledRow } from './testFixtures';
+import type { NewEventRow } from './types';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -42,13 +46,24 @@ async function columns(
   return db.all(`SELECT name, "notnull", pk FROM pragma_table_info(?) ORDER BY cid`, [table]);
 }
 
+/** Inserts rows with the v1 columns only, as a build before v4 wrote them (the store writes the current schema). */
+async function insertBefore4(db: SqlDriver, localId: string, rows: NewEventRow[]): Promise<void> {
+  for (const r of rows) {
+    await db.run(
+      `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [localId, r.id, r.origin, r.acked ? 1 : 0, r.seq, r.ts, r.envelope, r.status],
+    );
+  }
+}
+
 describe('migrate', () => {
   it('creates the design.md schema on an empty database', async () => {
     const db = driverFor();
     expect(await readSchemaVersion(db)).toBe(0);
     await migrate(db);
     expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
 
     const objects = await db.all<{ type: string; name: string }>(
       `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
@@ -85,6 +100,7 @@ describe('migrate', () => {
       ['envelope', 0],
       ['status', 0],
       ['push_state', 0],
+      ['size', 0],
     ]);
     expect((await columns(db, 'prefs')).map((c) => c.name)).toEqual(['key', 'value']);
     expect((await columns(db, 'pending_deletes')).map((c) => [c.name, c.pk, c.notnull])).toEqual([
@@ -103,7 +119,7 @@ describe('migrate', () => {
     const store = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 1) });
     const group = makeGroup();
     await store.upsertGroup(group);
-    await store.insertEvents(group.localId, [localRow(1_760_000_000_001)]);
+    await insertBefore4(db, group.localId, [localRow(1_760_000_000_001)]);
     await db.run('INSERT INTO pending_deletes (local_id, server_url) VALUES (?, ?)', [
       group.localId,
       group.serverUrl,
@@ -135,7 +151,7 @@ describe('migrate', () => {
     );
     const before = Date.now();
 
-    await migrate(db);
+    await migrate(db, MIGRATIONS.slice(0, 3));
 
     expect(await readSchemaVersion(db)).toBe(3);
     const [debt, ...rest] = await (await openSqliteStore(db)).pendingDeletes.list();
@@ -149,6 +165,42 @@ describe('migrate', () => {
     // strftime('%s') has whole seconds.
     expect(debt?.createdAt).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
     expect(debt?.createdAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('v4 upgrades a v3 database: every row gets its stored size, a page at a time; junk gets none', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 3));
+    const store = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 3) });
+    const group = makeGroup();
+    await store.upsertGroup(group);
+    // More than one page of v4's 300, and every kind of row: readable, another v, junk, an unopened envelope.
+    const rows = Array.from({ length: 650 }, (_, i) => localRow(1_760_000_000_000 + i));
+    const other = makeEnvelope(newId(), 2);
+    rows.push(
+      pulledRow(1, null, {
+        id: other.id,
+        envelope: envelopeText(other),
+        status: 'unsupported_envelope',
+      }),
+      pulledRow(2, null, { envelope: '{"junk":true}' }),
+      pulledRow(3, null),
+    );
+    await insertBefore4(db, group.localId, rows);
+
+    await migrate(db);
+
+    const stored = await db.all<{ envelope: string; size: number | null }>(
+      'SELECT envelope, size FROM events ORDER BY rowid',
+    );
+    expect(stored).toHaveLength(653);
+    for (const row of stored) expect(row.size).toBe(storedSizeOfText(row.envelope));
+    expect(stored.filter((r) => r.size === null)).toHaveLength(1); // the junk
+    expect(stored[0]?.size).toBe(envelopeStoredSize(JSON.parse(stored[0]?.envelope ?? '')));
+    const upgraded = await openSqliteStore(db);
+    expect(await upgraded.usage(group.localId)).toEqual({
+      events: 652,
+      bytes: stored.reduce((sum, r) => sum + (r.size ?? 0), 0),
+    });
   });
 
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {

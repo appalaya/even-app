@@ -17,6 +17,7 @@
  */
 import { envelopeShape, isB64url, isEnvelope, isId } from '@even/core';
 
+import { storedSizeOfText } from '../storage/envelopeSize';
 import type {
   EventCounts,
   EventRow,
@@ -453,6 +454,20 @@ export class FakeStore implements Store {
       if (row.pushState === 'rejected') rejected += 1;
     }
     return { byStatus, outbox, rejected };
+  }
+
+  /** sqliteStore.ts's `SUM(size)`, measured from each row's text as it would have been stored. */
+  async usage(localId: string): Promise<{ bytes: number; events: number }> {
+    this.enter('usage', [localId]);
+    let bytes = 0;
+    let events = 0;
+    for (const row of this.rows(localId).values()) {
+      const size = storedSizeOfText(row.envelope);
+      if (size === null) continue;
+      bytes += size;
+      events += 1;
+    }
+    return { bytes, events };
   }
 
   async pruneUndecryptable(localId: string, keep: number): Promise<number> {

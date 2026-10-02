@@ -3,8 +3,6 @@
  * published caps, for group settings, with a warning at 80%. Sizes follow PROTOCOL.md §4's stored size
  * (decoded `c` + 64), the same definition the server enforces.
  */
-import { envelopeShape, envelopeStoredSize, type Envelope } from '@even/core';
-
 import type { Store } from '../storage/types';
 import type { ServerInfo } from './types';
 
@@ -29,26 +27,15 @@ export interface GroupUsage {
 
 /**
  * Counts every stored envelope that a server would hold. Rows that are not structurally valid envelopes (junk
- * pulled as `undecryptable`) are never accepted by a server and are not counted.
+ * pulled as `undecryptable`) are never accepted by a server and are not counted. One SQL sum over each row's stored
+ * size (`events.size`), kept since the row was written: no envelope is read or parsed (pre-launch review H3).
  */
 export async function groupUsage(
-  store: Pick<Store, 'listEnvelopes'>,
+  store: Pick<Store, 'usage'>,
   localId: string,
   info: ServerInfo,
 ): Promise<GroupUsage> {
-  let bytes = 0;
-  let events = 0;
-  for (const row of await store.listEnvelopes(localId)) {
-    let value: unknown;
-    try {
-      value = JSON.parse(row.envelope);
-    } catch {
-      continue;
-    }
-    if (!envelopeShape(value).ok) continue;
-    bytes += envelopeStoredSize(value as Envelope);
-    events += 1;
-  }
+  const { bytes, events } = await store.usage(localId);
   const maxBytes = info.limits.max_group_bytes;
   const maxEvents = info.limits.max_group_events;
   const bytesFraction = maxBytes > 0 ? bytes / maxBytes : 0;

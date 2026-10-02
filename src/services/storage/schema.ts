@@ -16,6 +16,7 @@
  *   store validates every enum before binding it.
  */
 import type { SqlDriver } from './driver';
+import { storedSizeOfText } from './envelopeSize';
 import { StoreError } from './errors';
 
 export interface Migration {
@@ -102,10 +103,46 @@ const V3 = statements(
   `UPDATE pending_deletes SET created_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000`,
 );
 
+/** Rows measured per statement in v4: three bound values each (rowid and size in the CASE, rowid in the IN list). */
+const V4_PAGE = 300;
+
+/**
+ * v4: `events.size`, each row's stored size as a server counts it (PROTOCOL.md §4: decoded `c` + 64), null for text
+ * that is not an envelope: the usage meter sums it in SQL instead of parsing every envelope (pre-launch review H3).
+ * Rows already stored are measured here, a page at a time. Ciphertext sizes only: no envelope is rewritten and
+ * nothing decrypted is written.
+ */
+async function V4(tx: SqlDriver): Promise<void> {
+  await tx.run('ALTER TABLE events ADD COLUMN size INTEGER');
+  let after = 0;
+  for (;;) {
+    const rows = await tx.all<{ rowid: number; envelope: string }>(
+      'SELECT rowid, envelope FROM events WHERE rowid > ? ORDER BY rowid LIMIT ?',
+      [after, V4_PAGE],
+    );
+    const last = rows.at(-1);
+    if (last === undefined) return;
+    const sized: [number, number][] = [];
+    for (const row of rows) {
+      const size = storedSizeOfText(row.envelope);
+      if (size !== null) sized.push([row.rowid, size]);
+    }
+    if (sized.length > 0) {
+      await tx.run(
+        `UPDATE events SET size = CASE rowid ${sized.map(() => 'WHEN ? THEN ?').join(' ')} END
+         WHERE rowid IN (${sized.map(() => '?').join(', ')})`,
+        [...sized.flat(), ...sized.map(([rowid]) => rowid)],
+      );
+    }
+    after = last.rowid;
+  }
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, description: 'initial schema', up: V1 },
   { version: 2, description: 'pending_deletes.auth_token', up: V2 },
   { version: 3, description: 'pending_deletes.created_at and attempts', up: V3 },
+  { version: 4, description: 'events.size', up: V4 },
 ];
 
 /** The schema version this build writes. */

@@ -899,6 +899,7 @@ CREATE TABLE events (
   envelope   TEXT NOT NULL,                -- JSON, ciphertext for the CURRENT server's group id
   status     TEXT NOT NULL,                -- 'ok' | 'undecryptable' | 'invalid' | 'unsupported_envelope' | 'unsupported_body'
   push_state TEXT NOT NULL DEFAULT 'pending',   -- 'pending' | 'rejected'
+  size       INTEGER,                      -- stored size as a server counts it (decoded c + 64); null if not an envelope
   PRIMARY KEY (local_id, id)
 );
 CREATE INDEX events_outbox ON events (local_id) WHERE acked = 0 AND push_state = 'pending';
@@ -943,6 +944,11 @@ version bump; shipped migrations are never edited.
   build that wrote one shipped).
 - v3: adds `pending_deletes.created_at` and `attempts`. A debt recorded
   before it counts its age from the migration, with no attempts.
+- v4: adds `events.size` (pre-launch review H3), the row's stored size per
+  PROTOCOL.md §4, null for text that is not an envelope, so the usage meter
+  is one SQL sum. Rows already stored are measured by the migration, 300 at a
+  time; no envelope is rewritten. It is a size of ciphertext, not decrypted
+  content.
 
 When the store cannot open (a database written by a newer build, a failed
 migration), the app shows the StartupError board instead of Groups: "Even
@@ -1131,6 +1137,9 @@ after a move) records the debt anew only once the old one is gone.
 
 **Usage meter.** The client sums its own envelope sizes per group and shows
 usage against the server's published caps in settings, with a warning at 80%.
+The sum is one query over `events.size`, kept with each row as it is written
+(`SUM(size)`, `COUNT(size)`); junk, which no server would accept, has no size
+and is not counted.
 Events are immutable and a full group stays full, so the only remedy is a new
 group; v2 may add a checkpoint event.
 

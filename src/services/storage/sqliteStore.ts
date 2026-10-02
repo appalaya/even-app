@@ -10,7 +10,7 @@
  * - Batches are chunked to at most 999 bound parameters per statement: one round trip per chunk instead of one
  *   per row (each expo-sqlite call crosses the native bridge), under SQLite's historical parameter limit.
  */
-import { envelopeShape, isEnvelope, type Envelope } from '@even/core';
+import { envelopeShape, envelopeStoredSize, isEnvelope, type Envelope } from '@even/core';
 
 import type { SqlDriver, SqlValue } from './driver';
 import { StoreError } from './errors';
@@ -183,6 +183,8 @@ interface CheckedEvent {
   envelope: string;
   status: EventStatus;
   pushState: PushState;
+  /** `events.size`: the stored size as a server counts it, or null for text that is not an envelope. */
+  size: number | null;
 }
 
 /**
@@ -232,6 +234,8 @@ function checkNewEvent(row: NewEventRow, index: number): CheckedEvent {
       row.pushState === undefined
         ? 'pending'
         : checkEnum(row.pushState, PUSH_STATES, `${at}.pushState`),
+    // The shape was checked above: measured from it, not checked again (insertEvents is on every pulled page).
+    size: shape.ok ? envelopeStoredSize(parsed as Envelope) : null,
   };
 }
 
@@ -390,7 +394,7 @@ export class SqliteStore implements Store {
     checkLocalId(localId);
     checkServerUrl(serverUrl);
     if (!Array.isArray(reencrypted)) invalid('reencrypted must be an array');
-    const replacements = new Map<string, string>();
+    const replacements = new Map<string, { text: string; size: number }>();
     reencrypted.forEach((entry, index) => {
       const at = `reencrypted[${index}]`;
       if (typeof entry !== 'object' || entry === null) invalid(`${at} must be an object`);
@@ -398,7 +402,10 @@ export class SqliteStore implements Store {
       if (!isEnvelope(entry.envelope)) invalid(`${at}.envelope is not a v1 envelope`);
       if (entry.envelope.id !== id) invalid(`${at}.envelope.id must equal ${at}.id`);
       if (replacements.has(id)) invalid(`${at}: id ${id} appears twice`);
-      replacements.set(id, envelopeText(entry.envelope));
+      replacements.set(id, {
+        text: envelopeText(entry.envelope),
+        size: envelopeStoredSize(entry.envelope),
+      });
     });
 
     await this.db.transaction(async (tx) => {
@@ -422,12 +429,19 @@ export class SqliteStore implements Store {
       await tx.run(`DELETE FROM events WHERE local_id = ? AND status IN ${UNREOPENABLE_IN}`, [
         localId,
       ]);
-      // (MAX_PARAMS - 1) / 3: each row binds id and text in the CASE and id again in the IN list.
-      for (const chunk of chunked([...replacements], Math.floor((MAX_PARAMS - 1) / 3))) {
+      // (MAX_PARAMS - 1) / 5: each row binds id and text, then id and size, in the CASEs and id again in the IN list.
+      for (const chunk of chunked([...replacements], Math.floor((MAX_PARAMS - 1) / 5))) {
         await tx.run(
-          `UPDATE events SET envelope = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END
+          `UPDATE events SET
+             envelope = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END,
+             size = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END
            WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
-          [...chunk.flat(), localId, ...chunk.map(([id]) => id)],
+          [
+            ...chunk.flatMap(([id, r]) => [id, r.text]),
+            ...chunk.flatMap(([id, r]) => [id, r.size]),
+            localId,
+            ...chunk.map(([id]) => id),
+          ],
         );
       }
       await tx.run(
@@ -581,10 +595,10 @@ export class SqliteStore implements Store {
         }
       }
 
-      const COLUMNS = 9;
+      const COLUMNS = 10;
       for (const chunk of chunked(inserted, Math.floor(MAX_PARAMS / COLUMNS))) {
         await tx.run(
-          `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state)
+          `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
            VALUES ${chunk.map(() => `(${placeholders(COLUMNS)})`).join(', ')}`,
           chunk.flatMap((r) => [
             localId,
@@ -596,6 +610,7 @@ export class SqliteStore implements Store {
             r.envelope,
             r.status,
             r.pushState,
+            r.size,
           ]),
         );
       }
@@ -698,6 +713,15 @@ export class SqliteStore implements Store {
       counts.rejected += r.rejected;
     }
     return counts;
+  }
+
+  async usage(localId: string): Promise<{ bytes: number; events: number }> {
+    checkLocalId(localId);
+    const row = await this.db.get<{ bytes: number | null; events: number }>(
+      'SELECT SUM(size) AS bytes, COUNT(size) AS events FROM events WHERE local_id = ?',
+      [localId],
+    );
+    return { bytes: row?.bytes ?? 0, events: row?.events ?? 0 };
   }
 
   async pruneUndecryptable(localId: string, keep: number): Promise<number> {

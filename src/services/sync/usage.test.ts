@@ -1,7 +1,7 @@
-import { envelopeStoredSize, newId } from '@even/core';
-import { describe, expect, it } from 'vitest';
+import { envelopeStoredSize, newId, resealEnvelope } from '@even/core';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFakeStore } from '../testing/fakeStore';
+import { openTestStore, STORE_KINDS, type TestStore } from '../testing/testStore';
 import { FAKE_LIMITS } from '../testing/fakeTransport';
 import { Events, groupKeys, groupRow, sealFor, writeLocal } from '../testing/fixtures';
 import type { ServerInfo } from './types';
@@ -11,9 +11,20 @@ function info(limits: Partial<ServerInfo['limits']>): ServerInfo {
   return { protocol: [1], limits: { ...FAKE_LIMITS, ...limits }, retention_days: 365, push: false };
 }
 
-describe('groupUsage', () => {
+const opened: TestStore[] = [];
+afterEach(async () => {
+  while (opened.length > 0) await opened.pop()?.close();
+});
+
+describe.each(STORE_KINDS)('groupUsage on the %s store', (kind) => {
+  async function storeOf(): Promise<TestStore> {
+    const store = await openTestStore(kind);
+    opened.push(store);
+    return store;
+  }
+
   it('sums stored sizes (decoded c + 64) against both caps and warns at 80%', async () => {
-    const store = createFakeStore();
+    const store = await storeOf();
     const keys = groupKeys();
     await store.upsertGroup(groupRow(keys));
     const ev = new Events();
@@ -66,8 +77,41 @@ describe('groupUsage', () => {
     expect(high).toMatchObject({ eventsFraction: 0.8, fraction: 0.8, warn: true });
   });
 
+  it('reads one SQL sum, not the envelopes, and follows a re-encryption', async () => {
+    const store = await storeOf();
+    const keys = groupKeys();
+    await store.upsertGroup(groupRow(keys));
+    const ev = new Events();
+    const ids = [
+      await writeLocal(store, keys, ev.created()),
+      await writeLocal(store, keys, ev.expense('Dinner')),
+    ];
+    store.calls.length = 0;
+    const before = await groupUsage(store, keys.localId, info({}));
+    expect(store.calls).toEqual(['usage']);
+    const other = groupKeys('https://other.test', keys.secret);
+    const readable = await store.listReadable(keys.localId);
+    await store.setServer(
+      keys.localId,
+      other.serverUrl,
+      readable.map(({ id, envelope }) => ({
+        id,
+        envelope: resealEnvelope({
+          key: keys.key,
+          groupId: keys.groupId,
+          newKey: keys.key,
+          newGroupId: other.groupId,
+          envelope,
+        }),
+      })),
+    );
+    const after = await groupUsage(store, keys.localId, info({}));
+    expect(after).toEqual(before);
+    expect(after.events).toBe(ids.length);
+  });
+
   it('is zero for an empty group', async () => {
-    const store = createFakeStore();
+    const store = await storeOf();
     const keys = groupKeys();
     await store.upsertGroup(groupRow(keys));
     await writeLocal(store, keys, new Events().created()); // another group's rows do not count
