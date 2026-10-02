@@ -1,4 +1,4 @@
-import type { Transfer } from '@even/core';
+import { isCurrency, type Transfer } from '@even/core';
 import { router, useFocusEffect } from 'expo-router';
 import {
   useCallback,
@@ -258,7 +258,9 @@ export function GroupScreen({
   const net = derived.myNet ?? 0;
   // Nothing to settle is not settled: "Everyone's settled" and the archive offer need an expense or a payment.
   const settledAll = everyoneSettled(state, derived.transfers, derived.balancesUnavailable);
-  const canWrite = !readOnly && !derived.needsClaim;
+  // A currency this build cannot read (a newer table's, or a hostile `group.created`'s) has no exponent to enter an
+  // amount in: no Add expense or Settle, and the "Update Even" banner says why (derived.updateRequired).
+  const canWrite = !readOnly && !derived.needsClaim && isCurrency(currency);
   // Also Group's no-seat layout (GroupNoSeat): exactly while the pick is offered.
   const offerPick = offersNamePick(state, {
     needsClaim: derived.needsClaim,

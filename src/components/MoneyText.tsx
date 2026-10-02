@@ -1,4 +1,4 @@
-import { formatMinor } from '@even/core';
+import { displayMinor } from '@even/core';
 import { StyleSheet, View } from 'react-native';
 
 import type { FontWeightName, TypographyVariant } from '@/theme';
@@ -26,7 +26,8 @@ export interface MoneyTextProps {
 }
 
 /**
- * An amount formatted by core `formatMinor` (Intl with the currency's ISO exponent), in tabular figures.
+ * An amount formatted by core `displayMinor` (`formatMinor`: Intl with the currency's ISO exponent; the plain integer
+ * for a currency this build does not know, never a throw), in tabular figures.
  *
  * `big` is the header of Group: 56/64 semibold −1.5, then 8 pt, then the code at 15/20 medium in `textMuted`,
  * sharing a baseline. It shrinks to fit rather than wrapping, and caps Dynamic Type growth at 1.3×.
@@ -42,7 +43,7 @@ export function MoneyText({
   showCode = true,
   shrink = false,
 }: MoneyTextProps) {
-  const text = formatMinor(amount, currency, locale);
+  const text = displayMinor(amount, currency, locale);
   if (size === 'big') {
     return (
       <View

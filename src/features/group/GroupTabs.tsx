@@ -1,4 +1,4 @@
-import { CATEGORY_EMOJI, formatMinor, type ExpenseState, type GroupState } from '@even/core';
+import { CATEGORY_EMOJI, displayMinor, type ExpenseState, type GroupState } from '@even/core';
 import { StyleSheet, View } from 'react-native';
 
 import {
@@ -137,7 +137,7 @@ export function BalancesTab({
       {categories.total > 0 && (
         <>
           <SectionHeader spacingTop={24} tabular>
-            {`Spend by category · ${formatMinor(categories.total, currency)}`}
+            {`Spend by category · ${displayMinor(categories.total, currency)}`}
           </SectionHeader>
           <Card style={styles.gutter} accessibilityLabel="Spend by category">
             <CategoryBars rows={categories.rows} total={categories.total} currency={currency} />

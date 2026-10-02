@@ -5,7 +5,9 @@
 import {
   deriveLocal,
   deriveServer,
+  displayMinor,
   emptyState,
+  formatMinor,
   LIMITS,
   newId,
   seal,
@@ -15,6 +17,7 @@ import {
 } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { archivedLabel } from '../features/groups/cardLabels';
 import type { NewEventRow } from '../services/storage/types';
 import { settle } from '../services/testing/fakeClock';
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
@@ -225,6 +228,55 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
     await b.store.insertEvents(localId, [sv2]);
     b.services.groupState.invalidate(localId);
     expect((await b.services.groupState.get(localId))?.skipped.unsupported_body).toBe(1);
+  });
+
+  it('a group.created in a currency this build does not know: update required, and its amounts never throw', async () => {
+    const w = await setup(kind);
+    const { b, localId, maya, nathan } = await trip(w);
+    // A hostile member's (or a newer table's) group.created sorts first, so its shape-valid "ZZZ" becomes the group's
+    // currency; formatMinor throws RangeError for it, and a throw in a render takes the Groups list down.
+    const at = LIMITS.tsMin;
+    const head = { sv: 1, at, by: maya, dev: newId() };
+    const created = await stored(
+      b,
+      localId,
+      { ...head, ts: at, type: 'group.created', name: 'Banff 2026', currency: 'ZZZ' },
+      'ok',
+    );
+    const lunch = await stored(
+      b,
+      localId,
+      {
+        ...head,
+        ts: at + 1,
+        type: 'expense.added',
+        expense: {
+          id: newId(),
+          title: 'Lunch',
+          amount: 1234,
+          currency: 'ZZZ',
+          paidBy: maya,
+          date: '2026-02-01',
+          category: 'food',
+          split: { [maya]: 617, [nathan]: 617 },
+        },
+      },
+      'ok',
+    );
+    await b.store.insertEvents(localId, [created, lunch]);
+    b.services.groupState.invalidate(localId);
+    const d = await b.services.groupState.get(localId);
+    expect(d?.currency).toBe('ZZZ');
+    expect(d?.updateRequired).toBe(true);
+    expect(d?.myNet).toBe(-617);
+    const row = (await b.services.groupState.list()).find((r) => r.localId === localId);
+    expect(row?.currency).toBe('ZZZ');
+    // What GroupCard, the archived line and MoneyText render from that row.
+    expect(() => formatMinor(617, 'ZZZ')).toThrow(RangeError);
+    expect(
+      archivedLabel(row?.memberCount ?? null, row?.myNet ?? null, row?.currency ?? null, 'en-US'),
+    ).toBe('2 people · you owe 617');
+    expect(displayMinor(617, 'ZZZ')).toBe('617');
   });
 
   it('a group without its secret derives no state and is read-only', async () => {

@@ -319,6 +319,22 @@ export function formatMinor(amount: number, currency: string, locale?: string, o
 }
 
 /**
+ * formatMinor for what the screens show, which must never throw. A currency passes the validator on its shape alone
+ * (three capital letters), so a code this build's ISO 4217 table does not know can arrive in any event: a newer
+ * client's table, or a hostile member's `group.created` or `expense.added`. formatMinor throws RangeError for it,
+ * and thrown during a render that takes the screen down, the Groups list included. Here it reads as the plain
+ * integer instead, as the reducer's summaries (design.md "Reducer") and the CSV export already do; the group shows
+ * the "Update Even" banner. Every other input is formatMinor's.
+ */
+export function displayMinor(amount: number, currency: string, locale?: string, options?: FormatMinorOptions): string {
+  try {
+    return formatMinor(amount, currency, locale, options);
+  } catch {
+    return String(amount);
+  }
+}
+
+/**
  * Minor units as a plain decimal string with the currency's ISO exponent: `(123456, 'USD') → "1234.56"`,
  * `(5, 'JPY') → "5"`, `(1234, 'KWD') → "1.234"`, `(-5, 'USD') → "-0.05"`. No symbol, no grouping, no locale: for
  * machine-readable output (CSV) and editable amount fields, where formatMinor is for display.

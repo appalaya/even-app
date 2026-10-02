@@ -1,4 +1,4 @@
-import { CATEGORY_EMOJI, CATEGORY_LABEL, formatMinor, type Category } from '@even/core';
+import { CATEGORY_EMOJI, CATEGORY_LABEL, displayMinor, type Category } from '@even/core';
 import { StyleSheet, View } from 'react-native';
 
 import { emojiType, radii, useTheme } from '@/theme';
@@ -24,7 +24,7 @@ export function CategoryBar({ category, amount, total, currency, locale }: Categ
   const { tokens } = useTheme();
   const share = total > 0 ? Math.min(1, Math.max(0, amount / total)) : 0;
   const percent = Math.round(share * 100);
-  const money = formatMinor(amount, currency, locale);
+  const money = displayMinor(amount, currency, locale);
   return (
     <View
       style={styles.row}

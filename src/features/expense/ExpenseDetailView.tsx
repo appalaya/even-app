@@ -1,7 +1,7 @@
 import {
   CATEGORY_EMOJI,
   CATEGORY_LABEL,
-  formatMinor,
+  displayMinor,
   type ExpenseState,
   type FlaggedItem,
   type GroupState,
@@ -70,7 +70,7 @@ export function ExpenseDetailView({
 }: ExpenseDetailViewProps) {
   const { tokens } = useTheme();
   const currency = expense.currency;
-  const money = (minor: number) => formatMinor(minor, currency);
+  const money = (minor: number) => displayMinor(minor, currency);
   const member = (id: string): MemberState | null => state.members.get(id) ?? null;
   const nameOf = (id: string) => (id === myId ? 'You' : (member(id)?.name ?? 'Someone'));
   const history = historyRows(expense, {

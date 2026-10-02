@@ -834,6 +834,13 @@ and nobody needs it for a trip.
   `invalid`, the group screen shows a hard "Update Even to see everything in
   this group." banner, not just a counter, because balances are known to be
   incomplete.
+- The validator checks a currency's shape only, so a group's currency (from
+  `group.created`) may be one this build's frozen ISO 4217 table does not
+  know: a newer table's, or a hostile member's. That group shows the same
+  banner, offers no Add expense or Settle (there is no exponent to enter an
+  amount in), and its amounts read as plain integers through core
+  `displayMinor`, never a throw in a render, as the reducer's summaries and
+  the CSV export already do.
 
 ## Local storage
 

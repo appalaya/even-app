@@ -16,6 +16,7 @@ import {
   deriveLocal,
   deriveServer,
   formatMinor,
+  isCurrency,
   nets as computeNets,
   open,
   parseEvent,
@@ -104,7 +105,9 @@ export interface DerivedGroup {
   /** Rows that could not be applied, by `events.status` (design.md "Skipped-item visibility"). */
   skipped: SkippedCounts;
   /** A money event is skipped as invalid or unsupported, or an envelope of an unknown version is held: balances are
-   *  known to be incomplete, so the group shows the hard "Update Even" banner. */
+   *  known to be incomplete, so the group shows the hard "Update Even" banner. Also when the group's currency is one
+   *  this build's ISO 4217 table does not know: its amounts can only be shown as plain integers, and none can be
+   *  entered (Group offers no Add expense then). */
   updateRequired: boolean;
   counts: EventCounts;
   /** Share gating: `group.created` and its creator's `member.added` are acknowledged by the server. */
@@ -541,7 +544,8 @@ export class GroupStateStore {
         byStatus.unsupported_body,
     };
     // An envelope of an unknown version cannot be opened, so it may well be money: balances may be incomplete.
-    const updateRequired = skippedMoney || byStatus.unsupported_envelope > 0;
+    const unknownCurrency = currency !== null && !isCurrency(currency);
+    const updateRequired = skippedMoney || byStatus.unsupported_envelope > 0 || unknownCurrency;
 
     let inviteReady = false;
     if (state !== null && created !== null && createdEvent !== null && row.state === 'active') {

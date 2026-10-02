@@ -4,6 +4,7 @@ import { LIMITS } from './constants.js';
 import {
   __setNarrowSymbolSupport,
   CURRENCY_EXPONENTS,
+  displayMinor,
   exponentOf,
   formatMinor,
   isCurrency,
@@ -402,6 +403,23 @@ describe('formatMinor without Intl narrowSymbol (the fallback table)', () => {
       );
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe('displayMinor', () => {
+  it('is formatMinor for a known currency', () => {
+    for (const [amount, currency] of [[3600, 'CAD'], [-5, 'USD'], [1234, 'KWD'], [500, 'JPY']] as const) {
+      expect(displayMinor(amount, currency, 'en-US')).toBe(formatMinor(amount, currency, 'en-US'));
+    }
+    expect(displayMinor(3600, 'CAD', 'en-US', { display: 'code' })).toBe(formatMinor(3600, 'CAD', 'en-US', { display: 'code' }));
+  });
+
+  it('never throws: a shape-valid code the table does not know reads as the plain integer', () => {
+    expect(isCurrency('ZZZ')).toBe(false);
+    expect(() => formatMinor(1234, 'ZZZ')).toThrow(RangeError);
+    expect(displayMinor(1234, 'ZZZ')).toBe('1234');
+    expect(displayMinor(-5, 'ZZZ', 'en-US')).toBe('-5');
+    expect(displayMinor(Number.MAX_SAFE_INTEGER + 2, 'CAD')).toBe(String(Number.MAX_SAFE_INTEGER + 2));
   });
 });
 

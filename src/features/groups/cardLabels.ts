@@ -3,7 +3,7 @@
  * "4 people", "6 people · waiting to sync", the net ("you owe" / "you're owed" over the amount, or "settled"), and
  * an archived card's one line ("4 people · settled").
  */
-import { formatMinor } from '@even/core';
+import { displayMinor } from '@even/core';
 
 /**
  * "4 people" (the board); one member reads "1 person". `count` is the row's member count (archived and placeholder
@@ -29,7 +29,7 @@ export function archivedLabel(
   const words =
     net.kind === 'settled'
       ? 'settled'
-      : `${net.caption} ${formatMinor(net.amount, currency, locale)}`;
+      : `${net.caption} ${displayMinor(net.amount, currency, locale)}`;
   return people === null ? words : `${people} · ${words}`;
 }
 

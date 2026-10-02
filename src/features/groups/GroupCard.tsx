@@ -6,7 +6,7 @@
  *
  * Everything it shows comes from the list row (`useGroups()`), so the list renders from one subscription.
  */
-import { formatMinor } from '@even/core';
+import { displayMinor } from '@even/core';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText, MoneyText, SyncDot } from '@/components';
@@ -39,7 +39,7 @@ export function GroupCard({ row, onPress }: { row: GroupListRow; onPress: () => 
       ? null
       : net.kind === 'settled'
         ? 'settled'
-        : `${net.caption} ${formatMinor(net.amount, currency)}`,
+        : `${net.caption} ${displayMinor(net.amount, currency)}`,
   ];
 
   return (
