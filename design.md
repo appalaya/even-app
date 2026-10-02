@@ -105,8 +105,9 @@ member record in the log, which replaces the initials. No photos. A local
 "me" default, name and emoji, is kept in a `prefs` table and prefilled on
 every join and create.
 
-**This phone's seats.** The device id outlives an uninstall, so the log can
-show which members this very device claimed before. When a group is held
+**This phone's seats.** On iOS the device id outlives an uninstall (it is
+in the keychain), so the log can show which members this very device claimed
+before; on Android a reinstall gets a new one. When a group is held
 without a seat and exactly one member carries this device, the seat is
 restored silently; when several do, the re-offered name pick marks them
 "this phone" and a tap asks "This phone was Maya before" ("Continue as Maya" /
@@ -140,10 +141,13 @@ rebuilding the `groups` row needs, and the app offers this recovery on first
 launch when the store is empty but the index is not. A recovered row has no
 seat; after its first sync the seat this device claimed is restored from the
 log (the device id is in the keychain too), and if none is found Group asks
-"Which name is yours?". On Android the keystore
-wrapping key is not restorable, so a restored Android phone has ciphertext
-without keys; recovery there is a re-shared invite or the group file. The
-privacy page states both.
+"Which name is yours?". An Android backup holds only shared preferences
+(expo-secure-store's backup rules, which leave out SecureStore's own file),
+so no secret, no device id, no ciphertext and nothing else from the SQLite
+database, the own name and emoji included: a restored Android phone starts
+with no groups and a new device id, and recovery there is a re-shared invite
+or the group file (checked on the emulator, 2 October 2026). The privacy
+page states both.
 
 ## Event log
 
@@ -1316,7 +1320,7 @@ takedown is a server-side blocklist, not a client action.
   the last notification (the `prefs` row `notifications.ledger`: local ids
   and counts only), schedule a local notification through
   `expo-notifications`: title is the group name, body is the activity summary
-  ("Maya added Dinner · 90.00"). Coalesce multiple events per group into one
+  ("Maya added Dinner · $90.00"). Coalesce multiple events per group into one
   notification ("3 new changes"; the title already names the group).
 - On Android every activity notification is posted in the app's one
   notification channel, "Group activity" (id `group-activity`, description
@@ -1594,17 +1598,18 @@ Deviating from the canvas in implementation is a no-go.
   No seat (boards GroupNoSeat, SeatPick, SeatSameDevice): a phone that holds
   the group without a claimed member (a name pick closed after Join, or a
   keychain recovery) cannot add anything. When the log already shows this
-  device claimed exactly one member (the device id outlives an uninstall), the
-  seat is restored silently (`GroupService.restoreSeat`, on every lifecycle
-  check) and nothing is asked. Otherwise, each time Group comes into view,
-  once the members are known, it presents the name pick sheet titled "You're
-  already in", with names this phone claimed marked "this phone" (claimed
-  without the other-phone question; two or more of them ask "This phone was
-  Maya before"). Closing it only closes it: Group then reads "Spent so far"
-  with the trip total instead of a net, the note "Pick your name to add or
-  settle expenses.", no settle list or done row, the share arrow hidden, and
-  "Pick your name" in the footer instead of Add expense, which reopens the
-  sheet; expense detail is read-only until a name is picked.
+  device claimed exactly one member (on iOS the device id outlives an
+  uninstall), the seat is restored silently (`GroupService.restoreSeat`, on
+  every lifecycle check) and nothing is asked. Otherwise, each time Group
+  comes into view, once the members are known, it presents the name pick
+  sheet titled "You're already in", with names this phone claimed marked
+  "this phone" (claimed without the other-phone question; two or more of
+  them ask "This phone was Maya before"). Closing it only closes it: Group
+  then reads "Spent so far" with the trip total instead of a net, the note
+  "Pick your name to add or settle expenses.", no settle list or done row,
+  the share arrow hidden, and "Pick your name" in the footer instead of Add
+  expense, which reopens the sheet; expense detail is read-only until a name
+  is picked.
   On Balances a settled member reads "Nathan is settled" (no amount, last).
   Banners, when relevant: unreadable entries, update required, group closed,
   group moved, two members with one name, group archived. An archived group is

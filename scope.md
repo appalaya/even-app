@@ -46,7 +46,7 @@ accounts, no ads, and no one but the group able to read it.
 10. **Sync** — through the server named in the invite; visible sync state per
     group; pull-to-refresh; sync on foreground.
 11. **Background refresh** — OS-scheduled check for new events, with a local
-    notification showing real content ("Maya added Dinner · 90.00").
+    notification showing real content ("Maya added Dinner · $90.00").
 12. **Export** — CSV per group via the share sheet.
 13. **Group file export/import** — the whole group as one file (secret plus
     ciphertext, as sensitive as the invite), for backup and for when no
