@@ -1,6 +1,6 @@
 // Renders the store graphics in this folder (docs/store-listing.md, "Graphics"). Not part of the app or CI.
 //
-//   node docs/store/render.mjs feature [--subtitle "No ads. No accounts. Private."]
+//   node docs/store/render.mjs feature [--subtitle "Pay whoever. End even."]
 //       feature-graphic.html -> feature-graphic.png, 1024 x 500, 24-bit PNG with no alpha (Play's rule)
 //   node docs/store/render.mjs icon
 //       assets/icon.png -> play-icon-512.png, 512 x 512, 32-bit PNG with alpha (Play's rule), pixels as sips scales them

@@ -17,8 +17,9 @@ says so.
 
 Recommendations are in bold. Everything else on this page follows from them.
 
-1. **Subtitle (App Store):** **keep "No ads. No accounts. Private."** or switch to "Shared bills. No ads.
-   Private.", which adds the search word "bills" and drops "No accounts".
+1. **Subtitle (App Store):** decided on 1 October 2026: **"Pay whoever. End even."**, the website's tagline, so
+   the line under the name in the store is the line on the site. The pillars ("No ads. No accounts. Private.")
+   stay one line down, in the promotional text and the short description.
 2. **Secondary category (App Store):** **Lifestyle** or Utilities. See [Category](#category).
 3. **IP addresses (App Privacy and Data safety):** **declare nothing on either store**, or declare them under
    the strict reading. See [IP addresses](#ip-addresses-the-judgment-call).
@@ -48,18 +49,15 @@ The app record already exists: "Even - Split Expenses", bundle `com.appalaya.eve
 Even - Split Expenses
 ```
 
-**Subtitle** · limit 30 · 29. This is the current one, recommended:
+**Subtitle** · limit 30 · 22. The website's tagline (`web/index.html`, README.md), decided on 1 October 2026.
+The App Store record still carries "No ads. No accounts. Private." from when the name was reserved; replace it.
 
 ```text
-No ads. No accounts. Private.
+Pay whoever. End even.
 ```
 
-The alternative · 30. It puts "bills" in a field Apple weights heavily, at the cost of "No accounts". The
-description and promotional text still say "no accounts".
-
-```text
-Shared bills. No ads. Private.
-```
+The pillars are not lost: the promotional text opens with "No ads, no accounts", and the description has a
+paragraph for each.
 
 #### Category
 
@@ -108,7 +106,7 @@ rejects. Apple combines keywords with words in the name, so "bill" here also mat
 bill,trip,travel,roommates,friends,group,rent,iou,owe,settle,share,dinner,splitter,privacy,encrypted
 ```
 
-If you take the alternative subtitle, replace `bill` with `tab`, since the subtitle then carries "bills".
+The subtitle adds no search words, so the keywords carry them all; the name carries "split" and "expenses".
 
 **Support URL**
 
@@ -325,11 +323,11 @@ The app record "Even" (`com.appalaya.even`) exists, and internal testing already
 Even - Split Expenses
 ```
 
-**Short description** · limit 80 · 71. It leaves out "free", which Play's metadata policy is strict about in
-prominent fields.
+**Short description** · limit 80 · 69. The tagline first, as on the website, then the pillars. It leaves out
+"free", which Play's metadata policy is strict about in prominent fields.
 
 ```text
-Split costs with friends. No ads, no accounts, encrypted on your phone.
+Pay whoever. End even. No ads, no accounts, encrypted on your phone.
 ```
 
 **Full description** · limit 4000 · 899. It's the App Store description unchanged. Play accepts plain
@@ -546,14 +544,14 @@ group can read it") and the tagline. Each is under 35 characters, so it fits one
 ## Feature graphic
 
 `docs/store/feature-graphic.png` (1024 × 500, RGB, no alpha) is the lockup on the canvas colour with the
-subtitle, and nothing else. The mark is the landing page's, in the accent `#1F6B5A`. "Even" is set in Inter
+tagline "Pay whoever. End even.", and nothing else. The mark is the landing page's, in the accent `#1F6B5A`. "Even" is set in Inter
 Display Bold, the Android app's typeface, at the lockup's proportions (typography.ts `wordmarkLockup`)
-scaled 2.5 times. The subtitle is in `textSecondary` `#595B56` on `background` `#F6F5F1`, the `even` light
-tokens from `src/theme/themes.ts`. The source is `feature-graphic.html` next to it. To re-render with the
-other subtitle:
+scaled 2.5 times. The tagline is in `textSecondary` `#595B56` on `background` `#F6F5F1`, the `even` light
+tokens from `src/theme/themes.ts`. The source is `feature-graphic.html` next to it. To re-render with another
+line:
 
 ```bash
-node docs/store/render.mjs feature --subtitle "Shared bills. No ads. Private."
+node docs/store/render.mjs feature --subtitle "Pay whoever. End even."
 ```
 
 `render.mjs` uses the Google Chrome installed in /Applications through Playwright from the npx cache, and
