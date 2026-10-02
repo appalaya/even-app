@@ -11,7 +11,7 @@
  * On a screen shorter than the boards, Save and the keypad (or the category grid) keep their size and place, and the
  * rest gives way as `fitShortScreen` says; the rows above Save scroll only once nothing else can.
  */
-import { exponentOf, LIMITS, type Category, type GroupState } from '@even/core';
+import { exponentOf, isCurrency, LIMITS, type Category, type GroupState } from '@even/core';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -106,7 +106,8 @@ function editDraft(
   meId: string | null,
 ): SheetDraft | null {
   const expense = state.expenses.get(expenseId);
-  if (expense === undefined) return null;
+  // Gone, or in a currency this build cannot read (no exponent to enter it in): no draft, as for a deleted expense.
+  if (expense === undefined || !isCurrency(expense.currency)) return null;
   const members = listedMembers(state, meId).map((m) => m.id);
   return createDraft({
     groupId,

@@ -7,7 +7,7 @@ import { useApp, useGroup } from '@/state';
 import { useLeaveWhenGone, useNow } from '../group/hooks';
 import { groupHrefs } from '../group/routes';
 import { ExpenseDetailView } from './ExpenseDetailView';
-import { flagOf } from './model';
+import { editableCurrency, flagOf } from './model';
 
 /** Expense detail for `/group/<localId>/<expenseId>`, over the group's derived state. */
 export function ExpenseDetailScreen({
@@ -43,7 +43,12 @@ export function ExpenseDetailScreen({
       state={state}
       expense={expense}
       myId={derived.myMemberId}
-      writable={live !== undefined && derived.readOnly === null && !derived.needsClaim}
+      writable={
+        live !== undefined &&
+        derived.readOnly === null &&
+        !derived.needsClaim &&
+        editableCurrency(expense.currency, derived.currency)
+      }
       flag={flagOf(state, expenseId)}
       now={now}
       onBack={back}

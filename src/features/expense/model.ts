@@ -4,6 +4,7 @@
  */
 import {
   CATEGORY_LABEL,
+  isCurrency,
   splitSum,
   type Expense,
   type ExpenseState,
@@ -29,6 +30,16 @@ export function splitCaption(
   if (everyone && included.size === activeIds.length) return 'Everyone, equally';
   const people = Math.max(activeIds.length, included.size);
   return `Equally, ${included.size} of ${people} ${people === 1 ? 'person' : 'people'}`;
+}
+
+/**
+ * Whether Expense detail may offer Edit, Delete and Restore for this expense, beyond the group being writable: its
+ * currency and the group's must both be ones this build's ISO 4217 table knows. The edit sheet needs an exponent to
+ * show and enter the amount (core `exponentOf` throws for an unknown code), and the validator lets any member write a
+ * shape-valid code such as "ZZZ" (design.md "Schema evolution").
+ */
+export function editableCurrency(expenseCurrency: string, groupCurrency: string | null): boolean {
+  return isCurrency(expenseCurrency) && groupCurrency !== null && isCurrency(groupCurrency);
 }
 
 /** Members who can be in a split: not archived and not placeholders. */
