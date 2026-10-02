@@ -13,26 +13,24 @@ that require an email address, and nowhere else: never in the app, the site or t
 pointed at the contact form at `https://even.appalaya.com/contact`. Each field below that needs an email
 says so.
 
-## Decide
+## Decided
 
-Recommendations are in bold. Everything else on this page follows from them.
+All nine were settled with the owner on 1 October 2026; everything below follows from them.
 
-1. **Subtitle (App Store):** decided on 1 October 2026: **"Pay whoever. End even."**, the website's tagline, so
-   the line under the name in the store is the line on the site. The pillars ("No ads. No accounts. Private.")
-   stay one line down, in the promotional text and the short description.
-2. **Secondary category (App Store):** **Lifestyle** or Utilities. See [Category](#category).
-3. **IP addresses (App Privacy and Data safety):** **declare nothing on either store**, or declare them under
-   the strict reading. See [IP addresses](#ip-addresses-the-judgment-call).
-4. **The contact page (App Privacy and Data safety):** **declare nothing**, or declare the email address and
-   message people send through it. This one came up while checking Apple's rules. See
-   [The contact page](#the-contact-page).
-5. **Target age (Play):** **13 and over** or 18 and over. See [Target audience and content](#target-audience-and-content).
-6. **"Users interact" (Play content rating):** **Yes** or No. This departs from "all no". See
-   [Content rating](#content-rating).
-7. **Captions:** **plain screenshots for v1**, or one short caption line each. See [Screenshots](#screenshots).
-8. **Public contact email (Play):** **support@appalaya.com**.
-9. **Where the iPhone app is offered (App Store):** **untick Apple silicon Macs and Apple Vision Pro** until
-   they are tested, and leave China mainland off. See [Pricing and Availability](#pricing-and-availability).
+1. **Subtitle (App Store):** "Pay whoever. End even.", the website's tagline. The pillars ("No ads. No accounts.
+   Private.") stay one line down, in the promotional text and the short description.
+2. **Secondary category (App Store):** Lifestyle. See [Category](#category).
+3. **IP addresses (App Privacy and Data safety):** declare nothing on either store. See
+   [IP addresses](#ip-addresses-the-judgment-call). This holds only while nobody at Appalaya can see client
+   addresses; if log export or IP-level analytics is ever turned on for `sync.even.appalaya.com`, switch to the
+   strict answer there.
+4. **The contact page (App Privacy and Data safety):** declare nothing. See [The contact page](#the-contact-page).
+5. **Target age (Play):** 13 and over. See [Target audience and content](#target-audience-and-content).
+6. **"Users interact" (Play content rating):** Yes. See [Content rating](#content-rating).
+7. **Captions:** plain screenshots for v1. See [Screenshots](#screenshots).
+8. **Public contact email (Play):** support@appalaya.com, a console field.
+9. **Where the iPhone app is offered (App Store):** Apple silicon Macs and Apple Vision Pro unticked until they are
+   tested; China mainland off. See [Pricing and Availability](#pricing-and-availability).
 
 ---
 
