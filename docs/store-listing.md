@@ -477,6 +477,29 @@ ref, so a main run and a tag run don't wait for each other. Both conditions belo
 
 ---
 
+## Before production: the address
+
+Decided on 1 October 2026 while entering the listings. Both developer accounts carry the owner's home address as the
+company's registered-office address (the owner is the registered agent). Nothing in closed testing or TestFlight
+shows it, but:
+
+- **Play** prints an organisation account's address under "Developer contact" on the public listing, in every
+  country, from the first production release.
+- **Apple** shows the trader's address, phone and email on EU product pages once the Digital Services Act trader
+  declaration is made. For 1.0 the declaration is left undone and the 27 EU countries are removed from
+  availability, so the App Store listing carries no address.
+
+Gate for the production release, in this order: get a business address that can be published (a commercial
+registered agent that allows its address as the business address, which also takes the home address off the
+Secretary of State record, or a virtual street address; PO boxes are refused by Dun & Bradstreet and Google);
+update the D-U-N-S record; edit the organisation details in Play Console and re-verify; then make Apple's DSA
+trader declaration and add the EU countries back. Or the owner explicitly decides to publish the home address.
+Until one of those, no production rollout on Play.
+
+Also before production: once Google approves the first closed-testing release and the app leaves draft, delete the
+`PLAY_RELEASE_STATUS` repository variable (set to `draft` on 1 October 2026 so the tag run could upload to a draft
+app) so uploads complete on their own again.
+
 ## Screenshots
 
 ### Plain or captioned
