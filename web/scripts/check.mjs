@@ -4,16 +4,18 @@
  *
  *   node web/scripts/check.mjs
  *
- * - No page links or loads anything outside this site, except the two store links and the server repository, and on
- *   the contact page Cloudflare Turnstile's script. No mail address anywhere. No inline event handlers or style
- *   attributes (the CSPs allow neither), no frames or <base>, and no form except the contact page's one.
+ * - No page links or loads anything outside this site, except the two store links and the server repository. No mail
+ *   address anywhere. No inline event handlers or style attributes (the CSPs allow neither), no frames or <base>,
+ *   and no form except the contact page's one.
  * - Only the invite page has inline code: exactly one <script> and one <style>, whose hashes match the /i policy in
  *   _headers, and whose script has no way to send anything.
- * - Only the contact page loads scripts: Turnstile's api.js and /contact.js. The site's script files (contact.js,
- *   contact-lib.js) import nothing else, fetch only the contact API, and cannot inject, store or open anything;
- *   contact-lib.js still derives the known-answer group ids of @even/core (packages/core/src/keys.test.ts).
- * - _headers carries the site-wide headers, the AASA Content-Type, and the /i and /contact policies in the right
- *   order, each exactly as csp-hashes.mjs generates it.
+ * - Only the contact page loads a script: /contact.js. The site's script files (contact.js, contact-lib.js) import
+ *   nothing else, fetch only the contact API, and cannot inject, store or open anything, except that contact.js adds
+ *   one script element, for Turnstile's api.js at Cloudflare's exact URL (it does so only once no invite can be on
+ *   the page; README.md, "Contact page"). contact-lib.js still derives the known-answer group ids of @even/core
+ *   (packages/core/src/keys.test.ts).
+ * - _headers carries the site-wide headers (Cross-Origin-Opener-Policy included), the AASA Content-Type, and the /i
+ *   and /contact policies in the right order, each exactly as csp-hashes.mjs generates it.
  * - Both association files parse as JSON and name the app.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -45,23 +47,27 @@ const ALLOWED_EXTERNAL = [
   /^https:\/\/buy\.stripe\.com\/6oUcMY7m3enX4Krgb5fjG00$/,
 ];
 
-/** Turnstile's api.js, from the exact URL Cloudflare requires (never proxied or cached). Contact page only. */
+/** Turnstile's api.js, from the exact URL Cloudflare requires (never proxied or cached). Added by contact.js only. */
 const TURNSTILE_SCRIPT = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js?render=explicit`;
 
-/** More URLs one page may reference, and only that page. */
-const PAGE_EXTERNAL = new Map([[CONTACT_PAGE, [TURNSTILE_SCRIPT]]]);
-
-/** The contact page's scripts, in order: Turnstile first, so it is there when the module runs. */
-const CONTACT_SCRIPTS = [
-  { src: TURNSTILE_SCRIPT, attrs: ['defer'] },
-  { src: '/contact.js', attrs: ['type=module'] },
-];
+/** The contact page's one script. Turnstile is not here: contact.js adds it once no invite can be on the page. */
+const CONTACT_SCRIPTS = [{ src: '/contact.js', attrs: ['type=module'] }];
 
 /** The site's script files and what each may import. Any other .js file in the site fails the check. */
 const SCRIPT_FILES = new Map([
   ['contact.js', ['./contact-lib.js']],
   ['contact-lib.js', []],
 ]);
+
+/** The elements each script file may create. contact.js: the id's <code>, and the one <script> for Turnstile. */
+const CREATED_ELEMENTS = new Map([
+  ['contact.js', ['code', 'script']],
+  ['contact-lib.js', []],
+]);
+
+/** The one script file that may add a script, and the constant that must hold its URL. */
+const TURNSTILE_LOADER = 'contact.js';
+const TURNSTILE_CONSTANT = `const TURNSTILE_URL = '${TURNSTILE_SCRIPT}';`;
 
 /** The only requests the contact page's scripts may make. */
 const CONTACT_API = { CONFIG_URL: '/api/contact/config', CONTACT_URL: '/api/contact' };
@@ -136,9 +142,12 @@ const FORBIDDEN_IN_INVITE_SCRIPT = [
 /** Anything in the site's script files that could send elsewhere, store, inject, or run text as code. */
 const FORBIDDEN_IN_SCRIPT_FILES = FORBIDDEN_IN_INVITE_SCRIPT.filter(
   (pattern) =>
-    !['/\\bfetch\\b/', '/location\\.search/', '/\\bWorker\\b/'].includes(String(pattern)),
+    !['/\\bfetch\\b/', '/location\\.search/', '/\\bWorker\\b/', '/\\.src\\s*=/'].includes(
+      String(pattern),
+    ),
 ).concat([
   /\bnew\s+(?:Shared)?Worker\b/,
+  /\bsetAttribute\s*\(\s*['"](?:src|href)['"]/,
   /\bconsole\./,
   /\bnavigator\.clipboard/,
   /\blocation\.hash\s*=/,
@@ -164,7 +173,6 @@ function checkUrl(file, where, raw) {
   const value = raw.trim();
   if (value === '' || !isExternal(value)) return;
   if (ALLOWED_EXTERNAL.some((pattern) => pattern.test(value))) return;
-  if ((PAGE_EXTERNAL.get(file) ?? []).includes(value)) return;
   fail(file, `external URL in ${where}: ${value}`);
 }
 
@@ -302,6 +310,7 @@ function checkHeaders(text, pages) {
   const required = [
     'X-Content-Type-Options: nosniff',
     'Referrer-Policy: no-referrer',
+    'Cross-Origin-Opener-Policy: same-origin',
     /^Permissions-Policy: .+/,
     /^Strict-Transport-Security: max-age=\d+/,
     /^Content-Security-Policy: default-src 'self';/,
@@ -420,7 +429,36 @@ function checkScriptFile(file, source) {
       fail(file, `${name} must be the constant '${url}'`);
   }
   for (const m of source.matchAll(/\bhttps?:\/\/[A-Za-z0-9.-]+/g)) {
-    if (m[0] !== 'https://sync.even.appalaya.com') fail(file, `URL in a script file: ${m[0]}`);
+    if (m[0] === 'https://sync.even.appalaya.com') continue;
+    if (file === TURNSTILE_LOADER && m[0] === TURNSTILE_ORIGIN) continue;
+    fail(file, `URL in a script file: ${m[0]}`);
+  }
+
+  // Elements: only those listed, and a script only as Turnstile's api.js from its one constant.
+  const allowed = CREATED_ELEMENTS.get(file) ?? [];
+  const created = [...source.matchAll(/\bcreateElement(?:NS)?\s*\(([^)]*)\)/g)].map((m) =>
+    m[1].trim(),
+  );
+  for (const arg of created) {
+    const tag = /^['"]([a-z]+)['"]$/.exec(arg)?.[1];
+    if (tag === undefined || !allowed.includes(tag))
+      fail(file, `createElement(${arg}) (allowed: ${allowed.join(', ') || 'none'})`);
+  }
+  const scripts = created.filter((arg) => /^['"]script['"]$/.test(arg)).length;
+  const srcs = [...source.matchAll(/\.src\s*=\s*([^;\n]*)/g)].map((m) => m[1].trim());
+  if (file === TURNSTILE_LOADER) {
+    if (scripts !== 1)
+      fail(file, `expected one createElement('script'), for Turnstile; found ${scripts}`);
+    if (!source.includes(TURNSTILE_CONSTANT)) fail(file, `missing ${TURNSTILE_CONSTANT}`);
+    if (source.split(TURNSTILE_ORIGIN).length - 1 !== 1)
+      fail(file, `${TURNSTILE_ORIGIN} may appear once, in TURNSTILE_URL`);
+    if (srcs.length !== 1 || srcs[0] !== 'TURNSTILE_URL')
+      fail(
+        file,
+        `the only .src assignment must be .src = TURNSTILE_URL; found ${JSON.stringify(srcs)}`,
+      );
+  } else if (srcs.length > 0) {
+    fail(file, `.src assignment (only ${TURNSTILE_LOADER} adds a script)`);
   }
 }
 

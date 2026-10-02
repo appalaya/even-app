@@ -23,7 +23,7 @@
 
 <main class="doc">
   <h1>Privacy</h1>
-  <p class="updated">Last updated 27 September 2026</p>
+  <p class="updated">Last updated 2 October 2026</p>
 
   <p class="summary">Even encrypts every group on your phone before anything leaves it. Our server stores the result and cannot read it: not an amount, not a name, not the group&rsquo;s name. There are no accounts, so using Even gives us nothing about you to keep.</p>
 
@@ -54,17 +54,17 @@
   </ul>
 
   <h3>Opening an invite link in a browser</h3>
-  <p>An invite link looks like <code>even.appalaya.com/i#&hellip;</code>. Everything after the <code>#</code> is the invite, and browsers never send that part to any server, ours included. When the app is not installed, the page at that address reads the invite on your phone to show the group&rsquo;s name and the code. It loads nothing from anyone else, contacts nothing, and a strict security policy set by the server forbids it from doing so.</p>
-  <p>Your browser does keep the full link in its history, and may sync that history to its maker. That is why the app offers to copy the code first: the link is there for convenience.</p>
+  <p>An invite link looks like <code>even.appalaya.com/i#&hellip;</code>. Everything after the <code>#</code> is the invite, and browsers never send that part to any server, ours included. When the app is not installed, the page at that address reads the invite on your phone to show the group&rsquo;s name and the code. It loads nothing from anyone else, contacts nothing, and a strict security policy set by the server forbids it from doing so. That policy cannot bind an app that opens links in its own built-in browser, as some chat and social apps do: such an app can run its own code on the page and read the invite.</p>
+  <p>Your browser does keep the full link in its history, and may sync that history to its maker. In the app, Share link and the QR code both give the link. To keep an invite out of browser history, send the code instead: Copy code is next to Share link in the group&rsquo;s settings, and on its invite card until someone else joins.</p>
 
   <h2>What stays on your phone</h2>
-  <p>Every phone in a group holds the group&rsquo;s whole history, stored locked. The app unlocks it in memory while you use it. The only things it writes to storage unlocked are each group&rsquo;s name and currency (both of which are already in the invite), the time of each entry, so they can be put in order, and, while a deletion you asked for is still pending, the access key for that server&rsquo;s copy. Group keys live in the phone&rsquo;s secure keychain or keystore.</p>
-  <p>Notifications are the one exception you control. When the app checks for news in the background, it can show something like &ldquo;Maya added Dinner &middot; $90.00&rdquo;. Your phone keeps that notification and may show it on the lock screen. You can change that in your phone&rsquo;s notification settings, or turn Even&rsquo;s notifications off in the app.</p>
+  <p>Every phone in a group holds the group&rsquo;s whole history, stored locked. The app unlocks it in memory while you use it. What it does write to storage unlocked: each group&rsquo;s name and currency (both of which are already in the invite); the time of each entry, so they can be put in order; your own name and emoji from the app&rsquo;s settings, which it fills in when you create or join a group; while a deletion you asked for is still pending, the access key for that server&rsquo;s copy; and bookkeeping, such as which server each group uses. Group keys live in the phone&rsquo;s secure keychain or keystore.</p>
+  <p>Your phone keeps two things of its own. When the app checks for news in the background, it can show something like &ldquo;Maya added Dinner &middot; $90.00&rdquo;. Your phone keeps that notification and may show it on the lock screen. You can change that in your phone&rsquo;s notification settings, or turn Even&rsquo;s notifications off in the app. And when you leave Even, your phone keeps a picture of the screen you were on, to show when you switch apps.</p>
 
   <h2>What a backup contains</h2>
   <ul>
     <li><strong>iPhone.</strong> An iCloud or computer backup includes the app&rsquo;s locked data and the keychain that holds your group keys. So a backup contains everything needed to read your groups. If that matters to you, turn on Advanced Data Protection for end-to-end encrypted iCloud backups, or turn off iCloud Backup.</li>
-    <li><strong>Android.</strong> Group keys are held by the phone&rsquo;s keystore and are not restored from a backup, so an Android backup cannot unlock your groups: it holds their locked data, and each group&rsquo;s name and currency. After restoring, you need the invite again.</li>
+    <li><strong>Android.</strong> Group keys are held by the phone&rsquo;s keystore and are not restored from a backup, so an Android backup cannot unlock your groups: it holds their locked data, each group&rsquo;s name and currency, and your own name and emoji. After restoring, you need the invite again.</li>
   </ul>
 
   <h2>Our free server</h2>
@@ -78,7 +78,7 @@
 
   <h2>Abuse</h2>
   <p>Because we cannot see what is in a group, we cannot inspect it, and we will not try: that would break the promise above. Instead the server is built to be a poor place to store or pass on anything but expenses. Entries are small, groups expire, there are no real-time messages and no delivery guarantees.</p>
-  <p>If someone reports a group to us with its id, we block that id on our server for good. We cannot read the group to check the report. See <a href="/abuse">how to report abuse</a>.</p>
+  <p>When we receive a credible report naming a group&rsquo;s id, we block that id on our server for good. We cannot read the group to check the report. The block is on our server only: the app still works with any other server. See <a href="/abuse">how to report abuse</a>.</p>
 
   <h2>What we do not protect against</h2>
   <ul>
@@ -94,7 +94,7 @@
 
   <h2>This website</h2>
   <p>This website has no analytics, no cookies, no trackers and no web fonts. Cloudflare serves it and keeps its own access logs, which include your internet address and the pages you ask for, but never the part of an invite link after the <code>#</code>.</p>
-  <p>The contact page is the one page that loads something from elsewhere: Cloudflare Turnstile, a check that the form is being sent by a person. It runs in a frame from Cloudflare, which sees your internet address and details of your browser under its own privacy policy. What you send with the form reaches us as an email, delivered by the email service Resend, which handles it under its own privacy policy: your message, your email address if you give one, and for a report the group&rsquo;s id and server. Nothing you send is stored on the website. When you report a group by pasting its invite link, the page works out the group&rsquo;s id in your browser; the link never leaves it.</p>
+  <p>The contact page is the one page that loads something from elsewhere: Cloudflare Turnstile, a check that the form is being sent by a person. Its script runs on the page and its check in a frame from Cloudflare, which sees your internet address and details of your browser under its own privacy policy. What you send with the form reaches us as an email, delivered by the email service Resend, which handles it under its own privacy policy: your message, your email address if you give one, and for a report the group&rsquo;s id and server. Nothing you send is stored on the website. When you report a group by pasting its invite link, the page works out the group&rsquo;s id in your browser and clears the link before Turnstile loads. Only the id and server are sent.</p>
 
   <h2>Tips</h2>
   <p>Even is free, and you can leave a tip if you want to. Tips go to Appalaya Inc. The tip button on our home page is a plain link to a payment page run by Stripe, our payment processor: nothing from Stripe loads on this website, and we tell Stripe nothing about you.</p>

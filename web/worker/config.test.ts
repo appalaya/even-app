@@ -95,6 +95,15 @@ describe('the deploy workflow', () => {
     expect(workflow).toContain('--secrets-file');
     expect(workflow).toContain('--var "TURNSTILE_SITE_KEY:');
   });
+
+  it('runs an exact Wrangler, and actions pinned by commit, in the job that holds the secrets', () => {
+    const wranglers = [...workflow.matchAll(/wrangler@(\S+)/g)].map((m) => m[1]);
+    expect(wranglers.length).toBeGreaterThan(0);
+    for (const version of wranglers) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    const actions = [...workflow.matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) expect(action).toMatch(/^[\w.-]+\/[\w.\/-]+@[0-9a-f]{40}$/);
+  });
 });
 
 describe('no address or key in the repository', () => {

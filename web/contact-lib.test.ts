@@ -42,6 +42,7 @@ import {
   reportMessage,
   serverLabel,
   shortGroupId,
+  takeInvite,
   targetFromInvite,
 } from './contact-lib.js';
 
@@ -337,6 +338,36 @@ describe('reading an invite', () => {
     const target = await targetFromInvite(encodeInvite(makeInvite(secret, DEFAULT_SERVER)));
     expect(Object.keys(target).sort()).toEqual(['appalaya', 'groupId', 'reportable', 'server']);
     expect(JSON.stringify(target)).not.toContain(coreB64urlEncode(secret));
+  });
+});
+
+describe('the pasted link field', () => {
+  it('is cleared the moment the link is taken, before the id is derived, and stays cleared after', async () => {
+    const field = { value: BOARD_LINK };
+    const pending = takeInvite(field);
+    expect(field.value).toBe('');
+    const target = await pending;
+    expect(field.value).toBe('');
+    expect(target).toEqual(await targetFromInvite(BOARD_LINK));
+    expect(Object.keys(target ?? {}).sort()).toEqual([
+      'appalaya',
+      'groupId',
+      'reportable',
+      'server',
+    ]);
+    expect(JSON.stringify(target)).not.toContain(BOARD_LINK.split('#')[1]);
+  });
+
+  it('is cleared too when the text is not an invite, or is blank', async () => {
+    const cut = { value: BOARD_LINK.slice(0, -6) };
+    const reading = takeInvite(cut);
+    expect(cut.value).toBe('');
+    await expect(reading).rejects.toBeInstanceOf(InviteError);
+    expect(cut.value).toBe('');
+
+    const blank = { value: '  \n' };
+    expect(await takeInvite(blank)).toBeNull();
+    expect(blank.value).toBe('');
   });
 });
 

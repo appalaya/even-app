@@ -3,8 +3,14 @@
  * (reading an invite, the group id, the request body) are in contact-lib.js, which has no DOM and is tested in Node.
  *
  * What leaves the browser: GET /api/contact/config, and one POST /api/contact per send with the purpose, the
- * message, an email only if one was typed, and for a report the group's id and server. Never the invite link: it is
- * read here, turned into the id, and left in the text field. Text is only ever inserted with textContent.
+ * message, an email only if one was typed, and for a report the group's id and server. Never the invite link: the
+ * moment it is pasted it is taken out of the text field (takeInvite), and only the id and server it names are kept.
+ * Text is only ever inserted with textContent.
+ *
+ * Cloudflare Turnstile's api.js is the one script from elsewhere, and it runs in this page. So this file loads it,
+ * and only once no invite can be on the page: when a report names its group (from the app, or from a pasted link
+ * already read and cleared), or when a help or feedback message is typed or sent. The link field then closes for
+ * good; another link takes a reload.
  */
 import {
   cleanText,
@@ -18,12 +24,14 @@ import {
   reportMessage,
   serverLabel,
   shortGroupId,
-  targetFromInvite,
+  takeInvite,
 } from './contact-lib.js';
 
 const CONFIG_URL = '/api/contact/config';
 const CONTACT_URL = '/api/contact';
 const SEND_TIMEOUT_MS = 30_000;
+/** Turnstile's api.js at the exact URL Cloudflare requires (never proxied or cached). Added by loadTurnstile only. */
+const TURNSTILE_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 const $ = (id) => document.getElementById(id);
 const form = $('form');
@@ -50,6 +58,10 @@ const FAILURES = {
 const INVITE_INCOMPLETE = 'That link isn’t complete. Copy it again.';
 const INVITE_NEWER = 'This invite needs a newer Even.';
 
+/** The line above the link field while it is open (as in contact.html), and once Turnstile has closed it. */
+const LINK_HINT = 'Paste the group’s link. This page reads it, then clears it.';
+const LINK_CLOSED = 'To use a different link, reload this page.';
+
 const MESSAGE_HINTS = {
   help: 'What happened, and what did you expect? Your phone and Even version help.',
   feedback: 'What would make Even better for you?',
@@ -75,12 +87,16 @@ const pathServerText = (target) =>
 
 /** The group named by the app's fragment, or null. */
 let prefill = null;
-/** The pasted link, read: { target } or { problem }, or null while the field is empty. */
+/** The pasted link, read: { target } or { problem }, or null. Only this is kept; the link itself is not. */
 let pasted = null;
 /** The latest reading of the pasted link, awaited before a send. */
 let reading = Promise.resolve();
 let readingSeq = 0;
 let widgetId = null;
+/** Turnstile's api.js once added: resolves to true when it has loaded. Reset after a failed load, to retry. */
+let turnstileScript = null;
+/** True from the moment api.js is first added; the link field stays closed from then on. */
+let turnstileStarted = false;
 /** The config route's answer, once; retried on the next send if it failed. */
 let setup = null;
 let setupFailure = null;
@@ -104,7 +120,9 @@ function applyPurpose() {
   send.textContent = report ? 'Send report' : 'Send';
   if (!report) message.placeholder = MESSAGE_HINTS[current];
   showPrefill();
+  renderLink();
   clearAlert();
+  startTurnstileWhenReady();
 }
 
 function showPrefill() {
@@ -135,6 +153,13 @@ function applyFragment() {
 }
 
 // ---------- the pasted invite link ----------
+
+/** The link field: open until Turnstile is added to the page, then closed (disabled and empty) for good. */
+function renderLink() {
+  link.disabled = turnstileStarted;
+  $('link-hint').textContent = turnstileStarted ? LINK_CLOSED : LINK_HINT;
+  renderDerived();
+}
 
 function renderDerived() {
   const box = $('derived');
@@ -171,24 +196,61 @@ function renderDerived() {
   box.hidden = false;
 }
 
+/** Takes the link out of the field at once (takeInvite empties it before anything is awaited), then reads it. */
 async function readPasted() {
   const seq = ++readingSeq;
-  const value = link.value;
   let result = null;
-  if (value.trim() !== '') {
-    try {
-      result = { target: await targetFromInvite(value) };
-    } catch (error) {
-      const newer = error instanceof InviteError && error.code === 'version';
-      result = { problem: newer ? INVITE_NEWER : INVITE_INCOMPLETE };
-    }
+  try {
+    const target = await takeInvite(link);
+    result = target === null ? null : { target };
+  } catch (error) {
+    const newer = error instanceof InviteError && error.code === 'version';
+    result = { problem: newer ? INVITE_NEWER : INVITE_INCOMPLETE };
   }
   if (seq !== readingSeq) return;
   pasted = result;
   renderDerived();
+  startTurnstileWhenReady();
 }
 
 // ---------- Turnstile ----------
+
+/**
+ * Adds Turnstile's api.js to the page, once (again only after a failed load). The script runs with the page's own
+ * access, so the link field is emptied and closed first, and no invite can be pasted while it is here.
+ */
+function loadTurnstile() {
+  if (turnstileScript === null) {
+    turnstileStarted = true;
+    link.value = '';
+    renderLink();
+    turnstileScript = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = TURNSTILE_URL;
+      script.async = true;
+      script.addEventListener('load', () => resolve(true));
+      script.addEventListener('error', () => resolve(false));
+      document.head.append(script);
+    });
+  }
+  return turnstileScript;
+}
+
+/**
+ * Renders the widget once the form needs no invite: a report whose group is known and can be sent, or a help or
+ * feedback message being typed. Before that, nothing from Cloudflare is on the page.
+ */
+function startTurnstileWhenReady() {
+  if (turnstileStarted) return;
+  const ready =
+    purpose() === 'report'
+      ? (prefill ?? pasted?.target)?.reportable === true
+      : message.value.trim() !== '';
+  if (!ready) return;
+  ensureWidget().then((shown) => {
+    if (!shown) showAlert(setupFailure ?? 'unavailable');
+  });
+}
 
 async function loadConfig() {
   let response;
@@ -218,18 +280,21 @@ async function loadConfig() {
   return { config };
 }
 
-/** Renders the widget once, with the site key and action the Worker serves. Resolves to true when it is there. */
+/**
+ * Loads Turnstile if it is not here yet and renders the widget once, with the site key and action the Worker serves.
+ * Resolves to true when it is there. Call it only when no invite can be on the page (startTurnstileWhenReady, submit).
+ */
 async function ensureWidget() {
   if (widgetId !== null) return true;
   setup ??= loadConfig();
-  const result = await setup;
+  const [result, loaded] = await Promise.all([setup, loadTurnstile()]);
   if (result.failure !== undefined) {
     setup = null;
     setupFailure = result.failure;
     return false;
   }
-  if (typeof window.turnstile?.render !== 'function') {
-    setup = null;
+  if (!loaded || typeof window.turnstile?.render !== 'function') {
+    turnstileScript = null;
     setupFailure = 'network';
     return false;
   }
@@ -276,6 +341,10 @@ async function reportTarget() {
   }
   await reading;
   if (pasted?.target?.reportable) return pasted.target;
+  if (turnstileStarted) {
+    showAlert('link', LINK_CLOSED);
+    return null;
+  }
   link.focus();
   form.reportValidity();
   return null;
@@ -375,19 +444,20 @@ function sendAnother() {
 
 // ---------- start ----------
 
+// A link the browser put back in the field (a restored page) is taken out and read before anything else runs.
+if (link.value !== '') reading = readPasted();
+
 form.addEventListener('change', (event) => {
   if (event.target.name === 'purpose') applyPurpose();
 });
 link.addEventListener('input', () => {
   reading = readPasted();
 });
+message.addEventListener('input', startTurnstileWhenReady);
 form.addEventListener('submit', submit);
 $('again').addEventListener('click', sendAnother);
 window.addEventListener('hashchange', applyFragment);
 
+setup = loadConfig();
 applyFragment();
 form.hidden = false;
-if (link.value.trim() !== '') reading = readPasted();
-ensureWidget().then((ready) => {
-  if (!ready) showAlert(setupFailure ?? 'unavailable');
-});

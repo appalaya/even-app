@@ -3,7 +3,8 @@
  * @even/core's known answers and the Worker's own request rules; scripts/check.mjs runs the known answers too).
  *
  * A report names a group by its id on its server, worked out here from the invite so that the invite, which is the
- * group's key, never leaves the page (even-server PROTOCOL.md §2 and §8):
+ * group's key, is never sent; the page empties the field it was pasted into at once (takeInvite). From even-server
+ * PROTOCOL.md §2 and §8:
  *
  *   authToken = HKDF-SHA256(ikm = secret, salt = "even/v1", info = "auth|" + server, 32 bytes)
  *   groupId   = base64url(SHA-256(authToken)), without padding: 43 characters
@@ -345,6 +346,17 @@ export function reportTarget(groupId, server) {
 export async function targetFromInvite(text) {
   const { secret, server } = await readInvite(text);
   return reportTarget(await groupIdFor(secret, server), server);
+}
+
+/**
+ * Reads the invite pasted into a text field (`{ value }`: the page's #link) and empties the field at once, before
+ * anything is awaited, so the invite, which is the group's key, does not stay on the page. Resolves to the target
+ * (only the id and server, as targetFromInvite), to null for blank text, or rejects with InviteError.
+ */
+export function takeInvite(field) {
+  const text = String(field.value ?? '');
+  field.value = '';
+  return text.trim() === '' ? Promise.resolve(null) : targetFromInvite(text);
 }
 
 /** "sync.even.appalaya.com", "home.example.net:8443/even": a canonical server URL without its scheme. */

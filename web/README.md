@@ -55,7 +55,7 @@ the script that can send, store or inject (`fetch`, `sendBeacon`, `innerHTML`, s
 inserted with `textContent` only.
 
 `check.mjs` also fails on any external URL in any page other than the two store links, the repository and threat-model
-links, appalaya.com, and the Stripe tip link (and, on `contact.html` only, Turnstile's script); on any mail address or `mailto:` in any published file; on inline
+links, appalaya.com, and the Stripe tip link (Turnstile's script is in no page's markup: `contact.js` adds it, the one script file allowed to); on any mail address or `mailto:` in any published file; on inline
 code in any other page; on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
 [Contact page](#contact-page)); on a `_headers` file missing a required header, with the `/i`, `/badges/*` or
 `/contact` rules before `/*`, or with a policy that differs from what `csp-hashes.mjs` generates; and on either
@@ -78,7 +78,9 @@ look, but it ignores `_headers`, so it does not enforce the CSP, and it has no `
 
 `.github/workflows/web.yml` is the only way the site is deployed; nothing is deployed from a local machine. On every
 push to main that changes `web/` or the workflow, it runs `node web/scripts/check.mjs`, the Worker script's
-typecheck, lint and tests, and then `wrangler deploy` with `web/wrangler.jsonc`. That uploads this folder as the
+typecheck, lint and tests, and then `wrangler deploy` with `web/wrangler.jsonc`, at the exact Wrangler version the
+workflow names (its actions are pinned by commit too; `worker/config.test.ts` fails on a range or a tag). That
+uploads this folder as the
 static assets of a Worker named `even-web`, on the free Workers plan, together with the script bundled from
 `worker/index.ts` and the contact form's secrets. Cloudflare's asset server applies `_headers`, serves `i.html` at
 `/i`, and answers unknown paths with `404.html`; those requests are free and unlimited. The script runs only for
@@ -164,6 +166,9 @@ for f in README.md wrangler.jsonc scripts/check.mjs worker/index.ts contact-lib.
 
 # The contact page: its own policy (Turnstile allowed), and only one
 curl -sI https://even.appalaya.com/contact | grep -i content-security-policy
+
+# Every page: Cross-Origin-Opener-Policy: same-origin
+curl -sI https://even.appalaya.com/ | grep -i cross-origin-opener-policy
 
 # The contact form: its config (200, the site key), and a request from another origin refused (403 forbidden)
 curl -s https://even.appalaya.com/api/contact/config
@@ -371,17 +376,25 @@ carries an address, and `check.mjs` fails on one. Without JavaScript the page sa
 
 | File | |
 |---|---|
-| `contact.html` | The markup. No inline code: a `<script src>` for Turnstile's `api.js?render=explicit` (the exact URL Cloudflare requires, `defer`) and `<script type="module" src="/contact.js">`, in that order. Styles are in `site.css`. |
-| `contact.js` | The page: topics, the pasted link, the fragment, Turnstile, the POST, the sent and failed states. Inserts text with `textContent` only. |
+| `contact.html` | The markup. No inline code and one script, `<script type="module" src="/contact.js">`. Styles are in `site.css`. |
+| `contact.js` | The page: topics, the pasted link, the fragment, Turnstile (it adds `api.js?render=explicit` from the exact URL Cloudflare requires, and only then), the POST, the sent and failed states. Inserts text with `textContent` only. |
 | `contact-lib.js` | No DOM, no dependencies: reads an invite exactly as `@even/core`'s `decodeInvite` does (a port of its base64url, `canonicalOrigin` and checksum), derives the group id with WebCrypto, reads the fragment, builds the request body and maps the API's answer. |
 | `contact-lib.test.ts` | Vitest: the id against `@even/core`'s known answers and its `deriveServer`/`groupIdForToken` for random secrets and servers, `canonicalOrigin` and invite reading against core on fixed and generated inputs, and every body against the Worker's `validateContact`. |
 
-**The report never sends the invite.** The page reads the pasted link in the browser, derives
+**The report never sends the invite.** The page takes the pasted link out of the field the moment it is pasted
+(`takeInvite` empties the field before anything is awaited), derives
 `groupId = base64url(SHA-256(HKDF-SHA256(secret, "even/v1", "auth|" + server)))` (even-server `PROTOCOL.md` §2) and
-sends only that id and the server. The line under the field says so: "We'll receive the group id ab12…u7Qx on
+keeps and sends only that id and the server. The line under the field says so: "We'll receive the group id ab12…u7Qx on
 sync.even.appalaya.com, never its key or contents." For a group on another server it reads "This group is on
 <host>. We can't act on it, but we'll read your report." A server URL with a path (`https://host/even`) cannot be
 reported through the form, because the API takes an origin only; the page says so and does not send.
+
+**Turnstile loads only once no invite can be on the page.** Its `api.js` runs in the page with the page's own
+access, so `contact.js` adds it only when a report names a group it can send (from the app's fragment, or from a
+pasted link already read and cleared), or when a help or feedback message is typed or sent. From then on the link
+field is disabled and reads "To use a different link, reload this page."; a send without a group says the same.
+Before that point nothing from Cloudflare is on the page. even-server `THREAT-MODEL.md` names Turnstile as a trusted
+component.
 
 **The app opens the page with a fragment**, which a browser never sends: `#purpose=help`, `#purpose=feedback`, or
 `#purpose=report&id=<groupId>&server=<canonical server URL>` (percent-encoded, as `URLSearchParams` reads it). A
@@ -404,10 +417,11 @@ connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-a
 ```
 
 `form-action 'none'` means the form can never submit natively; `contact.js` sends it with `fetch`. `check.mjs`
-allows a `<form>`, `<script src>` and Turnstile's URL on `contact.html` and nowhere else, requires exactly the two
-scripts above, allows no other `.js` file in the site, and checks both script files: they import only each other,
-`fetch` only `/api/contact` and `/api/contact/config`, and contain nothing that could inject, store, log, open a
-window or run text as code. It also loads `contact-lib.js` and checks it against `@even/core`'s known-answer group
+allows a `<form>` and a `<script src>` on `contact.html` and nowhere else, requires exactly the one script above,
+allows no other `.js` file in the site, and checks both script files: they import only each other, `fetch` only
+`/api/contact` and `/api/contact/config`, and contain nothing that could inject, store, log, open a window or run
+text as code. The one exception is Turnstile: `contact.js` may create one `<script>`, whose only `src` is its
+`TURNSTILE_URL` constant, which must be Cloudflare's exact URL. It also loads `contact-lib.js` and checks it against `@even/core`'s known-answer group
 ids (`packages/core/src/keys.test.ts`), so CI checks the derivation even though the root Vitest config does not
 include this folder's test.
 

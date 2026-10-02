@@ -13,12 +13,11 @@
 <link rel="stylesheet" href="/site.css">
 <!--
   The contact form (README.md, "Contact page"). No inline code: contact.js and contact-lib.js are files on this site,
-  allowed by the /contact policy in _headers together with Cloudflare Turnstile, the one script from elsewhere,
-  loaded from the exact URL Cloudflare requires. An invite link pasted here is read in this browser only; the form
-  sends the group's id, never the invite. scripts/check.mjs allows the form, these scripts and Turnstile on this page
-  and no other.
+  allowed by the /contact policy in _headers together with Cloudflare Turnstile, the one script from elsewhere.
+  contact.js adds Turnstile's api.js itself, from the exact URL Cloudflare requires, and only once no invite can be
+  on the page: a pasted link is taken out of its field the moment it is read, and the form sends the group's id,
+  never the invite. scripts/check.mjs allows the form and these scripts on this page and no other.
 -->
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
 <script type="module" src="/contact.js"></script>
 </head>
 <body>
@@ -36,7 +35,7 @@
   <p class="intro">Report a group, get help, or tell us what you think.</p>
 
   <noscript>
-    <p class="contact-card">This page needs JavaScript to send a message. It works out a reported group&rsquo;s id here in your browser, so an invite link never leaves it, and runs Cloudflare&rsquo;s bot check before anything is sent.</p>
+    <p class="contact-card">This page needs JavaScript to send a message. It works out a reported group&rsquo;s id here in your browser and clears the invite link before Cloudflare&rsquo;s bot check loads, so only the id is sent.</p>
   </noscript>
 
   <form class="contact-form" id="form" aria-label="Contact form" hidden>
@@ -52,7 +51,7 @@
     <fieldset class="plain" id="report-fields">
       <fieldset class="plain" id="paste">
         <label class="field-label" for="link">Invite link</label>
-        <p class="field-hint" id="link-hint">Paste the group&rsquo;s link. It never leaves this browser.</p>
+        <p class="field-hint" id="link-hint">Paste the group&rsquo;s link. This page reads it, then clears it.</p>
         <textarea class="input input-link" id="link" rows="3" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="link-hint derived"></textarea>
         <div class="derived" id="derived" role="status" hidden>
           <span class="derived-icon"><span id="derived-ok"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="derived-problem" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 4.2L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.5"/><path d="M12 17.2v.3"/></svg></span></span>
