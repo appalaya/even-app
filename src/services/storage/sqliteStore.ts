@@ -73,6 +73,7 @@ export const PREF_KEYS: readonly PrefKey[] = [
   'notifications.asked',
   'notifications.unanswered',
   'notifications.ledger',
+  'rotation.notNow',
 ];
 
 /**

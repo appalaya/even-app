@@ -94,6 +94,7 @@ import {
 } from './errors';
 import type { DerivedGroup, GroupStateStore } from './groupState';
 import { CONTROL_TYPES, isReadable, openType, parseEnvelopeText, typeOf } from './log';
+import { MoveOffers, recognitionStep } from './moveOffers';
 import { checkEmoji, normaliseName, type PrefsService } from './prefs';
 import { deviceSeat } from './seat';
 import { resolveSplit, sameSplit, type SplitSpec } from './split';
@@ -1354,7 +1355,7 @@ export class GroupService {
    * hidden and whose own log holds a `group.closed { to }` naming this group, sync the old group one last time, then
    * re-encrypt into this group every old-group envelope of origin `local` whose id this group lacks (this device's
    * own writes, the unpushed outbox included, and nothing else; control events never), unacked; hide the old group
-   * and carry over `my_member_id`.
+   * and carry over `my_member_id`. When there are such envelopes, it asks first (MoveEntriesPrompt, `rescueFrom`).
    */
   async recognizeRotation(localId: string, known?: DerivedGroup): Promise<void> {
     const derived = known ?? (await this.groupState.get(localId));
@@ -1381,7 +1382,120 @@ export class GroupService {
     }
   }
 
-  private async rescueFrom(newLocalId: string, oldLocalId: string): Promise<void> {
+  // ----- MoveEntriesPrompt -----
+
+  private moveOfferStore: MoveOffers | null = null;
+
+  /**
+   * MoveEntriesPrompt's offers (state/moveOffers.ts): recognition publishes one when the old group holds entries this
+   * phone wrote that the new group lacks. The Group screen asks over the new group; the old group's settings offer
+   * "Move entries".
+   */
+  get moveOffers(): MoveOffers {
+    this.moveOfferStore ??= new MoveOffers(this.store);
+    return this.moveOfferStore;
+  }
+
+  /**
+   * Move (MoveEntriesPrompt, or "Move entries" in the old group's settings): the rescue as written, for one
+   * recognised rotation. Nothing happens unless recognition would act (the old group's closure names the new group).
+   * Both groups' lifecycle checks wait for it: the old group's last sync starts one, which must not act on a row it
+   * read before the move hid the group. (Nothing takes these two locks in the other order.)
+   */
+  moveEntries(newLocalId: string, oldLocalId: string): Promise<void> {
+    return this.withLock(`lifecycle|${newLocalId}`, () =>
+      this.withLock(`lifecycle|${oldLocalId}`, () => this.rescueFrom(newLocalId, oldLocalId, true)),
+    );
+  }
+
+  /**
+   * Not now: asked once per rotation. The old group stays on Groups, closed and read-only and un-rescued, and its
+   * settings keep "Move entries".
+   */
+  notNowMove(oldLocalId: string): Promise<void> {
+    return this.moveOffers.notNow(oldLocalId);
+  }
+
+  /** The two groups' keys and server group ids, or null when either secret is missing or not that group's. */
+  private rescueKeys(
+    oldSecret: Uint8Array | null,
+    newSecret: Uint8Array | null,
+    oldRow: GroupRow,
+    newRow: GroupRow,
+  ): RescueKeys | null {
+    if (
+      oldSecret === null ||
+      newSecret === null ||
+      deriveLocal(oldSecret).localId !== oldRow.localId ||
+      deriveLocal(newSecret).localId !== newRow.localId
+    ) {
+      return null;
+    }
+    return {
+      oldKey: deriveLocal(oldSecret).encryptionKey,
+      newKey: deriveLocal(newSecret).encryptionKey,
+      oldGroupId: deriveServer(oldSecret, oldRow.serverUrl).groupId,
+      newGroupId: deriveServer(newSecret, newRow.serverUrl).groupId,
+    };
+  }
+
+  /**
+   * What a rescue carries from the old group into the new one: every old-group envelope of origin `local` (this
+   * device's own writes, the unpushed outbox included, and nothing else) that it can open, that the new group lacks,
+   * and that is not a control event.
+   */
+  private async rescuable(
+    store: Store,
+    newLocalId: string,
+    oldLocalId: string,
+    keys: RescueKeys,
+  ): Promise<{ stored: StoredRow; envelope: ParsedEnvelope }[]> {
+    const have = new Set((await store.listEnvelopes(newLocalId)).map((row) => row.id));
+    const pace = pacer(RESEALS_PER_YIELD);
+    const found: { stored: StoredRow; envelope: ParsedEnvelope }[] = [];
+    for (const stored of await store.listEnvelopes(oldLocalId)) {
+      if (stored.origin !== 'local' || !isReadable(stored.status) || have.has(stored.id)) continue;
+      if (pace()) await yieldToEventLoop();
+      const envelope = parseEnvelopeText(stored.envelope);
+      if (envelope === null) continue;
+      const known = this.groupState.decodeCache.get(
+        oldLocalId,
+        stored.id,
+        stored.envelope,
+        keys.oldGroupId,
+      )?.type;
+      if (CONTROL_TYPES.has(known ?? openType(keys.oldKey, keys.oldGroupId, envelope) ?? '')) {
+        continue;
+      }
+      found.push({ stored, envelope });
+    }
+    return found;
+  }
+
+  /** How many entries a rescue would carry into the new group now (MoveEntriesPrompt's count). */
+  private async rescuableCount(newLocalId: string, oldLocalId: string): Promise<number> {
+    const oldRow = await this.store.getGroup(oldLocalId);
+    const newRow = await this.store.getGroup(newLocalId);
+    if (oldRow === null || newRow === null) return 0;
+    const keys = this.rescueKeys(
+      await this.secrets.getSecret(oldLocalId),
+      await this.secrets.getSecret(newLocalId),
+      oldRow,
+      newRow,
+    );
+    return keys === null
+      ? 0
+      : (await this.rescuable(this.store, newLocalId, oldLocalId, keys)).length;
+  }
+
+  /**
+   * The rescue (design.md "Recognising a rotation"). Recognition calls it for each rotation it sees; `move` is the
+   * person's Move. Before copying anything of this phone's into a group whose other members never saw it, it asks:
+   * with entries to carry and no Move yet, it only publishes the offer (asked once per rotation, then kept in the old
+   * group's settings) and leaves both groups as they are. With none, or on Move, it syncs the old group once,
+   * re-encrypts those entries into the new group unacked, hides the old group and carries over the name pick.
+   */
+  private async rescueFrom(newLocalId: string, oldLocalId: string, move = false): Promise<void> {
     const old = await this.store.getGroup(oldLocalId);
     if (old === null || old.state === 'hidden' || this.recognizing.has(oldLocalId)) return;
     const oldDerived = await this.groupState.get(oldLocalId);
@@ -1391,6 +1505,21 @@ export class GroupService {
     // (design.md "Recognising a rotation"). Until that closure is on this phone nothing happens, and the next
     // lifecycle check of either group looks again (`recognizeRotation`, `recognizeRotationInto`).
     if (!closureTargets(await this.groupState.entries(oldLocalId)).has(newLocalId)) return;
+    if (!move) {
+      const count = await this.rescuableCount(newLocalId, oldLocalId);
+      const notNow = count > 0 && (await this.moveOffers.answeredNotNow(oldLocalId));
+      const step = recognitionStep(count, notNow);
+      if (step !== 'rescue') {
+        this.moveOffers.publish({
+          to: newLocalId,
+          from: oldLocalId,
+          fromName: oldDerived?.name ?? '',
+          count,
+          asked: step === 'offer',
+        });
+        return;
+      }
+    }
     if (this.recognizing.has(oldLocalId)) return; // again: the reads above awaited
     this.recognizing.add(oldLocalId);
     let rescued = 0;
@@ -1408,38 +1537,21 @@ export class GroupService {
         const newRow = await tx.getGroup(newLocalId);
         if (oldRow === null || newRow === null) return 0;
         const rows: NewEventRow[] = [];
-        if (
-          oldSecret !== null &&
-          newSecret !== null &&
-          deriveLocal(oldSecret).localId === oldLocalId &&
-          deriveLocal(newSecret).localId === newLocalId
-        ) {
-          const oldKey = deriveLocal(oldSecret).encryptionKey;
-          const newKey = deriveLocal(newSecret).encryptionKey;
-          const oldGroupId = deriveServer(oldSecret, oldRow.serverUrl).groupId;
-          const newGroupId = deriveServer(newSecret, newRow.serverUrl).groupId;
-          const have = new Set((await tx.listEnvelopes(newLocalId)).map((row) => row.id));
-          const pace = pacer(RESEALS_PER_YIELD);
-          for (const stored of await tx.listEnvelopes(oldLocalId)) {
-            if (stored.origin !== 'local' || !isReadable(stored.status) || have.has(stored.id))
-              continue;
-            if (pace()) await yieldToEventLoop();
-            const envelope = parseEnvelopeText(stored.envelope);
-            if (envelope === null) continue;
-            const known = this.groupState.decodeCache.get(
-              oldLocalId,
-              stored.id,
-              stored.envelope,
-              oldGroupId,
-            )?.type;
-            if (CONTROL_TYPES.has(known ?? openType(oldKey, oldGroupId, envelope) ?? '')) continue;
+        const keys = this.rescueKeys(oldSecret, newSecret, oldRow, newRow);
+        if (keys !== null) {
+          for (const { stored, envelope } of await this.rescuable(
+            tx,
+            newLocalId,
+            oldLocalId,
+            keys,
+          )) {
             let resealed;
             try {
               resealed = resealEnvelope({
-                key: oldKey,
-                groupId: oldGroupId,
-                newKey,
-                newGroupId,
+                key: keys.oldKey,
+                groupId: keys.oldGroupId,
+                newKey: keys.newKey,
+                newGroupId: keys.newGroupId,
                 envelope,
               });
             } catch {
@@ -1466,6 +1578,8 @@ export class GroupService {
     } finally {
       this.recognizing.delete(oldLocalId);
     }
+    this.moveOffers.drop(oldLocalId);
+    await this.moveOffers.forget(oldLocalId);
     this.groupState.invalidate(oldLocalId);
     this.groupState.invalidate(newLocalId);
     this.groupState.groupsChanged();
@@ -1822,3 +1936,14 @@ export class GroupService {
     });
   }
 }
+
+/** The keys a rescue opens the old group's envelopes with and seals them for the new group with. */
+interface RescueKeys {
+  oldKey: Uint8Array;
+  newKey: Uint8Array;
+  oldGroupId: string;
+  newGroupId: string;
+}
+
+type StoredRow = Awaited<ReturnType<Store['listEnvelopes']>>[number];
+type ParsedEnvelope = NonNullable<ReturnType<typeof parseEnvelopeText>>;

@@ -1250,9 +1250,20 @@ rescues this device's own writes, including any unpushed outbox, and nothing
 else: events written by the removed party after the rotation never cross,
 because no device claims them as its own. Control events are never copied.
 Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
-over `my_member_id`. Two `group.rotated` events with the same `from` in
-different groups mean two members rotated concurrently; the app shows both
-groups, lets the user pick, and sets the other to `hidden`.
+over `my_member_id`. When there are such envelopes (readable, not control
+events), the rescue waits for the person (MoveEntriesPrompt): the next time
+the new group is on screen it asks "Move your Banff 2026 entries into the new
+group?" with how many. Move is the rescue above. Not now, or closing the
+sheet, copies and hides nothing: the old group stays on Groups, closed,
+read-only and un-rescued, and its Group settings carry a "Move entries" row,
+where Access is for an open group, that asks the same question and runs the
+same move. It is asked once per rotation: the `prefs` row `rotation.notNow`
+keeps the old groups answered Not now (local ids only), and recognition, which
+runs again after each of the new group's syncs and at launch, then only keeps
+the move offered there. With no such envelopes nothing is asked, and the old
+group is synced once and hidden, as above. Two `group.rotated` events with the
+same `from` in different groups mean two members rotated concurrently; the app
+shows both groups, lets the user pick, and sets the other to `hidden`.
 
 The closure is the check. A `group.rotated` alone is a claim anyone in the
 new group can write, naming any group whose `localId` they know; acted on
@@ -1854,6 +1865,10 @@ Copy no board draws:
   knows about its model and sync. Nothing here leaves your phone." Android,
   whose Diagnostics has no model sections: "What the app knows about sync.
   Nothing here leaves your phone." (`diagnosticsCaption`)
+- "Move entries": the row in a closed group's Group settings while its
+  entries can still move into the new group, and so after MoveEntriesPrompt's
+  Not now (an accent row with the arrow glyph, its own card where Access is
+  for an open group, no footnote). It asks MoveEntriesPrompt's question again.
 
 Boards added 2 October 2026 (each with its dark twin):
 
@@ -1864,7 +1879,8 @@ Boards added 2 October 2026 (each with its dark twin):
 - MoveEntriesPrompt: "Move your Banff 2026 entries into the new group?", "3
   entries you added on this phone aren't in it yet. Everyone in the new group
   will see them." (one entry: "1 entry you added on this phone isn't in it
-  yet."), "Move" and "Not now".
+  yet."), "Move" and "Not now". Asked once per rotation; after Not now the old
+  group's settings keep "Move entries" (under Copy no board draws).
 - ContactStates draws strings the contact page already has, word for word:
   "To use a different link, reload this page." is both the closed link
   field's hint and the alert when a report is sent with no group, and "We'll

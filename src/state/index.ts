@@ -9,6 +9,7 @@ export {
   useGroup,
   useGroups,
   useMe,
+  useMoveOffers,
   usePrefs,
   useSyncStatus,
   type Me,
@@ -42,6 +43,7 @@ export type {
   SkippedCounts,
   SyncStatus,
 } from './groupState';
+export type { MoveOffer } from './moveOffers';
 export type { SplitSpec } from './split';
 export {
   describeForLog,

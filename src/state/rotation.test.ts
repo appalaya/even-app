@@ -245,13 +245,22 @@ describe.each(STORE_KINDS)('rotation on the %s store', (kind) => {
     const syncsBefore = oldSyncs();
     const joined = await g(b).joinInvite(rotated.invite.code);
     await b.services.idle();
-    expect(oldSyncs()).toBe(syncsBefore + 1); // the closed group's one last sync
     expect(joined).toMatchObject({
       kind: 'joined',
       localId: g2,
       needsClaim: false,
       waiting: false,
     });
+    // Its late write is not in the new group, so it is asked first (MoveEntriesPrompt), and Move is the rescue.
+    expect(g(b).moveOffers.peek()).toEqual([
+      { to: g2, from: g1, fromName: 'Banff 2026', count: 1, asked: false },
+    ]);
+    expect(await lifecycle(b, g1)).toBe('closed');
+    expect(oldSyncs()).toBe(syncsBefore);
+    await g(b).moveEntries(g2, g1);
+    await b.services.idle();
+    expect(oldSyncs()).toBe(syncsBefore + 1); // the closed group's one last sync
+    expect(g(b).moveOffers.peek()).toEqual([]);
     expect(await lifecycle(b, g1)).toBe('hidden');
     expect((await b.store.getGroup(g2))?.myMemberId).toBe(nathan); // carried over
     const rescued = await rows(b, g2);
@@ -481,8 +490,14 @@ describe.each(STORE_KINDS)('rotation on the %s store', (kind) => {
     expectSynced(await sync(b, g2));
     expect(await lifecycle(b, g1)).toBe('active');
 
-    // g1's next sync brings A's closure: g1's own lifecycle check re-runs the recognition at once.
+    // g1's next sync brings A's closure: g1's own lifecycle check re-runs the recognition at once, which asks about
+    // the late write (MoveEntriesPrompt); Move rescues it.
     expectSynced(await sync(b, g1));
+    expect(await lifecycle(b, g1)).toBe('closed');
+    expect(g(b).moveOffers.peek()).toEqual([
+      { to: g2, from: g1, fromName: 'Banff 2026', count: 1, asked: false },
+    ]);
+    await g(b).moveEntries(g2, g1);
     expect(await lifecycle(b, g1)).toBe('hidden');
     expect((await rows(b, g2)).find((r) => r.id === late)).toMatchObject({
       origin: 'local',

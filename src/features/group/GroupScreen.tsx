@@ -21,7 +21,14 @@ import {
 } from '@/components';
 import { InviteQrSheet } from '@/features/invite/InviteQrSheet';
 import { PickNameStep } from '@/features/join/PickNameStep';
-import { describeForLog, deviceSeat, useApp, useGroup } from '@/state';
+import {
+  describeForLog,
+  deviceSeat,
+  useApp,
+  useGroup,
+  useMoveOffers,
+  type MoveOffer,
+} from '@/state';
 import { layout, useTheme } from '@/theme';
 
 import { DoneRow, DoneSheet } from './DoneAdding';
@@ -47,6 +54,8 @@ import {
   useStatusLine,
 } from './hooks';
 import { InviteCard, PeopleRow, shareInvite } from './InviteCard';
+import { promptFor } from './moveEntries';
+import { MoveEntriesSheet } from './MoveEntriesSheet';
 import {
   groupItemKey,
   groupItems,
@@ -113,6 +122,10 @@ export interface GroupScreenProps {
  * reinstall) is restored without asking (`GroupService.restoreSeat`).
  *
  * The share arrow opens "Share link" · "Show QR code" (GroupShareMenu, `ShareMenu`).
+ *
+ * A regenerated invite whose old group holds entries this phone wrote that this group lacks asks, while this group
+ * is on screen, "Move your Banff 2026 entries into the new group?" (MoveEntriesPrompt), once per rotation: Move is
+ * the rescue, Not now (or closing it) leaves the move in the old group's settings.
  */
 export function GroupScreen({
   localId,
@@ -151,6 +164,31 @@ export function GroupScreen({
   // "Which name is yours?": up each time Group comes into view (a fresh sheet each time), down on blur and on close.
   // Whether it shows at all is `offersNamePick` below.
   const pick = useSheetOnEachView();
+
+  // MoveEntriesPrompt: asked while this screen is in view; the offer stays set while the sheet slides away.
+  const offer = promptFor(useMoveOffers(), localId);
+  const [asked, setAsked] = useState<MoveOffer | null>(offer);
+  if (offer !== null && offer !== asked) setAsked(offer);
+  const [inView, setInView] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setInView(true);
+      return () => setInView(false);
+    }, []),
+  );
+  const [moving, setMoving] = useState(false);
+  const moveEntries = (o: MoveOffer) => {
+    setMoving(true);
+    groups
+      .moveEntries(o.to, o.from)
+      .catch((error: unknown) => console.warn('moving entries failed', describeForLog(error)))
+      .finally(() => setMoving(false));
+  };
+  const notNow = (o: MoveOffer) => {
+    groups
+      .notNowMove(o.from)
+      .catch((error: unknown) => console.warn('not now failed', describeForLog(error)));
+  };
 
   // This device's own seat is in the log but not on the row: give it back rather than ask. The lifecycle check does
   // this after every sync and at app start; this covers a group opened before that has run.
@@ -507,6 +545,14 @@ export function GroupScreen({
           onClose={() => setQrOpen(false)}
           invite={invite}
           groupName={name}
+        />
+        {/* After the name pick, when that is up too. */}
+        <MoveEntriesSheet
+          offer={asked}
+          visible={offer !== null && inView && !(pick.open && offerPick)}
+          busy={moving}
+          onMove={() => offer !== null && moveEntries(offer)}
+          onNotNow={() => offer !== null && notNow(offer)}
         />
       </Screen>
       <ShareMenu

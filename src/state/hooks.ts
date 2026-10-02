@@ -9,6 +9,7 @@ import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react';
 import { peekModelOutcomes, subscribeModelOutcomes, type ModelOutcomeEntry } from './categories';
 import { AppContext } from './context';
 import type { GroupListSnapshot, GroupSnapshot, SyncStatus } from './groupState';
+import type { MoveOffer } from './moveOffers';
 import type { Appearance, NotificationStatus, Prefs } from './prefs';
 import type { AppServices } from './services';
 
@@ -42,6 +43,20 @@ export function useGroup(localId: string): GroupSnapshot {
     [groupState, localId],
   );
   const getSnapshot = useCallback(() => groupState.peek(localId), [groupState, localId]);
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+/**
+ * MoveEntriesPrompt's offers (state/moveOffers.ts): rotations recognised on this phone whose old group holds entries
+ * this phone wrote that the new group lacks. Replaced on every change.
+ */
+export function useMoveOffers(): readonly MoveOffer[] {
+  const { groups } = useApp();
+  const subscribe = useCallback(
+    (onChange: () => void) => groups.moveOffers.subscribe(onChange),
+    [groups],
+  );
+  const getSnapshot = useCallback(() => groups.moveOffers.peek(), [groups]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
