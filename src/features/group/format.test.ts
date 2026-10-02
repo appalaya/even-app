@@ -87,3 +87,32 @@ describe('group formats', () => {
     expect(deviceShort('-_k2pdXXXXXXXXXXXXXXXX')).toBe('K2PD');
   });
 });
+
+describe('date formatters', () => {
+  it('reads the same as a fresh Intl.DateTimeFormat, per locale and style', () => {
+    const times = [at(26, 9, 50), at(20, 21, 14), new Date(2025, 0, 3, 0, 5).getTime()];
+    for (const locale of ['en-US', 'en-GB', 'de-DE', 'ja-JP', undefined]) {
+      for (const ms of times) {
+        const fresh = new Intl.DateTimeFormat(locale, {
+          hour: 'numeric',
+          minute: '2-digit',
+        }).format(ms);
+        expect(clockTime(ms, locale)).toBe(fresh);
+        const sameYear = new Date(ms).getFullYear() === new Date(NOW).getFullYear();
+        const day = new Intl.DateTimeFormat(locale, {
+          month: 'short',
+          day: 'numeric',
+          ...(sameYear ? {} : { year: 'numeric' }),
+        }).format(ms);
+        expect(dateTime(ms, NOW, locale)).toBe(`${day}, ${fresh}`);
+      }
+    }
+  });
+
+  it('formats a long Activity list without building a formatter per row', () => {
+    const start = performance.now();
+    for (let i = 0; i < 30_000; i += 1) clockTime(NOW + i * 60_000, 'en-US');
+    // About 10 ms; a new formatter per call took about 400 ms here.
+    expect(performance.now() - start).toBeLessThan(150);
+  });
+});

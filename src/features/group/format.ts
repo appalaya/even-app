@@ -13,19 +13,41 @@ function startOfDay(ms: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
+const DATE_STYLES = {
+  clock: { hour: 'numeric', minute: '2-digit' },
+  day: { month: 'short', day: 'numeric' },
+  dayYear: { month: 'short', day: 'numeric', year: 'numeric' },
+} as const satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * One formatter per locale and style, built on first use (as core's `formatMinor` keeps its number formatters).
+ * Building one costs about 50 times what formatting with it does, and Activity and Expenses format a time or a date
+ * for every row on every render: thousands of them in a long-running group.
+ */
+function dateFormat(
+  locale: string | undefined,
+  style: keyof typeof DATE_STYLES,
+): Intl.DateTimeFormat {
+  const key = `${locale ?? ''}|${style}`;
+  let format = dateFormats.get(key);
+  if (format === undefined) {
+    format = new Intl.DateTimeFormat(locale, DATE_STYLES[style]);
+    dateFormats.set(key, format);
+  }
+  return format;
+}
+
 /** "9:50 AM": the device locale's clock time. */
 export function clockTime(ms: number, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(ms);
+  return dateFormat(locale, 'clock').format(ms);
 }
 
 /** "Sep 20"; "Sep 20, 2025" outside the current year. */
 export function shortDate(ms: number, now: number, locale?: string): string {
   const sameYear = new Date(ms).getFullYear() === new Date(now).getFullYear();
-  return new Intl.DateTimeFormat(locale, {
-    month: 'short',
-    day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-  }).format(ms);
+  return dateFormat(locale, sameYear ? 'day' : 'dayYear').format(ms);
 }
 
 /** An expense's `YYYY-MM-DD` as a local calendar day ("Sep 20"). */
