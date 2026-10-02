@@ -7,6 +7,7 @@ import {
   holdBackHorizon,
   isClockSane,
   isHeldBack,
+  isReceivedAt,
   mustFollowTarget,
   nextTs,
   writesLastWriterField,
@@ -323,6 +324,15 @@ describe('entityIdOf', () => {
 
   it.each(cases)('%o → %s', (payload, expected) => {
     expect(entityIdOf(entry(NOW, payload).event)).toBe(expected);
+  });
+});
+
+describe('isReceivedAt', () => {
+  it('accepts an integer in [tsMin, tsMax) and nothing else', () => {
+    for (const ok of [LIMITS.tsMin, NOW, LIMITS.tsMax - 1]) expect(isReceivedAt(ok)).toBe(true);
+    for (const bad of [LIMITS.tsMin - 1, LIMITS.tsMax, NOW + 0.5, Number.NaN, Infinity, -NOW, 0, '1750000000000', null, undefined]) {
+      expect(isReceivedAt(bad)).toBe(false);
+    }
   });
 });
 

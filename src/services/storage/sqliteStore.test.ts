@@ -1,4 +1,4 @@
-import { b64urlEncode, newId, PROTOCOL, randomBytes } from '@even/core';
+import { b64urlEncode, LIMITS, newId, PROTOCOL, randomBytes } from '@even/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { SqlDriver } from './driver';
@@ -518,6 +518,152 @@ describe('ack, markRejected, resetAcked', () => {
   });
 });
 
+// ---------- received_at ----------
+
+describe('received_at (design.md "Local storage")', () => {
+  const R = T0 + 5_000;
+  const receivedOf = async (id: string, localId = g): Promise<number | null | undefined> =>
+    (
+      await db.get<{ received_at: number | null }>(
+        'SELECT received_at FROM events WHERE local_id = ? AND id = ?',
+        [localId, id],
+      )
+    )?.received_at;
+
+  it('is stored from a pulled row, null for a local write, and listed with the envelope', async () => {
+    const pulled = pulledRow(1, T0, { receivedAt: R });
+    const local = localRow(T0 + 1);
+    await store.insertEvents(g, [pulled, local]);
+    expect(await receivedOf(pulled.id)).toBe(R);
+    expect(await receivedOf(local.id)).toBeNull();
+    expect((await store.listEnvelopes(g)).map((r) => [r.id, r.receivedAt])).toEqual([
+      [pulled.id, R],
+      [local.id, null],
+    ]);
+  });
+
+  it('treats a value that is not a usable R as absent, never an error', async () => {
+    const bad = [
+      LIMITS.tsMin - 1,
+      LIMITS.tsMax,
+      R + 0.5,
+      Number.NaN,
+      '1760000005000' as unknown as number,
+    ];
+    const rows = bad.map((receivedAt, i) => pulledRow(i + 1, T0, { receivedAt }));
+    await store.insertEvents(g, rows);
+    for (const row of rows) expect(await receivedOf(row.id)).toBeNull();
+    await store.setReceivedAt(
+      g,
+      rows.map((row, i) => [row.id, bad[i]!] as const),
+    );
+    for (const row of rows) expect(await receivedOf(row.id)).toBeNull();
+    // The edges of the range are usable.
+    await store.setReceivedAt(g, [
+      [rows[0]!.id, LIMITS.tsMin],
+      [rows[1]!.id, LIMITS.tsMax - 1],
+    ]);
+    expect([await receivedOf(rows[0]!.id), await receivedOf(rows[1]!.id)]).toEqual([
+      LIMITS.tsMin,
+      LIMITS.tsMax - 1,
+    ]);
+  });
+
+  it("a pulled duplicate overwrites it with the server's value; a null keeps it; an unacked duplicate changes nothing", async () => {
+    const row = pulledRow(1, T0, { receivedAt: R });
+    await store.insertEvents(g, [row]);
+    await store.insertEvents(g, [localRow(T0, { id: row.id, receivedAt: R + 9 })]);
+    expect(await receivedOf(row.id)).toBe(R);
+    // Same seq, new R: still written (overwritten, not skipped), and not counted as an ack.
+    expect(
+      await store.insertEvents(g, [pulledRow(1, T0, { id: row.id, receivedAt: R + 1 })]),
+    ).toEqual({ inserted: [], acked: 0 });
+    expect(await receivedOf(row.id)).toBe(R + 1);
+    await store.insertEvents(g, [pulledRow(1, T0, { id: row.id })]);
+    expect(await receivedOf(row.id)).toBe(R + 1);
+    // A local write acknowledged by a pull of itself takes the server's R.
+    const mine = localRow(T0 + 2);
+    await store.insertEvents(g, [mine]);
+    await store.insertEvents(g, [pulledRow(2, T0 + 2, { id: mine.id, receivedAt: R + 2 })]);
+    expect(await rawOne(mine.id)).toMatchObject({ origin: 'local', acked: 1, seq: 2 });
+    expect(await receivedOf(mine.id)).toBe(R + 2);
+    // Within one call, rows apply in order: the later value wins.
+    const twice = pulledRow(3, T0 + 3, { receivedAt: R + 3 });
+    await store.insertEvents(g, [twice, { ...twice, receivedAt: R + 4 }]);
+    expect(await receivedOf(twice.id)).toBe(R + 4);
+  });
+
+  it('setReceivedAt writes a push response over what is stored; unknown ids and other groups are untouched', async () => {
+    const other = makeGroup();
+    await store.upsertGroup(other);
+    const rows = [localRow(T0), localRow(T0 + 1), pulledRow(1, T0 + 2, { receivedAt: R - 10 })];
+    await store.insertEvents(g, rows);
+    await store.insertEvents(other.localId, [localRow(T0, { id: rows[0]!.id })]);
+    await store.setReceivedAt(g, [
+      [rows[0]!.id, R],
+      [rows[1]!.id, R],
+      [rows[2]!.id, R - 10],
+      [newId(), R],
+    ]);
+    expect(await Promise.all(rows.map((r) => receivedOf(r.id)))).toEqual([R, R, R - 10]);
+    expect(await receivedOf(rows[0]!.id, other.localId)).toBeNull();
+    await store.setReceivedAt(g, []);
+    // Beyond one statement.
+    const many = Array.from({ length: 700 }, (_, i) => localRow(T0 + 10 + i));
+    await store.insertEvents(g, many);
+    await store.setReceivedAt(
+      g,
+      many.map((r, i) => [r.id, R + i] as const),
+    );
+    expect(await receivedOf(many[699]!.id)).toBe(R + 699);
+    await rejectsWith(store.setReceivedAt(g, [['nope', R]]), 'invalid_argument');
+  });
+
+  it('is cleared with seq by resetAcked and setServer, and kept by an import (keepReceived)', async () => {
+    const row = pulledRow(1, T0, { receivedAt: R });
+    await store.insertEvents(g, [row]);
+    await store.resetAcked(g, { keepReceived: true });
+    expect(await rawOne(row.id)).toMatchObject({ acked: 0, seq: null });
+    expect(await receivedOf(row.id)).toBe(R);
+    await store.resetAcked(g);
+    expect(await receivedOf(row.id)).toBeNull();
+
+    await store.setReceivedAt(g, [[row.id, R]]);
+    const envelope = makeEnvelope(row.id);
+    await store.setServer(g, OTHER_SERVER, [{ id: row.id, envelope }]);
+    expect(await rawOne(row.id)).toMatchObject({ acked: 0, seq: null });
+    expect(await receivedOf(row.id)).toBeNull();
+  });
+
+  it("latestOwnReceipt is this phone's latest own row with an R, across groups, by R then ts", async () => {
+    expect(await store.latestOwnReceipt()).toBeNull();
+    const other = makeGroup();
+    await store.upsertGroup(other);
+    const a = localRow(T0 + 1);
+    const b = localRow(T0 + 2);
+    const c = localRow(T0 + 3);
+    await store.insertEvents(g, [a, b, pulledRow(1, T0 + 9, { receivedAt: R + 100 })]);
+    await store.insertEvents(other.localId, [c]);
+    expect(await store.latestOwnReceipt()).toBeNull(); // no own row has an R; a remote one does not count
+    await store.setReceivedAt(g, [
+      [a.id, R],
+      [b.id, R],
+    ]);
+    expect(await store.latestOwnReceipt()).toEqual({ ts: T0 + 2, receivedAt: R });
+    await store.setReceivedAt(other.localId, [[c.id, R + 1]]);
+    expect(await store.latestOwnReceipt()).toEqual({ ts: T0 + 3, receivedAt: R + 1 });
+  });
+
+  it('serves latestOwnReceipt from its partial index', async () => {
+    const plan = await db.all<{ detail: string }>(
+      `EXPLAIN QUERY PLAN SELECT ts, received_at FROM events
+       WHERE origin = 'local' AND received_at IS NOT NULL AND ts IS NOT NULL
+       ORDER BY received_at DESC, ts DESC LIMIT 1`,
+    );
+    expect(plan.map((p) => p.detail).join('\n')).toMatch(/events_own_received/);
+  });
+});
+
 // ---------- setServer ----------
 
 describe('setServer', () => {
@@ -734,14 +880,23 @@ describe('reading the log', () => {
         ts: T0 + 1,
         envelope: rows[2]!.envelope,
         status: 'unsupported_body',
+        receivedAt: null,
       },
-      { id: rows[1]!.id, origin: 'local', ts: T0 + 2, envelope: rows[1]!.envelope, status: 'ok' },
+      {
+        id: rows[1]!.id,
+        origin: 'local',
+        ts: T0 + 2,
+        envelope: rows[1]!.envelope,
+        status: 'ok',
+        receivedAt: null,
+      },
       {
         id: rows[0]!.id,
         origin: 'remote',
         ts: null,
         envelope: rows[0]!.envelope,
         status: 'undecryptable',
+        receivedAt: null,
       },
     ]);
   });

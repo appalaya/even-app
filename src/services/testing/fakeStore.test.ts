@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { NewEventRow } from '../storage/types';
 import { createFakeStore, type FakeStore } from './fakeStore';
+import { openTestStore, STORE_KINDS } from './testStore';
 import { Events, groupKeys, groupRow, sealFor, type GroupKeys } from './fixtures';
 
 const ev = new Events();
@@ -41,7 +42,7 @@ describe('FakeStore honours the Store contract', () => {
     ]);
     expect(result).toEqual({ inserted: [], acked: 1 });
     expect(store.dump(L)).toEqual([
-      { ...first, localId: L, acked: true, seq: 4, pushState: 'pending' },
+      { ...first, localId: L, acked: true, seq: 4, pushState: 'pending', receivedAt: null },
     ]);
     // Never un-acked, never lowered, and a null seq keeps the stored one.
     expect(await store.insertEvents(L, [row(keys, a, { acked: true, seq: 2 })])).toEqual({
@@ -182,3 +183,53 @@ describe('FakeStore honours the Store contract', () => {
     expect(store.dump(L).map((r) => r.id)).toEqual([ids[2]]);
   });
 });
+
+describe.each(STORE_KINDS)(
+  'received_at on the %s store (the fake matches the real one)',
+  (kind) => {
+    it('stores, overwrites, sets, clears, keeps and reports it alike', async () => {
+      const store = await openTestStore(kind);
+      try {
+        const keys = groupKeys();
+        const L = keys.localId;
+        await store.upsertGroup(groupRow(keys));
+        const R = 1_760_000_100_000;
+        const [a, b, c] = ['a', 'b', 'c'].map(idOf) as [string, string, string];
+        await store.insertEvents(L, [
+          row(keys, a, { acked: true, seq: 1, origin: 'remote', receivedAt: R }),
+          row(keys, b, { ts: 2 }),
+          row(keys, c, { ts: 3, receivedAt: 0.5 }),
+        ]);
+        const received = async () => (await store.dump(L)).map((r) => r.receivedAt);
+        expect(await received()).toEqual([R, null, null]);
+        // An acked duplicate overwrites; a null one keeps; an unacked one changes nothing.
+        await store.insertEvents(L, [row(keys, a, { acked: true, seq: 1, receivedAt: R + 1 })]);
+        await store.insertEvents(L, [row(keys, a, { acked: true, seq: 1 })]);
+        await store.insertEvents(L, [row(keys, a, { receivedAt: R + 7 })]);
+        expect(await received()).toEqual([R + 1, null, null]);
+        await store.setReceivedAt(L, [
+          [b, R + 2],
+          [c, Number.NaN],
+        ]);
+        expect(await received()).toEqual([R + 1, R + 2, null]);
+        expect(await store.latestOwnReceipt()).toEqual({ ts: 2, receivedAt: R + 2 });
+        expect((await store.listEnvelopes(L)).map((r) => r.receivedAt)).toEqual([
+          R + 1,
+          R + 2,
+          null,
+        ]);
+        await store.resetAcked(L, { keepReceived: true });
+        expect(await received()).toEqual([R + 1, R + 2, null]);
+        await store.resetAcked(L);
+        expect(await received()).toEqual([null, null, null]);
+        expect(await store.latestOwnReceipt()).toBeNull();
+        await store.setReceivedAt(L, [[a, R]]);
+        const readable = await store.listReadable(L);
+        await store.setServer(L, keys.serverUrl, readable);
+        expect(await received()).toEqual([null, null, null]);
+      } finally {
+        await store.close();
+      }
+    });
+  },
+);

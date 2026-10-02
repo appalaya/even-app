@@ -10,7 +10,13 @@
  * - Batches are chunked to at most 999 bound parameters per statement: one round trip per chunk instead of one
  *   per row (each expo-sqlite call crosses the native bridge), under SQLite's historical parameter limit.
  */
-import { envelopeShape, envelopeStoredSize, isEnvelope, type Envelope } from '@even/core';
+import {
+  envelopeShape,
+  envelopeStoredSize,
+  isEnvelope,
+  isReceivedAt,
+  type Envelope,
+} from '@even/core';
 
 import type { SqlDriver, SqlValue } from './driver';
 import { StoreError } from './errors';
@@ -25,6 +31,7 @@ import type {
   NewEventRow,
   NewPendingDelete,
   OutboxRow,
+  OwnReceipt,
   PendingDeleteKey,
   PendingDeleteRow,
   PendingDeletes,
@@ -186,6 +193,13 @@ interface CheckedEvent {
   pushState: PushState;
   /** `events.size`: the stored size as a server counts it, or null for text that is not an envelope. */
   size: number | null;
+  /** `events.received_at`: a usable R, or null (an unusable one is treated as absent, never an error). */
+  receivedAt: number | null;
+}
+
+/** A server's arrival time as stored: the value when it is a usable R, else null (treated as absent). */
+function receivedOrNull(value: unknown): number | null {
+  return isReceivedAt(value) ? value : null;
 }
 
 /**
@@ -237,6 +251,7 @@ function checkNewEvent(row: NewEventRow, index: number): CheckedEvent {
         : checkEnum(row.pushState, PUSH_STATES, `${at}.pushState`),
     // The shape was checked above: measured from it, not checked again (insertEvents is on every pulled page).
     size: shape.ok ? envelopeStoredSize(parsed as Envelope) : null,
+    receivedAt: receivedOrNull(row.receivedAt),
   };
 }
 
@@ -446,7 +461,8 @@ export class SqliteStore implements Store {
         );
       }
       await tx.run(
-        `UPDATE events SET acked = 0, seq = NULL, push_state = 'pending' WHERE local_id = ?`,
+        `UPDATE events SET acked = 0, seq = NULL, received_at = NULL, push_state = 'pending'
+         WHERE local_id = ?`,
         [localId],
       );
       await tx.run(
@@ -550,33 +566,46 @@ export class SqliteStore implements Store {
     return this.db.transaction(async (tx) => {
       await requireGroup(tx, localId);
 
-      // Current acked/seq of every id this call touches, as if the rows were applied one by one.
+      // Current acked/seq/received_at of every id this call touches, as if the rows were applied one by one.
       const known = new Map<
         string,
-        { acked: boolean; seq: number | null; pending?: CheckedEvent }
+        { acked: boolean; seq: number | null; receivedAt: number | null; pending?: CheckedEvent }
       >();
       const ids = [...new Set(incoming.map((r) => r.id))];
       for (const chunk of chunked(ids, MAX_PARAMS - 1)) {
-        const found = await tx.all<{ id: string; acked: number; seq: number | null }>(
-          `SELECT id, acked, seq FROM events WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
+        const found = await tx.all<{
+          id: string;
+          acked: number;
+          seq: number | null;
+          received_at: number | null;
+        }>(
+          `SELECT id, acked, seq, received_at FROM events
+           WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
           [localId, ...chunk],
         );
-        for (const r of found) known.set(r.id, { acked: r.acked === 1, seq: r.seq });
+        for (const r of found) {
+          known.set(r.id, { acked: r.acked === 1, seq: r.seq, receivedAt: r.received_at });
+        }
       }
 
       const inserted: CheckedEvent[] = [];
-      const updated = new Map<string, number | null>();
+      const updated = new Map<string, { seq: number | null; receivedAt: number | null }>();
       let acked = 0;
       for (const row of incoming) {
         const current = known.get(row.id);
         if (!current) {
           const pending = { ...row };
           inserted.push(pending);
-          known.set(row.id, { acked: row.acked, seq: row.seq, pending });
+          known.set(row.id, {
+            acked: row.acked,
+            seq: row.seq,
+            receivedAt: row.receivedAt,
+            pending,
+          });
           continue;
         }
         // Insert-or-ignore; only an acked duplicate (a pulled page) touches the existing row, and only its
-        // acked flag and seq. A seq is never lowered.
+        // acked flag, seq and received_at. A seq is never lowered; the server's received_at overwrites.
         if (!row.acked) continue;
         const seq =
           row.seq === null
@@ -584,22 +613,27 @@ export class SqliteStore implements Store {
             : current.seq === null
               ? row.seq
               : Math.max(current.seq, row.seq);
-        if (current.acked && seq === current.seq) continue;
+        const receivedAt = row.receivedAt ?? current.receivedAt;
+        const ackChanged = !current.acked || seq !== current.seq;
+        if (!ackChanged && receivedAt === current.receivedAt) continue;
         current.acked = true;
         current.seq = seq;
-        acked += 1;
+        current.receivedAt = receivedAt;
+        if (ackChanged) acked += 1;
         if (current.pending) {
           current.pending.acked = true;
           current.pending.seq = seq;
+          current.pending.receivedAt = receivedAt;
         } else {
-          updated.set(row.id, seq);
+          updated.set(row.id, { seq, receivedAt });
         }
       }
 
-      const COLUMNS = 10;
+      const COLUMNS = 11;
       for (const chunk of chunked(inserted, Math.floor(MAX_PARAMS / COLUMNS))) {
         await tx.run(
-          `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
+          `INSERT INTO events
+             (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size, received_at)
            VALUES ${chunk.map(() => `(${placeholders(COLUMNS)})`).join(', ')}`,
           chunk.flatMap((r) => [
             localId,
@@ -612,14 +646,23 @@ export class SqliteStore implements Store {
             r.status,
             r.pushState,
             r.size,
+            r.receivedAt,
           ]),
         );
       }
-      for (const chunk of chunked([...updated], Math.floor((MAX_PARAMS - 1) / 3))) {
+      // (MAX_PARAMS - 1) / 5: each row binds id and seq, then id and received_at, in the CASEs, and id in the IN list.
+      for (const chunk of chunked([...updated], Math.floor((MAX_PARAMS - 1) / 5))) {
         await tx.run(
-          `UPDATE events SET acked = 1, seq = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END
+          `UPDATE events SET acked = 1,
+             seq = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END,
+             received_at = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END
            WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
-          [...chunk.flat(), localId, ...chunk.map(([id]) => id)],
+          [
+            ...chunk.flatMap(([id, r]) => [id, r.seq]),
+            ...chunk.flatMap(([id, r]) => [id, r.receivedAt]),
+            localId,
+            ...chunk.map(([id]) => id),
+          ],
         );
       }
       return { inserted: inserted.map((r) => r.id), acked };
@@ -645,26 +688,73 @@ export class SqliteStore implements Store {
     return this.updateEvents(localId, ids, `push_state = 'rejected'`);
   }
 
-  async resetAcked(localId: string, options?: { clearRejected?: boolean }): Promise<void> {
+  async setReceivedAt(
+    localId: string,
+    values: readonly (readonly [id: string, receivedAt: number])[],
+  ): Promise<void> {
+    checkLocalId(localId);
+    if (!Array.isArray(values)) invalid('values must be an array');
+    const usable = new Map<string, number>();
+    values.forEach((entry, index) => {
+      if (!Array.isArray(entry)) invalid(`values[${index}] must be an [id, receivedAt] pair`);
+      const id = checkId(entry[0], `values[${index}][0]`);
+      // An unusable R is the server's problem, not a caller's: treated as absent, like a pulled one.
+      if (isReceivedAt(entry[1])) usable.set(id, entry[1]);
+    });
+    if (usable.size === 0) return;
+    await this.db.transaction(async (tx) => {
+      // (MAX_PARAMS - 1) / 3: each id binds id and value in the CASE, and id again in the IN list.
+      for (const chunk of chunked([...usable], Math.floor((MAX_PARAMS - 1) / 3))) {
+        await tx.run(
+          `UPDATE events SET received_at = CASE id ${chunk.map(() => 'WHEN ? THEN ?').join(' ')} END
+           WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
+          [...chunk.flat(), localId, ...chunk.map(([id]) => id)],
+        );
+      }
+    });
+  }
+
+  async resetAcked(
+    localId: string,
+    options?: { clearRejected?: boolean; keepReceived?: boolean },
+  ): Promise<void> {
     checkLocalId(localId);
     const clearRejected =
       options?.clearRejected === undefined
         ? false
         : checkBoolean(options.clearRejected, 'clearRejected');
-    await this.db.run(
-      clearRejected
-        ? `UPDATE events SET acked = 0, seq = NULL, push_state = 'pending' WHERE local_id = ?`
-        : 'UPDATE events SET acked = 0, seq = NULL WHERE local_id = ?',
-      [localId],
-    );
+    const keepReceived =
+      options?.keepReceived === undefined
+        ? false
+        : checkBoolean(options.keepReceived, 'keepReceived');
+    const sets = ['acked = 0', 'seq = NULL'];
+    if (!keepReceived) sets.push('received_at = NULL');
+    if (clearRejected) sets.push(`push_state = 'pending'`);
+    await this.db.run(`UPDATE events SET ${sets.join(', ')} WHERE local_id = ?`, [localId]);
   }
 
   async listEnvelopes(localId: string): Promise<StoredEnvelopeRow[]> {
     checkLocalId(localId);
-    return this.db.all<StoredEnvelopeRow>(
-      `SELECT id, origin, ts, envelope, status FROM events WHERE local_id = ? ORDER BY ${LOG_ORDER}`,
+    const rows = await this.db.all<{
+      id: string;
+      origin: EventOrigin;
+      ts: number | null;
+      envelope: string;
+      status: EventStatus;
+      received_at: number | null;
+    }>(
+      `SELECT id, origin, ts, envelope, status, received_at FROM events WHERE local_id = ?
+       ORDER BY ${LOG_ORDER}`,
       [localId],
     );
+    return rows.map((r) => ({
+      id: r.id,
+      origin: r.origin,
+      ts: r.ts,
+      envelope: r.envelope,
+      status: r.status,
+      receivedAt: r.received_at,
+    }));
   }
 
   async listReadable(localId: string): Promise<ReadableEnvelope[]> {
@@ -684,6 +774,15 @@ export class SqliteStore implements Store {
       [localId],
     );
     return row?.latest ?? null;
+  }
+
+  async latestOwnReceipt(): Promise<OwnReceipt | null> {
+    const row = await this.db.get<{ ts: number; received_at: number }>(
+      `SELECT ts, received_at FROM events
+       WHERE origin = 'local' AND received_at IS NOT NULL AND ts IS NOT NULL
+       ORDER BY received_at DESC, ts DESC LIMIT 1`,
+    );
+    return row ? { ts: row.ts, receivedAt: row.received_at } : null;
   }
 
   async countByStatus(localId: string): Promise<EventCounts> {

@@ -91,11 +91,12 @@ interface RawEvent {
   envelope: string;
   status: string;
   push_state: string;
+  received_at: number | null;
 }
 
 async function dumpSqlite(driver: SqlDriver, localId: string): Promise<EventRow[]> {
   const rows = await driver.all<RawEvent>(
-    `SELECT local_id, id, origin, acked, seq, ts, envelope, status, push_state
+    `SELECT local_id, id, origin, acked, seq, ts, envelope, status, push_state, received_at
      FROM events WHERE local_id = ? ORDER BY rowid`,
     [localId],
   );
@@ -109,6 +110,7 @@ async function dumpSqlite(driver: SqlDriver, localId: string): Promise<EventRow[
     envelope: r.envelope,
     status: r.status as EventStatus,
     pushState: r.push_state as PushState,
+    receivedAt: r.received_at,
   }));
 }
 

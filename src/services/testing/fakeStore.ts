@@ -1,12 +1,14 @@
 /**
  * In-memory `Store` for Node tests, honouring the contract in `../storage/types.ts`:
- * - `insertEvents` is insert-or-ignore on (localId, id); an acked incoming duplicate sets `acked` and `seq` on
- *   the existing row (a `seq` is never lowered; a null incoming one keeps the stored one); an unacked duplicate
- *   changes nothing; the envelope, status, ts and origin of an existing row are never replaced. Rows are
+ * - `insertEvents` is insert-or-ignore on (localId, id); an acked incoming duplicate sets `acked`, `seq` and
+ *   `receivedAt` on the existing row (a `seq` is never lowered; a null incoming one keeps the stored one, as a null
+ *   `receivedAt` does); an unacked duplicate changes nothing; the envelope, status, ts and origin of an existing row
+ *   are never replaced. A `receivedAt` that is not a usable R is stored as null. Rows are
  *   validated like sqliteStore.ts's `checkNewEvent` (text ≤ 16 KiB, strict v1 for readable statuses, same id,
  *   `ok` has a `ts`), all or nothing, and the group row must exist.
  * - the outbox is `acked = 0 AND push_state = 'pending'`, ordered by `ts` (null last) then `id`.
- * - `resetAcked` keeps rejected rows rejected unless `clearRejected`.
+ * - `resetAcked` keeps rejected rows rejected unless `clearRejected`, and clears `receivedAt` unless `keepReceived`;
+ *   `setServer` clears it too. `latestOwnReceipt` looks across every group.
  * - `setServer` refuses, changing nothing, a re-encryption that misses a readable row, names another row, repeats
  *   an id, or holds an envelope that is not v1 or carries another id; stored text is the canonical `{id, v, n, c}`.
  * - `listGroups` orders by `createdAt`, then `localId` (the SQL `ORDER BY created_at, local_id`).
@@ -15,7 +17,7 @@
  * The engine suite runs against this and the real store alike (engine.test.ts), so a disagreement shows up there.
  * `fault` lets a test throw from any method (e.g. `setCursor`) to exercise rollback.
  */
-import { envelopeShape, isB64url, isEnvelope, isId } from '@even/core';
+import { envelopeShape, isB64url, isEnvelope, isId, isReceivedAt } from '@even/core';
 
 import { storedSizeOfText } from '../storage/envelopeSize';
 import type {
@@ -27,6 +29,7 @@ import type {
   InsertEventsResult,
   NewEventRow,
   OutboxRow,
+  OwnReceipt,
   PendingDeleteRow,
   PendingDeletes,
   PrefKey,
@@ -293,6 +296,7 @@ export class FakeStore implements Store {
       row.envelope = replacement;
       row.acked = false;
       row.seq = null;
+      row.receivedAt = null;
       row.pushState = 'pending';
     }
   }
@@ -354,6 +358,7 @@ export class FakeStore implements Store {
           envelope: row.envelope,
           status: row.status,
           pushState: row.pushState ?? 'pending',
+          receivedAt: isReceivedAt(row.receivedAt) ? row.receivedAt : null,
           rowid: this.state.nextRowid++,
         });
         inserted.push(row.id);
@@ -369,6 +374,7 @@ export class FakeStore implements Store {
       if (!existing.acked || existing.seq !== seq) acked += 1;
       existing.acked = true;
       existing.seq = seq;
+      if (isReceivedAt(row.receivedAt)) existing.receivedAt = row.receivedAt;
     }
     return { inserted, acked };
   }
@@ -391,6 +397,19 @@ export class FakeStore implements Store {
     }
   }
 
+  async setReceivedAt(
+    localId: string,
+    values: readonly (readonly [id: string, receivedAt: number])[],
+  ): Promise<void> {
+    this.enter('setReceivedAt', [localId, values]);
+    const table = this.rows(localId);
+    for (const [id, receivedAt] of values) {
+      if (!isId(id)) throw new Error(`FakeStore.setReceivedAt: ${String(id)} is not a 22-char id`);
+      const row = table.get(id);
+      if (row !== undefined && isReceivedAt(receivedAt)) row.receivedAt = receivedAt;
+    }
+  }
+
   async markRejected(localId: string, ids: readonly string[]): Promise<void> {
     this.enter('markRejected', [localId, ids]);
     const table = this.rows(localId);
@@ -400,11 +419,15 @@ export class FakeStore implements Store {
     }
   }
 
-  async resetAcked(localId: string, options?: { clearRejected?: boolean }): Promise<void> {
+  async resetAcked(
+    localId: string,
+    options?: { clearRejected?: boolean; keepReceived?: boolean },
+  ): Promise<void> {
     this.enter('resetAcked', [localId, options]);
     for (const row of this.rows(localId).values()) {
       row.acked = false;
       row.seq = null;
+      if (options?.keepReceived !== true) row.receivedAt = null;
       if (options?.clearRejected === true) row.pushState = 'pending';
     }
   }
@@ -417,6 +440,7 @@ export class FakeStore implements Store {
       ts: row.ts,
       envelope: row.envelope,
       status: row.status,
+      receivedAt: row.receivedAt,
     }));
   }
 
@@ -438,6 +462,24 @@ export class FakeStore implements Store {
       if (row.ts !== null && (latest === null || row.ts > latest)) latest = row.ts;
     }
     return latest;
+  }
+
+  async latestOwnReceipt(): Promise<OwnReceipt | null> {
+    this.enter('latestOwnReceipt', []);
+    let best: OwnReceipt | null = null;
+    for (const rows of this.state.events.values()) {
+      for (const row of rows.values()) {
+        if (row.origin !== 'local' || row.receivedAt === null || row.ts === null) continue;
+        if (
+          best === null ||
+          row.receivedAt > best.receivedAt ||
+          (row.receivedAt === best.receivedAt && row.ts > best.ts)
+        ) {
+          best = { ts: row.ts, receivedAt: row.receivedAt };
+        }
+      }
+    }
+    return best;
   }
 
   async countByStatus(localId: string): Promise<EventCounts> {

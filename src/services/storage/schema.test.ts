@@ -63,13 +63,14 @@ describe('migrate', () => {
     expect(await readSchemaVersion(db)).toBe(0);
     await migrate(db);
     expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(4);
+    expect(SCHEMA_VERSION).toBe(5);
 
     const objects = await db.all<{ type: string; name: string }>(
       `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
     );
     expect(objects).toEqual([
       { type: 'index', name: 'events_outbox' },
+      { type: 'index', name: 'events_own_received' },
       { type: 'index', name: 'events_ts' },
       { type: 'table', name: 'events' },
       { type: 'table', name: 'groups' },
@@ -101,6 +102,7 @@ describe('migrate', () => {
       ['status', 0],
       ['push_state', 0],
       ['size', 0],
+      ['received_at', 0],
     ]);
     expect((await columns(db, 'prefs')).map((c) => c.name)).toEqual(['key', 'value']);
     expect((await columns(db, 'pending_deletes')).map((c) => [c.name, c.pk, c.notnull])).toEqual([
@@ -201,6 +203,43 @@ describe('migrate', () => {
       events: 652,
       bytes: stored.reduce((sum, r) => sum + (r.size ?? 0), 0),
     });
+  });
+
+  it('v5 upgrades a v4 database: events gain received_at, null on every stored row, nothing rewritten', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 4));
+    const before = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 4) });
+    const group = makeGroup();
+    await before.upsertGroup(group);
+    const rows = [localRow(1_760_000_000_001), pulledRow(1, 1_760_000_000_002)];
+    await db.run(
+      `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?), (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      rows.flatMap((r) => [
+        group.localId,
+        r.id,
+        r.origin,
+        r.acked ? 1 : 0,
+        r.seq,
+        r.ts,
+        r.envelope,
+        r.status,
+        storedSizeOfText(r.envelope),
+      ]),
+    );
+    const stored = await db.all('SELECT * FROM events ORDER BY rowid');
+
+    await migrate(db);
+
+    expect(await readSchemaVersion(db)).toBe(5);
+    const after = await db.all<Record<string, unknown>>('SELECT * FROM events ORDER BY rowid');
+    expect(after).toEqual(stored.map((row) => ({ ...(row as object), received_at: null })));
+    const upgraded = await openSqliteStore(db);
+    expect((await upgraded.listEnvelopes(group.localId)).map((r) => r.receivedAt)).toEqual([
+      null,
+      null,
+    ]);
+    expect(await upgraded.latestOwnReceipt()).toBeNull();
   });
 
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {

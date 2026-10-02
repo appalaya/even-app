@@ -138,11 +138,24 @@ async function V4(tx: SqlDriver): Promise<void> {
   }
 }
 
+/**
+ * v5: `events.received_at`, the server's arrival time for each envelope (R; PROTOCOL.md §4, design.md "Ordering"),
+ * which the reducer orders and holds events by. Null for every row already stored: the next push or pull of that row
+ * supplies it, and until then the event keeps its claimed `ts`, as before. The partial index serves
+ * `latestOwnReceipt`, the write gate's look at this phone's last push. A server's own timestamp, not content.
+ */
+const V5 = statements(
+  'ALTER TABLE events ADD COLUMN received_at INTEGER',
+  `CREATE INDEX events_own_received ON events (received_at, ts)
+     WHERE origin = 'local' AND received_at IS NOT NULL`,
+);
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, description: 'initial schema', up: V1 },
   { version: 2, description: 'pending_deletes.auth_token', up: V2 },
   { version: 3, description: 'pending_deletes.created_at and attempts', up: V3 },
   { version: 4, description: 'events.size', up: V4 },
+  { version: 5, description: 'events.received_at', up: V5 },
 ];
 
 /** The schema version this build writes. */

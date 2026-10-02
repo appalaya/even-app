@@ -151,6 +151,14 @@ function createdIdOf(event: Event): string | null {
   }
 }
 
+/**
+ * True for a usable server arrival time (`received_at`, R; design.md "Ordering"): an integer in the validator's absolute
+ * range, `tsMin ≤ R < tsMax`. Anything else a server or a group file reports is treated as absent.
+ */
+export function isReceivedAt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= LIMITS.tsMin && value < LIMITS.tsMax;
+}
+
 /** True if the device clock is inside the validator's absolute range; the app refuses to write otherwise. */
 export function isClockSane(nowMs: number): boolean {
   return Number.isInteger(nowMs) && nowMs >= LIMITS.tsMin && nowMs < LIMITS.tsMax;

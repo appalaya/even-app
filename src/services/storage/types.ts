@@ -4,7 +4,8 @@
  *
  * Rules the implementation must keep:
  * - SQLite holds envelopes, never decrypted bodies. The only plaintext derived from bodies is `events.ts`,
- *   `groups.name_cache` and `groups.currency_cache` (design.md "Architecture Overview", rule 2). Secrets live in
+ *   `groups.name_cache` and `groups.currency_cache` (design.md "Architecture Overview", rule 2). `events.received_at`
+ *   is the server's own arrival time for an envelope, not content, and is never sent anywhere. Secrets live in
  *   secure store, not here. The one credential in SQLite is `pending_deletes.auth_token`: a per-server bearer
  *   token (it cannot decrypt anything), kept so a DELETE can be retried after Leave removed the secret.
  * - Row types are camelCase mirrors of the snake_case columns; the column is named on each field.
@@ -97,10 +98,23 @@ export interface EventRow {
   status: EventStatus;
   /** `push_state`. */
   pushState: PushState;
+  /**
+   * `received_at`: when the current server first stored this envelope in its current epoch (R, Unix ms; PROTOCOL.md
+   * §4), from a push response or a pulled page, or provisionally from a group file; null until one reports it. The
+   * reducer orders and holds events by it (design.md "Ordering"). Cleared with `seq` by `resetAcked` and `setServer`,
+   * since it belongs to one server and epoch. Never sent to a server.
+   */
+  receivedAt: number | null;
 }
 
-/** Input to `insertEvents`. `localId` comes from the call; `pushState` defaults to `pending`. */
-export type NewEventRow = Omit<EventRow, 'localId' | 'pushState'> & { pushState?: PushState };
+/**
+ * Input to `insertEvents`. `localId` comes from the call; `pushState` defaults to `pending`; `receivedAt` defaults to
+ * null, and a value that is not a usable R (core `isReceivedAt`) is stored as null.
+ */
+export type NewEventRow = Omit<EventRow, 'localId' | 'pushState' | 'receivedAt'> & {
+  pushState?: PushState;
+  receivedAt?: number | null;
+};
 
 /** One row of `pending_deletes`: a server copy we still owe a DELETE to. */
 export interface PendingDeleteRow {
@@ -135,8 +149,20 @@ export interface ReadableEnvelope {
   envelope: Envelope;
 }
 
-/** An envelope of any status, for the group file and the usage meter. */
-export type StoredEnvelopeRow = Pick<EventRow, 'id' | 'origin' | 'ts' | 'envelope' | 'status'>;
+/** An envelope of any status, for the derived state, the group file and rotation. */
+export type StoredEnvelopeRow = Pick<
+  EventRow,
+  'id' | 'origin' | 'ts' | 'envelope' | 'status' | 'receivedAt'
+>;
+
+/**
+ * This phone's latest own event a server has given an R: its claimed `ts` and that R (`Store.latestOwnReceipt`). The
+ * write gate compares them to tell whether this phone's clock is more than a day ahead of the server's.
+ */
+export interface OwnReceipt {
+  ts: number;
+  receivedAt: number;
+}
 
 /** Result of `insertEvents`. */
 export interface InsertEventsResult {
@@ -241,7 +267,7 @@ export interface Store {
    * `server_url`): sets `serverUrl`; `cursor = 0`; `epoch = null`; `state = 'active'` if it was `blocked`;
    * replaces the envelope of every readable row with the given re-encryption for the new group id;
    * deletes `undecryptable` and `unsupported_envelope` rows; then sets `acked = 0`, `seq = null`,
-   * `push_state = 'pending'` on every remaining row. Throws, changing nothing, if a readable row has no
+   * `received_at = null`, `push_state = 'pending'` on every remaining row. Throws, changing nothing, if a readable row has no
    * entry in `reencrypted`. The caller does the crypto; storage only swaps text.
    *
    * Also throws `incomplete_reencryption`, changing nothing, if `reencrypted` names an id that is not a readable
@@ -270,13 +296,15 @@ export interface Store {
 
   /**
    * Inserts rows for a group; insert-or-ignore on `(local_id, id)`. When a row already exists and the
-   * incoming row is acked (a pulled page), the existing row gets `acked = 1` and the incoming `seq`; its
-   * envelope, status, ts, and origin are never replaced. An unacked incoming duplicate changes nothing.
+   * incoming row is acked (a pulled page), the existing row gets `acked = 1`, the incoming `seq`, and the incoming
+   * `receivedAt` when it has one (the server's value overwrites, it is not skipped); its envelope, status, ts, and
+   * origin are never replaced. An unacked incoming duplicate changes nothing.
    * Local writes: `origin 'local'`, `acked false`. Pulls: `origin 'remote'`, `acked true`, with `seq`.
    *
    * Details: rows apply in order, so a duplicate id later in the same call behaves like a duplicate of the
    * earlier row. A `seq` is never lowered (the larger one is kept) and a null incoming `seq` keeps the stored
-   * one. `acked` in the result counts rows whose `acked` or `seq` actually changed. All or nothing: one
+   * one; a null incoming `receivedAt` keeps the stored one. `acked` in the result counts rows whose `acked` or `seq`
+   * actually changed. All or nothing: one
    * invalid row rejects the whole call. Structural rules per row, checked before any write:
    * - `envelope` is JSON text of at most 16,384 characters (`MAX_ENVELOPE_TEXT_LENGTH`); oversized junk
    *   from a server must be replaced or truncated by the caller before it is stored as `undecryptable`.
@@ -294,16 +322,33 @@ export interface Store {
   outbox(localId: string, limit: number): Promise<OutboxRow[]>;
   /** Sets `acked = 1` on these ids (a push answered `200`: every envelope in the batch). Unknown ids are ignored. */
   ack(localId: string, ids: readonly string[]): Promise<void>;
+  /**
+   * Sets `received_at` from a push response's `received_at` (one value per envelope, in request order; a duplicate
+   * reports the stored value), overwriting what is stored. A value that is not a usable R (core `isReceivedAt`) is
+   * ignored, as are unknown ids; a repeated id takes its last value.
+   */
+  setReceivedAt(
+    localId: string,
+    values: readonly (readonly [id: string, receivedAt: number])[],
+  ): Promise<void>;
   /** Sets `push_state = 'rejected'` on these ids (`invalid_envelope` at `index`). */
   markRejected(localId: string, ids: readonly string[]): Promise<void>;
   /**
-   * Sets `acked = 0` and `seq = null` on every event of the group, so the whole log is re-pushed: the epoch
-   * rule and group-file import. With `clearRejected`, also `push_state = 'pending'`.
-   * Without it, rejected rows stay rejected: the server refused them as structurally invalid, and a new epoch
-   * or an import does not make them valid; a server move (`setServer`) re-queues them with fresh envelopes.
+   * Sets `acked = 0`, `seq = null` and `received_at = null` on every event of the group, so the whole log is
+   * re-pushed and every R comes again from the server's new epoch: the epoch rule. With `clearRejected`, also
+   * `push_state = 'pending'`. Without it, rejected rows stay rejected: the server refused them as structurally
+   * invalid, and a new epoch or an import does not make them valid; a server move (`setServer`) re-queues them with
+   * fresh envelopes. With `keepReceived` (group-file import: same server, same epoch) `received_at` is left alone, and
+   * the next push's response overwrites it.
    */
-  resetAcked(localId: string, options?: { clearRejected?: boolean }): Promise<void>;
-  /** Every event of the group, any status, ordered by `ts` (null last) then `id`. Group file, usage meter. */
+  resetAcked(
+    localId: string,
+    options?: { clearRejected?: boolean; keepReceived?: boolean },
+  ): Promise<void>;
+  /**
+   * Every event of the group, any status, ordered by `ts` (null last) then `id`. The derived state, group file,
+   * rotation.
+   */
   listEnvelopes(localId: string): Promise<StoredEnvelopeRow[]>;
   /**
    * Parsed envelopes of status `ok`, `invalid`, or `unsupported_body`, ordered by `ts` then `id`. Opening
@@ -316,6 +361,12 @@ export interface Store {
    * null when no event has one. Background refresh syncs only groups whose latest event is within 30 days.
    */
   latestTs(localId: string): Promise<number | null>;
+  /**
+   * Across every group: the `origin = 'local'` row with the largest `received_at` (ties: the largest `ts`), as its
+   * `ts` and `received_at`; null when no row of this phone's has one. That is this phone's last push as the server
+   * saw it (served by the `events_own_received` index).
+   */
+  latestOwnReceipt(): Promise<OwnReceipt | null>;
   countByStatus(localId: string): Promise<EventCounts>;
   /**
    * The usage meter's figures: the group's rows that hold a structurally valid envelope (any status, any `v`; not
