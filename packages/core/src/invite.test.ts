@@ -71,6 +71,8 @@ describe('makeInvite', () => {
   it('requires g to be a valid group name (the group.created / group.renamed rule)', () => {
     expect(makeInvite(SECRET, SERVER, { g: 'x'.repeat(LIMITS.groupNameMax) }).g).toHaveLength(LIMITS.groupNameMax);
     for (const g of ['', '   ', ' Banff', 'Banff\n']) expectCode(() => makeInvite(SECRET, SERVER, { g }), 'malformed');
+    // No bidirectional-control character (review L4).
+    for (const g of ['Banff\u202E6202', '\u2066Banff\u2069']) expectCode(() => makeInvite(SECRET, SERVER, { g }), 'malformed');
   });
 });
 
@@ -167,6 +169,14 @@ describe('decodeInvite', () => {
     it('non-string input', () => {
       expectCode(() => decodeInvite(undefined as unknown as string), 'malformed');
     });
+  });
+
+  it('drops a g holding a bidirectional-control character and keeps the invite (review L4)', () => {
+    const crafted = 'Banff\u202E6202\u202C';
+    const decoded = decodeInvite(encodeRaw({ ...invite, g: crafted }));
+    expect(decoded).toEqual({ v: 1, s: SERVER, k: invite.k, h: invite.h, cur: 'CAD' });
+    expect('g' in decoded).toBe(false);
+    expect(decodeInvite(encodeRaw({ ...invite, g: 'Banff\u2067' })).g).toBeUndefined();
   });
 
   it('accepts g up to 80 characters (code points) and the empty string', () => {

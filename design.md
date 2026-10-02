@@ -678,7 +678,20 @@ Zod. It never throws. It enforces every bound above plus:
   without leading or trailing whitespace. The invite's `g` shares the 80
   bound: `makeInvite` enforces the group-name rule, `decodeInvite` accepts any
   string up to 80 code points, since `g` is display-only and must never make a
-  valid secret unusable.
+  valid secret unusable (one holding a bidirectional-control character is
+  dropped, below).
+- Group names, member names, titles and notes hold no bidirectional-control
+  character, U+202A–U+202E or U+2066–U+2069 (`hasBidiControl`; pre-launch
+  review L4). One reorders the text around it wherever it is shown (the Join
+  preview, a notification, Activity), so a member could make one line read as
+  another. The marks U+200E, U+200F and U+061C stay allowed. This is a
+  tightening on the current `sv`, made after v1 events were first written: an
+  event written before it with such a character is now skipped like any
+  invalid one, on every build with the rule, and is never rewritten; a build
+  without the rule still applies it, so until those builds are gone the two
+  can show such an event differently. The app's own checks refuse one before
+  a write (`invalid`). `makeInvite` refuses such a `g`; `decodeInvite` drops
+  it, so the invite still joins and the preview reads as one with no name.
 - `split` is non-empty, every value ≥ 0, values sum to `amount`. A value of
   `-0` (the JSON text `-0`) is normalised to `0`.
 - `changes` is non-empty, contains both `amount` and `split` or neither, and

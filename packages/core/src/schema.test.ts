@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { EVENT_TYPES, LIMITS } from './constants.js';
-import { isGroupName, isIsoDate, isSingleEmoji, parseEvent } from './schema.js';
+import { hasBidiControl, isGroupName, isIsoDate, isSingleEmoji, parseEvent } from './schema.js';
 import type { EventType } from './types.js';
 
 // ---------- Fixtures ----------
@@ -379,6 +379,50 @@ describe('parseEvent: names, titles, notes, currency', () => {
 });
 
 // ---------- Dates ----------
+
+describe('parseEvent: bidirectional-control characters (review L4)', () => {
+  const CONTROLS = ['\u202A', '\u202B', '\u202C', '\u202D', '\u202E', '\u2066', '\u2067', '\u2068', '\u2069'];
+  // A crafted name: a right-to-left override flips what follows it, so "Maya" plus reversed text reads as another
+  // line wherever the name is shown, then a pop restores the direction.
+  const crafted = 'Maya\u202E000,1 dias\u202C';
+
+  it('rejects a crafted name, title or note in every free-text field of an event', () => {
+    expect(parseEdited('member.added', (e) => ((e.member as Json).name = crafted))).toBeNull();
+    expect(withMemberChanges({ name: crafted })).toBeNull();
+    expect(parseEdited('group.created', (e) => (e.name = crafted))).toBeNull();
+    expect(parseEdited('group.renamed', (e) => (e.name = crafted))).toBeNull();
+    expect(withExpense((x) => (x.title = crafted))).toBeNull();
+    expect(withExpense((x) => (x.note = crafted))).toBeNull();
+    expect(withChanges({ title: crafted })).toBeNull();
+    expect(withChanges({ note: crafted })).toBeNull();
+    expect(withPayment((x) => (x.note = crafted))).toBeNull();
+    expect(isGroupName(crafted)).toBe(false);
+    expect(hasBidiControl(crafted)).toBe(true);
+  });
+
+  it.each(CONTROLS.map((c) => [`U+${c.codePointAt(0)?.toString(16).toUpperCase()}`, c]))(
+    'rejects %s at the start, inside, and at the end',
+    (_label, c) => {
+      for (const text of [`${c}Maya`, `Ma${c}ya`, `Maya${c}`]) {
+        expect(parseEdited('member.added', (e) => ((e.member as Json).name = text))).toBeNull();
+        expect(withExpense((x) => (x.title = text))).toBeNull();
+        expect(withExpense((x) => (x.note = text))).toBeNull();
+        expect(isGroupName(text)).toBe(false);
+        expect(hasBidiControl(text)).toBe(true);
+      }
+    },
+  );
+
+  it('keeps right-to-left names, the direction marks, and the characters next to the controls', () => {
+    for (const ok of ['מאיה', 'مايا', 'Maya \u200Fמאיה', 'A\u200EB', 'A\u061CB', 'A\u2029B', 'A\u202FB', 'A\u2065B', 'A\u206AB']) {
+      expect(parseEdited('member.added', (e) => ((e.member as Json).name = ok))).not.toBeNull();
+      expect(withExpense((x) => (x.note = ok))).not.toBeNull();
+      expect(isGroupName(ok)).toBe(true);
+      expect(hasBidiControl(ok)).toBe(false);
+    }
+    expect(hasBidiControl(7 as unknown as string)).toBe(false);
+  });
+});
 
 describe('isIsoDate', () => {
   it.each(['2024-02-29', '2000-02-29', '2023-02-28', '2000-01-01', '2099-12-31', '2026-04-30', '2026-01-31'])(

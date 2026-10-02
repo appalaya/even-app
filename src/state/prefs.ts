@@ -4,7 +4,7 @@
  * "tied to the OS permission"), read and requested through an injected adapter so Node tests need no Expo module;
  * the one thing the app adds is a prompt closed with no answer, which the OS does not count as one.
  */
-import { isSingleEmoji, LIMITS } from '@even/core';
+import { hasBidiControl, isSingleEmoji, LIMITS } from '@even/core';
 
 import type { Store } from '../services/storage/types';
 import { StateError } from './errors';
@@ -96,6 +96,9 @@ export function normaliseName(name: string): string {
   const length = codePoints(trimmed);
   if (length === 0 || length > LIMITS.nameMax) {
     throw new StateError('invalid', `a name is 1 to ${LIMITS.nameMax} characters`);
+  }
+  if (hasBidiControl(trimmed)) {
+    throw new StateError('invalid', 'a name cannot hold a text-direction control character');
   }
   return trimmed;
 }

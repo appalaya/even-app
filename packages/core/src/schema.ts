@@ -28,19 +28,39 @@ const ISO_DATE_RE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/;
 const WS = '\\t\\n\\v\\f\\r \\u00A0\\u1680\\u180E\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF';
 const EDGE_WHITESPACE_RE = new RegExp(`^[${WS}]|[${WS}]$`);
 
+/**
+ * Bidirectional-control characters: the embeddings and overrides U+202A–U+202E and the isolates U+2066–U+2069
+ * (pre-launch review L4). One in a name, title or note reorders the text around it wherever it is shown (the Join
+ * preview, a notification, Activity), so a member could make one line read as another. Refused in every free-text
+ * field of an event and in `makeInvite`'s `g`. A tightening: an event written before it with one is now invalid like
+ * any other, and is never rewritten. The marks U+200E, U+200F and U+061C, which only nudge neutral characters, stay.
+ */
+const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069]/;
+
+/** Whether `text` holds a bidirectional-control character (U+202A–U+202E, U+2066–U+2069). Never throws. */
+export function hasBidiControl(text: string): boolean {
+  return typeof text === 'string' && BIDI_CONTROL_RE.test(text);
+}
+
 function codePointLength(text: string): number {
   let n = 0;
   for (const _ of text) n++;
   return n;
 }
 
-/** 1..max code points, no leading or trailing whitespace (so a whitespace-only string is rejected too). */
+/**
+ * 1..max code points, no leading or trailing whitespace (so a whitespace-only string is rejected too), and no
+ * bidirectional-control character.
+ */
 function isTrimmedText(text: string, max: number): boolean {
   const n = codePointLength(text);
-  return n >= 1 && n <= max && !EDGE_WHITESPACE_RE.test(text);
+  return n >= 1 && n <= max && !EDGE_WHITESPACE_RE.test(text) && !BIDI_CONTROL_RE.test(text);
 }
 
-/** The group-name rule (group.created, group.renamed; makeInvite's `g`): 1..LIMITS.groupNameMax code points, trimmed. Never throws. */
+/**
+ * The group-name rule (group.created, group.renamed; makeInvite's `g`): 1..LIMITS.groupNameMax code points, trimmed,
+ * no bidirectional-control character. Never throws.
+ */
 export function isGroupName(text: string): boolean {
   return typeof text === 'string' && isTrimmedText(text, LIMITS.groupNameMax);
 }
@@ -152,7 +172,7 @@ const IsoDate = z.string().refine(isIsoDate);
 const Name = z.string().refine((s) => isTrimmedText(s, LIMITS.nameMax));
 const GroupName = z.string().refine(isGroupName);
 const Title = z.string().refine((s) => isTrimmedText(s, LIMITS.titleMax));
-const Note = z.string().refine((s) => codePointLength(s) <= LIMITS.noteMax);
+const Note = z.string().refine((s) => codePointLength(s) <= LIMITS.noteMax && !BIDI_CONTROL_RE.test(s));
 const Emoji = z.string().refine(isSingleEmoji);
 const Category = z.enum(CATEGORIES);
 const Server = z.string().refine(isCanonicalOrigin);

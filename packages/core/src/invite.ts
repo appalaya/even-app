@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { canonicalOrigin, InvalidServerUrlError } from './keys.js';
-import { isGroupName } from './schema.js';
+import { hasBidiControl, isGroupName } from './schema.js';
 import type { Invite } from './types.js';
 
 export type InviteErrorCode = 'malformed' | 'version' | 'checksum' | 'server' | 'secret';
@@ -40,9 +40,10 @@ export function inviteChecksum(secret: Uint8Array): string {
 
 /**
  * Builds a complete invite; `server` is canonicalised. `g`, when given, must satisfy the group-name rule of
- * group.created / group.renamed (`isGroupName`: 1..groupNameMax code points, trimmed), since it is the group's name.
- * decodeInvite is deliberately looser (any string up to groupNameMax): `g` is display-only and must never make a
- * valid secret unusable.
+ * group.created / group.renamed (`isGroupName`: 1..groupNameMax code points, trimmed, no bidirectional-control
+ * character), since it is the group's name. decodeInvite is deliberately looser (any string up to groupNameMax, and
+ * one holding a bidirectional-control character is dropped rather than refused): `g` is display-only and must never
+ * make a valid secret unusable.
  */
 export function makeInvite(secret: Uint8Array, server: string, extras?: { g?: string; cur?: string }): Invite {
   if (!(secret instanceof Uint8Array) || secret.length !== LIMITS.secretLength) {
@@ -74,7 +75,8 @@ export function encodeInvite(invite: Invite): string {
  *
  * Check order: decoding/JSON/object shape and field types → `malformed`; `v` ≠ 1 → `version` (checked before the
  * other fields, since another version may have another shape); `k` → `secret`; `h` → `checksum`; `s` → `server`.
- * Unknown extra fields are ignored and dropped, so an additive v1 field does not lock out older clients.
+ * Unknown extra fields are ignored and dropped, so an additive v1 field does not lock out older clients. A `g` holding
+ * a bidirectional-control character (`hasBidiControl`) is dropped too, as if absent.
  * The returned `k` is re-encoded canonically from the decoded secret.
  */
 export function decodeInvite(text: string): Invite {
@@ -114,7 +116,8 @@ export function decodeInvite(text: string): Invite {
   if (h !== inviteChecksum(secret)) throw new InviteError('checksum', 'invite checksum does not match its secret');
 
   const invite: Invite = { v: 1, s: serverOrThrow(s), k: b64urlEncode(secret), h };
-  if (gPresent) invite.g = g as string;
+  // A `g` with a bidirectional-control character is dropped, never the invite: it is display-only.
+  if (gPresent && !hasBidiControl(g as string)) invite.g = g as string;
   if (curPresent) invite.cur = cur as string;
   return invite;
 }

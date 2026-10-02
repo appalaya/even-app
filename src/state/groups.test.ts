@@ -585,6 +585,49 @@ describe.each(STORE_KINDS)('GroupService on the %s store', (kind) => {
     });
   });
 
+  describe('text-direction controls (review L4)', () => {
+    it('refuses one in every name, title and note this phone writes, before anything is stored', async () => {
+      const w = await setup(kind);
+      const { a, localId, maya, nathan } = await twoDevices(w);
+      const crafted = 'Maya\u202E000,1 dias\u202C';
+      const before = (await a.store.dump(localId)).length;
+      const expense = {
+        title: 'Dinner',
+        amount: 1_000,
+        paidBy: maya,
+        date: '2026-02-01',
+        category: 'food' as const,
+        split: { mode: 'equal' as const, members: [maya, nathan] },
+      };
+      await rejectsWith(g(a).addExpense(localId, { ...expense, title: crafted }), 'invalid');
+      await rejectsWith(g(a).addExpense(localId, { ...expense, note: crafted }), 'invalid');
+      await rejectsWith(
+        g(a).addPayment(localId, {
+          from: maya,
+          to: nathan,
+          amount: 500,
+          date: '2026-02-01',
+          note: crafted,
+        }),
+        'invalid',
+      );
+      await rejectsWith(g(a).addMember(localId, crafted), 'invalid');
+      await rejectsWith(g(a).updateMember(localId, maya, { name: crafted }), 'invalid');
+      await rejectsWith(g(a).renameGroup(localId, crafted), 'invalid');
+      const id = await g(a).addExpense(localId, expense);
+      await rejectsWith(g(a).updateExpense(localId, id, { title: crafted }), 'invalid');
+      expect((await a.store.dump(localId)).length).toBe(before + 1);
+      await rejectsWith(
+        g(a).createGroup({ name: 'Trip', currency: 'EUR', myName: crafted, serverUrl: SERVER }),
+        'invalid',
+      );
+      await rejectsWith(
+        g(a).createGroup({ name: crafted, currency: 'EUR', myName: 'Maya', serverUrl: SERVER }),
+        'invalid',
+      );
+    });
+  });
+
   describe('members', () => {
     it('names are unique among non-archived members, case-insensitively and ignoring spaces', async () => {
       const w = await setup(kind);

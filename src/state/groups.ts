@@ -33,6 +33,7 @@ import {
   deriveServer,
   encodeInvite,
   entityIdOf,
+  hasBidiControl,
   inviteLink,
   isCategory,
   isClockSane,
@@ -336,6 +337,9 @@ function checkTitle(title: string): string {
   if (length === 0 || length > LIMITS.titleMax) {
     throw new StateError('invalid', `a title is 1 to ${LIMITS.titleMax} characters`);
   }
+  if (hasBidiControl(trimmed)) {
+    throw new StateError('invalid', 'a title cannot hold a text-direction control character');
+  }
   return trimmed;
 }
 
@@ -362,13 +366,19 @@ function checkNote(note: string): string {
   if (codePoints(trimmed) > LIMITS.noteMax) {
     throw new StateError('invalid', `a note is at most ${LIMITS.noteMax} characters`);
   }
+  if (hasBidiControl(trimmed)) {
+    throw new StateError('invalid', 'a note cannot hold a text-direction control character');
+  }
   return trimmed;
 }
 
 function checkGroupName(name: string): string {
   const trimmed = name.trim();
   if (!isGroupName(trimmed)) {
-    throw new StateError('invalid', `a group name is 1 to ${LIMITS.groupNameMax} characters`);
+    throw new StateError(
+      'invalid',
+      `a group name is 1 to ${LIMITS.groupNameMax} characters, with no text-direction control character`,
+    );
   }
   return trimmed;
 }
