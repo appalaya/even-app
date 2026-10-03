@@ -311,9 +311,10 @@ export interface Store {
    * incoming row is acked (a pulled page), the existing row gets `acked = 1`, the incoming `seq`, and the incoming
    * `receivedAt` when it has one (the server's value overwrites, it is not skipped); its envelope, status, ts, and
    * origin are not replaced, with one exception: a stored `undecryptable` row takes the envelope, status, ts and size
-   * of an acked incoming row of its id that is not `undecryptable` (what a build before `received_at` stored as junk
-   * gives way to the envelope the server serves; its origin and push state stay). An unacked incoming duplicate
-   * changes nothing.
+   * of an acked incoming row of its id that is readable (`ok`, `invalid`, `unsupported_body`: it opened under the group
+   * key, so a key holder wrote it), as the junk a build before `received_at` stored gives way to the envelope the
+   * server serves; its origin and push state stay. An `unsupported_envelope` cannot be opened, so it replaces nothing.
+   * An unacked incoming duplicate changes nothing.
    * Local writes: `origin 'local'`, `acked false`. Pulls: `origin 'remote'`, `acked true`, with `seq`.
    *
    * Details: rows apply in order, so a duplicate id later in the same call behaves like a duplicate of the

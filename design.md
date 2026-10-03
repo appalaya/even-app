@@ -1177,10 +1177,11 @@ CREATE INDEX events_own_received ON events (received_at, ts)
   `pending_deletes.auth_token` is the only credential.
 - `status = 'undecryptable'` rows (AEAD failure under the correct key, or
   junk) are the one exception to "a stored row's content is never replaced": a
-  pulled envelope of the same id that is not `undecryptable` replaces the
-  row's envelope, status, `ts` and size (its origin and push state stay). An
-  envelope that opens under the group key was written by a key holder, so
-  nothing a server forges can take a row this way. This is how the junk the
+  pulled envelope of the same id that is readable (`ok`, `invalid` or
+  `unsupported_body`) replaces the row's envelope, status, `ts` and size (its
+  origin and push state stay). An envelope that opens under the group key was
+  written by a key holder, so nothing a server forges can take a row this way;
+  an `unsupported_envelope` cannot be opened, so it replaces nothing. This is how the junk the
   builds before v5 stored gives way to the real envelope ("Migrations").
   `undecryptable` rows are capped at 1,000 per group; beyond that the oldest are dropped, and settings
   offers "clear unreadable entries". `unsupported_envelope` rows (unknown

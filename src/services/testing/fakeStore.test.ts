@@ -245,6 +245,11 @@ describe.each(STORE_KINDS)(
           row(keys, b),
         ]);
         await store.insertEvents(L, [{ ...real, acked: false, seq: null }]);
+        // An envelope version this build cannot open replaces nothing either.
+        const future = { ...(JSON.parse(real.envelope) as object), v: 2 };
+        await store.insertEvents(L, [
+          { ...real, status: 'unsupported_envelope', ts: null, envelope: JSON.stringify(future) },
+        ]);
         expect((await store.dump(L))[0]).toMatchObject({ status: 'undecryptable', ts: null });
         await store.insertEvents(L, [
           real,

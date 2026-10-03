@@ -3,8 +3,8 @@
  * - `insertEvents` is insert-or-ignore on (localId, id); an acked incoming duplicate sets `acked`, `seq` and
  *   `receivedAt` on the existing row (a `seq` is never lowered; a null incoming one keeps the stored one, as a null
  *   `receivedAt` does); an unacked duplicate changes nothing; the envelope, status, ts and origin of an existing row
- *   are never replaced, except that a pulled row that is not `undecryptable` replaces an `undecryptable` row's
- *   envelope, status and ts. A `receivedAt` that is not a usable R is stored as null. Rows are
+ *   are never replaced, except that a pulled readable row (`ok`, `invalid`, `unsupported_body`) replaces an
+ *   `undecryptable` row's envelope, status and ts. A `receivedAt` that is not a usable R is stored as null. Rows are
  *   validated like sqliteStore.ts's `checkNewEvent` (text ≤ 16 KiB, strict v1 for readable statuses, same id,
  *   `ok` has a `ts`), all or nothing, and the group row must exist.
  * - the outbox is `acked = 0 AND push_state = 'pending'`, ordered by `ts` (null last) then `id`.
@@ -399,7 +399,7 @@ export class FakeStore implements Store {
       existing.acked = true;
       existing.seq = seq;
       if (isReceivedAt(row.receivedAt)) existing.receivedAt = row.receivedAt;
-      if (existing.status === 'undecryptable' && row.status !== 'undecryptable') {
+      if (existing.status === 'undecryptable' && READABLE.has(row.status)) {
         // A pulled envelope replaces an unreadable row of its id (sqliteStore.ts): content, ts, status.
         existing.envelope = row.envelope;
         existing.status = row.status;

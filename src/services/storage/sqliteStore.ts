@@ -637,7 +637,7 @@ export class SqliteStore implements Store {
         // Insert-or-ignore; only an acked duplicate (a pulled page) touches the existing row, and only its
         // acked flag, seq and received_at. A seq is never lowered; the server's received_at overwrites.
         if (!row.acked) continue;
-        if (current.status === 'undecryptable' && row.status !== 'undecryptable') {
+        if (current.status === 'undecryptable' && isReadable(row.status)) {
           // What a build before received_at stored as junk (or any unreadable row) gives way to the envelope a
           // server now serves under that id: its content, ts and size, with this row's acked, seq and R.
           const seq =

@@ -359,9 +359,18 @@ describe('insertEvents', () => {
     const local = localRow(T0, { pushState: 'rejected' });
     await store.insertEvents(g, [junk, local]);
     const real = pulledRow(5, T0 + 7, { id: junk.id, receivedAt: T0 + 9 });
-    // An unacked copy (an import) changes nothing; nor does a pulled copy that is junk too.
+    // An unacked copy (an import) changes nothing; nor does a pulled copy that is junk too, nor one of an envelope
+    // version this build cannot open (nothing shows a key holder wrote it).
     await store.insertEvents(g, [{ ...real, acked: false, seq: null }]);
     await store.insertEvents(g, [pulledRow(4, null, { id: junk.id, envelope: '{"other":1}' })]);
+    const future = makeEnvelope(junk.id, 2);
+    await store.insertEvents(g, [
+      pulledRow(4, null, {
+        id: junk.id,
+        envelope: envelopeText(future),
+        status: 'unsupported_envelope',
+      }),
+    ]);
     expect(await rawOne(junk.id)).toMatchObject({
       status: 'undecryptable',
       envelope: junk.envelope,
