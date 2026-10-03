@@ -1,20 +1,25 @@
 #!/usr/bin/env node
 /**
- * Writes the two page-specific Content-Security-Policy lines in ../_headers:
+ * Writes the Content-Security-Policy lines in ../_headers that depend on the pages:
  *
- * - /i and /i/*: the invite page's one inline <script> and one inline <style>, allowed by their SHA-256 hashes (the
- *   lines that start with "default-src 'none'; script-src 'sha256-"). The browser hashes the exact text between the
- *   tags, whitespace included, so run this after ANY edit to i.html.
+ * - /*: every page's one shared inline script, <script id="from-app"> (README.md, "Pages the app opens"), allowed by
+ *   its SHA-256 hash. Every page carries the same bytes, so one hash covers them all; this script refuses to write
+ *   anything while two pages' copies differ.
+ * - /i and /i/*: the invite page's own inline <script> and its one inline <style>, plus the shared script, allowed
+ *   by their hashes (the lines that start with "default-src 'none'; script-src 'sha256-").
  * - /contact: the contact form, whose code is in files on this site (contact.js, contact-lib.js), plus Cloudflare
- *   Turnstile's script and frame and the form's fetch to /api/. contact.html has no inline code, so its policy has
- *   no hashes; this script refuses to write it if inline code appears (move it into contact.js instead).
+ *   Turnstile's script and frame, the form's fetch to /api/, and the shared script's hash. Any other inline code in
+ *   contact.html is refused (move it into contact.js instead).
+ *
+ * The browser hashes the exact text between the tags, whitespace included, so run this after ANY edit to a page's
+ * inline <script> or <style>.
  *
  *   node web/scripts/csp-hashes.mjs && node web/scripts/check.mjs
  *
  * No dependencies; Node 20 or later.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +28,13 @@ export const INVITE_PAGE = 'i.html';
 export const CONTACT_PAGE = 'contact.html';
 /** The rule in _headers that carries the contact page's policy (Cloudflare serves contact.html at /contact). */
 export const CONTACT_PATH = '/contact';
+/** The rule in _headers for every page; the /i, /i/*, /contact and /badges/* rules replace its policy. */
+export const SITE_PATH = '/*';
+/**
+ * The attributes of the inline script every page carries, the from=app rule (README.md, "Pages the app opens"): the
+ * same bytes on every page, so one hash in each policy allows it wherever it runs.
+ */
+export const FROM_APP_ATTRS = 'id="from-app"';
 /** Cloudflare Turnstile: its api.js and the challenge frame come from here, and only the contact page loads it. */
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 
@@ -78,21 +90,79 @@ export function hashSource(text) {
   return `'sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}'`;
 }
 
-/** The invite page's policy, exactly as design.md states it, with the hashes of its one script and one style. */
+/** A page's from=app script (the <script id="from-app"> block's exact text). Throws unless it has exactly one. */
+export function fromAppScript(source) {
+  const found = splitHtml(source).blocks.script.filter((s) => s.attrs === FROM_APP_ATTRS);
+  if (found.length !== 1) {
+    throw new Error(`expected exactly one <script ${FROM_APP_ATTRS}>, found ${found.length}`);
+  }
+  return found[0].body;
+}
+
+/**
+ * The from=app script every page carries, from a map of page file name to source. Throws, naming the page, when a
+ * page has none or its copy differs from the first page's: they must be the same bytes, since one hash allows them.
+ */
+export function sharedFromAppScript(pages) {
+  let shared = null;
+  let first = null;
+  for (const [file, source] of pages) {
+    let body;
+    try {
+      body = fromAppScript(source);
+    } catch (error) {
+      throw new Error(`${file}: ${error.message}`);
+    }
+    if (shared === null) {
+      shared = body;
+      first = file;
+    } else if (body !== shared) {
+      throw new Error(
+        `${file}: its <script ${FROM_APP_ATTRS}> differs from ${first}'s; every page carries the same bytes`,
+      );
+    }
+  }
+  if (shared === null) throw new Error('no pages');
+  return shared;
+}
+
+/**
+ * The policy for every page under /*: this site only, and of scripts only the shared from=app one, by its hash. No
+ * page under /* loads a script file (the contact page, which does, has its own rule).
+ */
+export function siteCsp(fromApp) {
+  return [
+    "default-src 'self'",
+    `script-src ${hashSource(fromApp)}`,
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
+/**
+ * The invite page's policy, exactly as design.md states it: the hashes of its own script and the shared from=app
+ * script, and of its one style.
+ */
 export function inviteCsp(source) {
+  const fromApp = fromAppScript(source);
   const { blocks } = splitHtml(source);
+  const own = {
+    script: blocks.script.filter((s) => s.attrs !== FROM_APP_ATTRS),
+    style: blocks.style,
+  };
   for (const tag of ['script', 'style']) {
-    const found = blocks[tag];
+    const found = own[tag];
     if (found.length !== 1 || found[0].attrs !== '') {
       throw new Error(
-        `${INVITE_PAGE} must have exactly one inline <${tag}> with no attributes; found ${found.length}`,
+        `${INVITE_PAGE} must have exactly one inline <${tag}> with no attributes${tag === 'script' ? ` besides <script ${FROM_APP_ATTRS}>` : ''}; found ${found.length}`,
       );
     }
   }
   return [
     "default-src 'none'",
-    `script-src ${hashSource(blocks.script[0].body)}`,
-    `style-src ${hashSource(blocks.style[0].body)}`,
+    `script-src ${hashSource(own.script[0].body)} ${hashSource(fromApp)}`,
+    `style-src ${hashSource(own.style[0].body)}`,
     "img-src 'self'",
     "connect-src 'none'",
     "base-uri 'none'",
@@ -101,19 +171,23 @@ export function inviteCsp(source) {
 }
 
 /**
- * The contact page's policy. Scripts from this site (contact.js, contact-lib.js) and Turnstile's api.js; Turnstile's
- * challenge in a frame from the same origin; fetch to this site only (/api/contact); forms never submit natively.
+ * The contact page's policy. Scripts from this site (contact.js, contact-lib.js), the shared from=app script by its
+ * hash, and Turnstile's api.js; Turnstile's challenge in a frame from the same origin; fetch to this site only
+ * (/api/contact); forms never submit natively.
  */
 export function contactCsp(source) {
+  const fromApp = fromAppScript(source);
   const { blocks } = splitHtml(source);
   if (blocks.style.length > 0)
     throw new Error(`${CONTACT_PAGE} must have no inline <style>; use /site.css`);
-  if (blocks.script.some((s) => s.body.trim() !== '')) {
-    throw new Error(`${CONTACT_PAGE} must have no inline <script> code; put it in contact.js`);
+  if (blocks.script.some((s) => s.attrs !== FROM_APP_ATTRS && s.body.trim() !== '')) {
+    throw new Error(
+      `${CONTACT_PAGE} must have no inline <script> code but <script ${FROM_APP_ATTRS}>; put it in contact.js`,
+    );
   }
   return [
     "default-src 'self'",
-    `script-src 'self' ${TURNSTILE_ORIGIN}`,
+    `script-src 'self' ${hashSource(fromApp)} ${TURNSTILE_ORIGIN}`,
     `frame-src ${TURNSTILE_ORIGIN}`,
     "connect-src 'self'",
     "img-src 'self'",
@@ -157,9 +231,21 @@ export function strictPolicies(headers) {
   return [...headers.matchAll(STRICT_LINE)].map((m) => m[0].slice(m[1].length));
 }
 
+/** Every page of the site: the .html files at the top of web/, by file name. */
+export function readPages() {
+  return new Map(
+    readdirSync(WEB)
+      .filter((name) => name.endsWith('.html'))
+      .sort()
+      .map((name) => [name, readFileSync(join(WEB, name), 'utf8')]),
+  );
+}
+
 function main() {
-  const csp = inviteCsp(readFileSync(join(WEB, INVITE_PAGE), 'utf8'));
-  const contact = contactCsp(readFileSync(join(WEB, CONTACT_PAGE), 'utf8'));
+  const pages = readPages();
+  const site = siteCsp(sharedFromAppScript(pages));
+  const csp = inviteCsp(pages.get(INVITE_PAGE));
+  const contact = contactCsp(pages.get(CONTACT_PAGE));
   const path = join(WEB, '_headers');
   const before = readFileSync(path, 'utf8');
   let count = 0;
@@ -172,11 +258,12 @@ function main() {
       `expected ${STRICT_LINES_EXPECTED} strict CSP lines in _headers (/i and /i/*), found ${count}`,
     );
   }
-  const after = withRuleCsp(invite, CONTACT_PATH, contact);
+  const after = withRuleCsp(withRuleCsp(invite, SITE_PATH, site), CONTACT_PATH, contact);
   if (after !== before) writeFileSync(path, after);
   console.log(
-    `${after === before ? 'unchanged' : 'updated'}: _headers (/i, /i/* and ${CONTACT_PATH})`,
+    `${after === before ? 'unchanged' : 'updated'}: _headers (${SITE_PATH}, /i, /i/* and ${CONTACT_PATH})`,
   );
+  console.log(`${SITE_PATH}  Content-Security-Policy: ${site}`);
   console.log(`/i  Content-Security-Policy: ${csp}`);
   console.log(`${CONTACT_PATH}  Content-Security-Policy: ${contact}`);
 }

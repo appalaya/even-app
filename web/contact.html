@@ -12,8 +12,9 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
 <!--
-  The contact form (README.md, "Contact page"). No inline code: contact.js and contact-lib.js are files on this site,
-  allowed by the /contact policy in _headers together with Cloudflare Turnstile, the one script from elsewhere.
+  The contact form (README.md, "Contact page"). Its code is in files on this site, contact.js and contact-lib.js,
+  allowed by the /contact policy in _headers together with Cloudflare Turnstile, the one script from elsewhere. The
+  one inline script, at the end of <body>, is every page's from=app rule (README.md, "Pages the app opens").
   contact.js adds Turnstile's api.js itself, from the exact URL Cloudflare requires, and only once no invite can be
   on the page: a pasted link is taken out of its field the moment it is read, and the form sends the group's id,
   never the invite. scripts/check.mjs allows the form and these scripts on this page and no other.
@@ -120,5 +121,33 @@
 </footer>
 
 </div>
+<script id="from-app">
+// ?from=app: the Even app opened this page (web/README.md, "Pages the app opens"). Then nothing here leads to the
+// home page's tip card: the header lockup, and links to anywhere but the app stores and GitHub, become plain text;
+// the tip card goes; links to this site's pages keep the flag. The same bytes on every page, allowed by one hash.
+(() => {
+  'use strict';
+  if (new URLSearchParams(location.search).get('from') !== 'app') return;
+  const KEEP = /^https:\/\/(?:apps\.apple\.com|play\.google\.com|github\.com\/appalaya)\//;
+  for (const tip of document.querySelectorAll('.tip')) tip.remove();
+  for (const a of document.querySelectorAll('a[href]')) {
+    let url = null;
+    try {
+      url = new URL(a.href);
+    } catch {}
+    if (url !== null && url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+    const here = url !== null && url.origin === location.origin;
+    if (here && !a.classList.contains('lockup')) {
+      url.searchParams.set('from', 'app');
+      a.setAttribute('href', url.pathname + url.search + url.hash);
+    } else if (here || url === null || !KEEP.test(url.href)) {
+      const text = document.createElement('span');
+      if (a.className !== '') text.className = a.className;
+      text.append(...a.childNodes);
+      a.replaceWith(text);
+    }
+  }
+})();
+</script>
 </body>
 </html>

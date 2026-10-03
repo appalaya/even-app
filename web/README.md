@@ -1,8 +1,9 @@
 # web — even.appalaya.com
 
 The static landing site: the universal-link and App Links association files, the invite page at `/i`, the
-product page, the contact page, and the privacy, terms and abuse pages. Plain HTML and CSS, one inline script on one
-page (`/i`), two script files on another (`/contact`), no build step and no framework. Nothing is loaded from outside
+product page, the contact page, and the privacy, terms and abuse pages. Plain HTML and CSS, one small inline script
+on every page (the `from=app` rule, see [Pages the app opens](#pages-the-app-opens-fromapp)), one more on `/i`, two
+script files on `/contact`, no build step and no framework. Nothing is loaded from outside
 this site except Cloudflare Turnstile's bot check, on the contact page only. Deployed to Cloudflare by GitHub
 Actions, as a Worker with static assets plus a small Worker script that answers only the contact form's API under
 `/api/` (see [Deploying](#deploying), [Contact page](#contact-page) and [Contact form](#contact-form)).
@@ -22,7 +23,7 @@ Actions, as a Worker with static assets plus a small Worker script that answers 
 | | `_headers` | Response headers, including every CSP. Read by Cloudflare as configuration, not served. |
 | | `wrangler.jsonc`, `.assetsignore` | Deploy configuration and the list of files kept out of the upload. Not served. |
 | | `worker/` | The Worker script's TypeScript source and its tests. Bundled into the script, not served. |
-| | `contact-lib.test.ts`, `vitest.config.mts` | The contact page's test and its Vitest config. Not served. |
+| | `contact-lib.test.ts`, `i.test.ts`, `from-app.test.ts`, `vitest.config.mts` | The pages' tests and their Vitest config. Not served. |
 
 Colours are the app's `even` theme (`src/theme/themes.ts`) and the mark is `src/components/Mark.tsx`'s paths; change
 them there first.
@@ -41,24 +42,26 @@ well. No `_redirects` file is needed.
 
 ## Changing the invite page
 
-The invite page's CSP allows its one inline `<script>` and one inline `<style>` by SHA-256 hash, and nothing else.
+The invite page's CSP allows its own inline `<script>`, the shared `<script id="from-app">` (see
+[Pages the app opens](#pages-the-app-opens-fromapp)) and its one inline `<style>` by SHA-256 hash, and nothing else.
 The hash covers every byte between the tags, so **after any edit to `i.html`**, whitespace included:
 
 ```bash
-node web/scripts/csp-hashes.mjs   # rewrites the two strict CSP lines in _headers and prints the policy
+node web/scripts/csp-hashes.mjs   # rewrites the CSP lines in _headers that hash the pages, and prints them
 node web/scripts/check.mjs        # must pass before deploying
 ```
 
 Rules the check enforces, because the CSP would silently break the page otherwise: no `on*=` or `style=""`
-attributes anywhere (hashes cover neither), no second script or style, no external stylesheet on `/i`, and nothing in
-the script that can send, store or inject (`fetch`, `sendBeacon`, `innerHTML`, storage, and so on). The group name is
-inserted with `textContent` only.
+attributes anywhere (hashes cover neither), no third script or second style, no external stylesheet on `/i`, and
+nothing in its script that can send, store or inject (`fetch`, `sendBeacon`, `innerHTML`, storage, and so on). The
+group name is inserted with `textContent` only.
 
 `check.mjs` also fails on any external URL in any page other than the two store links, the repository and threat-model
 links, appalaya.com, and the Stripe tip link (Turnstile's script is in no page's markup: `contact.js` adds it, the one script file allowed to); on any mail address or `mailto:` in any published file; on inline
-code in any other page; on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
+code in any other page besides the shared `from=app` script, and on a page without that script or with a copy that
+differs (see [Pages the app opens](#pages-the-app-opens-fromapp)); on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
 [Contact page](#contact-page)); on a `_headers` file missing a required header, with the `/i`, `/badges/*` or
-`/contact` rules before `/*`, or with a policy that differs from what `csp-hashes.mjs` generates; and on either
+`/contact` rules before `/*`, or with a policy (`/*` included) that differs from what `csp-hashes.mjs` generates; and on either
 association file not parsing or not naming the app. It lists every `PLACEHOLDER` left.
 
 ## Local preview
@@ -166,6 +169,9 @@ for f in README.md wrangler.jsonc scripts/check.mjs worker/index.ts contact-lib.
 
 # The contact page: its own policy (Turnstile allowed), and only one
 curl -sI https://even.appalaya.com/contact | grep -i content-security-policy
+
+# Every other page: the site-wide policy, whose script-src is the from=app script's hash and nothing else
+curl -sI 'https://even.appalaya.com/privacy?from=app' | grep -i content-security-policy
 
 # Every page: Cross-Origin-Opener-Policy: same-origin
 curl -sI https://even.appalaya.com/ | grep -i cross-origin-opener-policy
@@ -377,7 +383,7 @@ carries an address, and `check.mjs` fails on one. Without JavaScript the page sa
 
 | File | |
 |---|---|
-| `contact.html` | The markup. No inline code and one script, `<script type="module" src="/contact.js">`. Styles are in `site.css`. |
+| `contact.html` | The markup. No inline code but the shared `<script id="from-app">` ([Pages the app opens](#pages-the-app-opens-fromapp)), and one script file, `<script type="module" src="/contact.js">`. Styles are in `site.css`. |
 | `contact.js` | The page: topics, the pasted link, the fragment, Turnstile (it adds `api.js?render=explicit` from the exact URL Cloudflare requires, and only then), the POST, the sent and failed states. Inserts text with `textContent` only. |
 | `contact-lib.js` | No DOM, no dependencies: reads an invite exactly as `@even/core`'s `decodeInvite` does (a port of its base64url, `canonicalOrigin` and checksum), derives the group id with WebCrypto, reads the fragment, builds the request body and maps the API's answer. |
 | `contact-lib.test.ts` | Vitest: the id against `@even/core`'s known answers and its `deriveServer`/`groupIdForToken` for random secrets and servers, `canonicalOrigin` and invite reading against core on fixed and generated inputs, and every body against the Worker's `validateContact`. |
@@ -398,7 +404,8 @@ different link, reload this page."; a send without a group says the same.
 Before that point nothing from Cloudflare is on the page. even-server `THREAT-MODEL.md` names Turnstile as a trusted
 component.
 
-**The app opens the page with a fragment**, which a browser never sends: `#purpose=help`, `#purpose=feedback`, or
+**The app opens the page with a fragment**, which a browser never sends, after the query `?from=app`
+([Pages the app opens](#pages-the-app-opens-fromapp)): `#purpose=help`, `#purpose=feedback`, or
 `#purpose=report&id=<groupId>&server=<canonical server URL>` (percent-encoded, as `URLSearchParams` reads it). A
 report fragment preselects Report a group and shows the id and server read-only ("Filled in by the Even app") in
 place of the link field. With no fragment, Report a group is selected, as on the desktop board.
@@ -411,11 +418,12 @@ that the app would not accept reads "That link isn't complete. Copy it again." (
 for a newer invite version), as the app words a bad code.
 
 **CSP.** `_headers` gives `/contact` its own policy, written by `scripts/csp-hashes.mjs` from `contact.html` (which
-refuses to write it if inline code appears; put code in `contact.js`):
+refuses to write it if inline code other than the shared `from=app` script appears; put code in `contact.js`):
 
 ```text
-default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com;
-connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+default-src 'self'; script-src 'self' 'sha256-<from=app>' https://challenges.cloudflare.com;
+frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none';
+frame-ancestors 'none'
 ```
 
 `form-action 'none'` means the form can never submit natively; `contact.js` sends it with `fetch`. `check.mjs`
@@ -428,7 +436,7 @@ ids (`packages/core/src/keys.test.ts`), so CI checks the derivation even though 
 include this folder's test.
 
 ```bash
-node web/scripts/csp-hashes.mjs                     # after editing contact.html or i.html
+node web/scripts/csp-hashes.mjs                     # after editing an inline script or style (i.html, from=app)
 node web/scripts/check.mjs                          # must pass
 npx vitest run --config web/vitest.config.mts       # contact-lib.js against @even/core and the Worker's rules
 ```
@@ -445,6 +453,56 @@ deploy is where a hostname problem would show: if the widget reports error 11020
 `even.appalaya.com` is in the widget's Hostname management, try `Referrer-Policy: strict-origin` on `/contact` (add
 `! Referrer-Policy` and the new value to its rule; only the site's origin would be sent, to Cloudflare, which serves
 the site anyway).
+
+## Pages the app opens (`from=app`)
+
+The app opens Privacy, Terms and the contact page (Help and feedback, Report this group, Report a problem, Get help)
+in its in-app browser with `?from=app`, before any fragment: `https://even.appalaya.com/contact?from=app#purpose=help`.
+The home page carries the tip card, a link to Stripe, and App Store Review Guideline 3.1.1 and Google Play's Payments
+policy treat a way to pay from inside an app, outside the store's billing, as bypassing in-app purchase. So with the
+flag nothing on a page leads there:
+
+| | Without the flag | With `?from=app` |
+|---|---|---|
+| Header lockup (mark and "Even") | A link to `/` | The same mark and word in a `<span class="lockup">`, same pixels, no link |
+| Footer "© 2026 Appalaya Inc." | A link to appalaya.com | Plain text, `<span class="org">`, same colour and place (`site.css`, as ReportInBrowser draws it) |
+| Links to this site (`/privacy`, `/terms`, `/abuse`, `/contact`, `/i`, `/`) | As written | The same path with `?from=app`, so the flag survives navigation |
+| Links to the App Store, Google Play and `github.com/appalaya/…` | As written | Unchanged |
+| Any other link out (today only the company line above; the tip link goes with its card) | As written | Plain text |
+| `/`: the tip card | Shown | Removed from the page; the store badges, "Run your own server" and everything else stay |
+
+From the app's pages a reviewer can reach Privacy, Terms, Abuse and Contact, each with the flag, and never the home
+page; `/` and `/i` honour the flag too, should a link ever lead there (404's "Go to the home page" and `/i`'s "What is
+Even?" go to `/?from=app`, which shows no tip card).
+
+**How.** Every page ends with the same inline `<script id="from-app">`, byte for byte. It reads `location.search`
+only (never the fragment, which holds the invite on `/i` and the report on `/contact`), fetches nothing, and changes
+the page by moving its existing nodes and setting `href`s: no `innerHTML`, nothing but `<span>`s created. It sits at the
+end of `<body>` (on `/i`, just before the invite script) and runs synchronously as the parser reaches it. One SHA-256 hash in `_headers` allows it on every page:
+the site-wide `/*` policy is `default-src 'self'; script-src 'sha256-<from=app>'; …`, and the `/i`, `/i/*` and
+`/contact` policies add the same hash. To change it, edit all seven copies the same way (a one-line script or
+search-and-replace across `web/*.html`), then:
+
+```bash
+node web/scripts/csp-hashes.mjs                     # refuses while any two pages' copies differ
+node web/scripts/check.mjs                          # the same, plus what the script may not do
+npx vitest run web/from-app.test.ts                 # every page in jsdom, with and without the flag
+```
+
+`from-app.test.ts` loads each page in jsdom at its URL with and without `?from=app`, runs its inline scripts as a
+browser does, and checks the links, the lockup and the company line, the tip card, that the words on the page are
+otherwise the same, that the contact page's fragment and `/i`'s invite are untouched, and, starting from the URLs the
+app itself opens (`src/features/settings/about.ts`, `src/features/report/contact.ts`), that following every link never
+reaches the tip card.
+
+**Without JavaScript** the script does not run and the links behave as they do without the flag. That is accepted:
+the in-app browsers the app uses (Safari View Controller on iOS, a Chrome Custom Tab on Android) run JavaScript, and
+the contact page needs it anyway.
+
+**In the app**, `fromApp` (`src/features/settings/about.ts`) adds the flag to any `https://even.appalaya.com` URL,
+before the fragment and keeping it byte for byte; `LINKS.privacy`, `LINKS.terms` and `LINKS.contact` carry it, so do
+`HELP_PAGE` and `reportUrl`, and `useInAppBrowser` applies `fromApp` to every URL it opens (a self-hosted server's
+terms that point here included). The source-code link is GitHub's and goes as it is.
 
 ## Store badges
 

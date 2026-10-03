@@ -7,15 +7,17 @@
  * - No page links or loads anything outside this site, except the two store links and the server repository. No mail
  *   address anywhere. No inline event handlers or style attributes (the CSPs allow neither), no frames or <base>,
  *   and no form except the contact page's one.
- * - Only the invite page has inline code: exactly one <script> and one <style>, whose hashes match the /i policy in
- *   _headers, and whose script has no way to send anything.
+ * - Every page carries the same inline <script id="from-app"> (README.md, "Pages the app opens"), which can send,
+ *   store or inject nothing, never reads the URL's fragment, and creates only <span>s.
+ * - Only the invite page has other inline code: exactly one more <script> and one <style>, whose hashes match the /i
+ *   policy in _headers, and whose script has no way to send anything.
  * - Only the contact page loads a script: /contact.js. The site's script files (contact.js, contact-lib.js) import
  *   nothing else, fetch only the contact API, and cannot inject, store or open anything, except that contact.js adds
  *   one script element, for Turnstile's api.js at Cloudflare's exact URL (it does so only once no invite can be on
  *   the page; README.md, "Contact page"). contact-lib.js still derives the known-answer group ids of @even/core
  *   (packages/core/src/keys.test.ts).
- * - _headers carries the site-wide headers (Cross-Origin-Opener-Policy included), the AASA Content-Type, and the /i
- *   and /contact policies in the right order, each exactly as csp-hashes.mjs generates it.
+ * - _headers carries the site-wide headers (Cross-Origin-Opener-Policy included), the AASA Content-Type, and the /*,
+ *   /i and /contact policies in the right order, each exactly as csp-hashes.mjs generates it.
  * - Both association files parse as JSON and name the app.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -24,11 +26,15 @@ import { join, relative } from 'node:path';
 import {
   CONTACT_PAGE,
   CONTACT_PATH,
+  FROM_APP_ATTRS,
   INVITE_PAGE,
+  SITE_PATH,
   TURNSTILE_ORIGIN,
   WEB,
   contactCsp,
   inviteCsp,
+  sharedFromAppScript,
+  siteCsp,
   splitHtml,
   strictPolicies,
 } from './csp-hashes.mjs';
@@ -139,6 +145,22 @@ const FORBIDDEN_IN_INVITE_SCRIPT = [
   /location\.search/,
 ];
 
+/**
+ * The from=app script on every page: what the invite script may not do, except that it reads the query (that is its
+ * flag); and it never reads the fragment (on /i it is a group's key, on /contact the report) or the whole URL that
+ * carries it, never sets a fragment, and creates nothing but the <span> a link becomes.
+ */
+const FORBIDDEN_IN_FROM_APP = FORBIDDEN_IN_INVITE_SCRIPT.filter(
+  (pattern) => String(pattern) !== '/location\\.search/',
+).concat([
+  /location\.hash/,
+  /location\.href/,
+  /\bdocument\.(?:URL|documentURI|baseURI)\b/,
+  /\.hash\s*=/,
+  /\bcreateElement(?:NS)?\s*\(\s*(?!'span'\s*\))/,
+  /\bsetAttribute\s*\(\s*(?!'href'\s*,)/,
+]);
+
 /** Anything in the site's script files that could send elsewhere, store, inject, or run text as code. */
 const FORBIDDEN_IN_SCRIPT_FILES = FORBIDDEN_IN_INVITE_SCRIPT.filter(
   (pattern) =>
@@ -204,6 +226,11 @@ function checkHtml(file, source) {
   const { markup, blocks } = parsed;
   const scripts = [];
   let forms = 0;
+  // The from=app script, once on every page; the page's own inline scripts are the rest.
+  const fromApp = blocks.script.filter((s) => s.attrs === FROM_APP_ATTRS);
+  const own = blocks.script.filter((s) => s.attrs !== FROM_APP_ATTRS);
+  if (fromApp.length !== 1)
+    fail(file, `expected exactly one <script ${FROM_APP_ATTRS}>, found ${fromApp.length}`);
 
   for (const m of markup.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
     const tag = m[1].toLowerCase();
@@ -262,8 +289,11 @@ function checkHtml(file, source) {
   }
 
   if (!isInvite) {
-    if (blocks.script.some((s) => s.body.trim() !== ''))
-      fail(file, 'inline <script> (only the invite page may have one)');
+    if (own.some((s) => s.body.trim() !== ''))
+      fail(
+        file,
+        `inline <script> besides <script ${FROM_APP_ATTRS}> (only the invite page has one more)`,
+      );
     if (blocks.style.length > 0)
       fail(file, 'inline <style> (only the invite page may have one; use /site.css)');
     return;
@@ -274,11 +304,14 @@ function checkHtml(file, source) {
     fail(file, 'missing <meta name="referrer" content="no-referrer">');
   if (!/<meta\s+name="robots"\s+content="noindex"\s*\/?>/i.test(markup))
     fail(file, 'missing <meta name="robots" content="noindex">');
-  if (blocks.script.length !== 1)
-    fail(file, `expected exactly one <script>, found ${blocks.script.length}`);
+  if (own.length !== 1)
+    fail(
+      file,
+      `expected exactly one <script> besides <script ${FROM_APP_ATTRS}>, found ${own.length}`,
+    );
   if (blocks.style.length !== 1)
     fail(file, `expected exactly one <style>, found ${blocks.style.length}`);
-  for (const script of blocks.script) {
+  for (const script of own) {
     for (const pattern of FORBIDDEN_IN_INVITE_SCRIPT) {
       if (pattern.test(script.body))
         fail(file, `invite script matches forbidden pattern ${pattern}`);
@@ -298,7 +331,26 @@ function headerRules(text) {
   return rules;
 }
 
-function checkHeaders(text, pages) {
+/** The from=app script: the same bytes on every page (one hash allows them all), and nothing it may not do. */
+function checkFromApp(pages) {
+  let shared = null;
+  try {
+    shared = sharedFromAppScript(pages);
+  } catch (error) {
+    // "<page>: <what is wrong>", as fail() writes it.
+    failures.push(error.message);
+    return null;
+  }
+  const file = `<script ${FROM_APP_ATTRS}>`;
+  for (const pattern of FORBIDDEN_IN_FROM_APP) {
+    if (pattern.test(shared)) fail(file, `matches forbidden pattern ${pattern}`);
+  }
+  if (!shared.includes('location.search')) fail(file, 'does not read the query');
+  if (/\bhttps?:\/\/[A-Za-z0-9]/.test(shared)) fail(file, 'names a URL');
+  return shared;
+}
+
+function checkHeaders(text, pages, fromApp) {
   const file = '_headers';
   const rules = headerRules(text);
   const rule = (path) => rules.find((r) => r.path === path);
@@ -320,6 +372,12 @@ function checkHeaders(text, pages) {
     for (const want of required) {
       const ok = all.lines.some((l) => (typeof want === 'string' ? l === want : want.test(l)));
       if (!ok) fail(file, `/* is missing ${want}`);
+    }
+    // Every page under /* runs the from=app script, allowed by its hash and nothing else.
+    const csp = all.lines.filter((l) => l.startsWith('Content-Security-Policy:'));
+    if (csp.length !== 1) fail(file, `${SITE_PATH} must set exactly one Content-Security-Policy`);
+    else if (fromApp !== null && csp[0] !== `Content-Security-Policy: ${siteCsp(fromApp)}`) {
+      fail(file, `${SITE_PATH} CSP does not match the pages; run node web/scripts/csp-hashes.mjs`);
     }
   }
 
@@ -563,8 +621,9 @@ for (const [rel, source] of files) {
   }
 }
 if (!pages.has(CONTACT_PAGE)) fail(CONTACT_PAGE, 'missing');
+const fromApp = checkFromApp(pages);
 if (files.has('_headers') && pages.has(INVITE_PAGE) && pages.has(CONTACT_PAGE))
-  checkHeaders(files.get('_headers'), pages);
+  checkHeaders(files.get('_headers'), pages, fromApp);
 else fail('_headers', 'missing');
 checkWellKnown(files);
 for (const [rel, source] of files) {

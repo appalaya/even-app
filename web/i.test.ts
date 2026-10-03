@@ -5,8 +5,9 @@
  * right-to-left override or an isolate there would reorder the text around it wherever this page
  * renders it (review L4, app commit 0b878de).
  *
- * The page has no module to import (CSP allows exactly one inline <script>, hashed; web/README.md),
- * so this extracts the pure, DOM-free `parse` and its `has` helper from the page's own markup with
+ * The page has no module to import (CSP allows its own inline <script> and every page's shared
+ * <script id="from-app">, each by its hash; web/README.md), so this extracts the pure, DOM-free
+ * `parse` and its `has` helper from the page's own script (the one without attributes) with
  * csp-hashes.mjs's splitHtml (the same extraction the CSP hasher uses) and evaluates them, so a
  * change to the real shipped script is what this test runs. Characters are built from code points
  * (String.fromCodePoint) rather than written as literal source characters, so none of them land in
@@ -20,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { splitHtml } from './scripts/csp-hashes.mjs';
+import { FROM_APP_ATTRS, splitHtml } from './scripts/csp-hashes.mjs';
 
 const WEB = dirname(fileURLToPath(import.meta.url));
 
@@ -45,9 +46,10 @@ type Parsed = { g: string; cur: string } | null;
 /** Evaluates i.html's own `parse` (and the `has` helper it calls), exactly as shipped. */
 function loadParse(): (code: string) => Parsed {
   const html = readFileSync(join(WEB, 'i.html'), 'utf8');
-  const { blocks } = splitHtml(html);
-  if (blocks.script.length !== 1) throw new Error('expected exactly one inline <script> in i.html');
-  const script = blocks.script[0].body;
+  const own = splitHtml(html).blocks.script.filter((s) => s.attrs !== FROM_APP_ATTRS);
+  if (own.length !== 1 || own[0].attrs !== '')
+    throw new Error("expected exactly one inline <script> of i.html's own");
+  const script = own[0].body;
   const hasBlock = extractBlock(script, 'var has = function');
   const bidiLine = script.split('\n').find((line) => line.trim().startsWith('var BIDI_CONTROL_RE'));
   if (bidiLine === undefined) throw new Error("BIDI_CONTROL_RE not found in i.html's script");

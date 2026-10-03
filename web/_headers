@@ -5,11 +5,14 @@
 # header set by an earlier rule. So /* comes first, and the /i rules replace its CSP instead of adding a second one
 # (two CSP headers would both be enforced, and the site-wide one would block the invite page's inline script).
 #
-# The two "default-src 'none'; script-src 'sha256-…'" lines are GENERATED from i.html by scripts/csp-hashes.mjs.
-# After any edit to i.html, run `node web/scripts/csp-hashes.mjs` and then `node web/scripts/check.mjs`.
+# Every Content-Security-Policy line but /badges/* is GENERATED from the pages by scripts/csp-hashes.mjs. Every page
+# carries the same inline <script id="from-app"> (README.md, "Pages the app opens"), allowed by its hash in /*, /i,
+# /i/* and /contact; the two "default-src 'none'; script-src 'sha256-…'" lines also hash i.html's own script and
+# style. After any edit to a page's inline script or style, run `node web/scripts/csp-hashes.mjs` and then
+# `node web/scripts/check.mjs`.
 #
-# The /contact policy is written by the same script: the contact form's scripts are files on this site, and it is
-# the one page that loads anything from elsewhere, Cloudflare Turnstile (script and challenge frame).
+# The /contact policy also allows the contact form's scripts, which are files on this site, and it is the one page
+# that loads anything from elsewhere, Cloudflare Turnstile (script and challenge frame).
 #
 # Cross-Origin-Opener-Policy: same-origin cuts the tie between these pages and any window from another site that
 # opened them, or that they open: a site that opens /contact keeps no handle to move it to a fragment naming another
@@ -27,19 +30,19 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Frame-Options: DENY
-  Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
 /.well-known/apple-app-site-association
   Content-Type: application/json
 
 /i
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
 
 /i/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
 
 /badges/*
@@ -48,4 +51,4 @@
 
 /contact
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o=' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

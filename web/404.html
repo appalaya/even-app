@@ -25,5 +25,33 @@
 </main>
 
 </div>
+<script id="from-app">
+// ?from=app: the Even app opened this page (web/README.md, "Pages the app opens"). Then nothing here leads to the
+// home page's tip card: the header lockup, and links to anywhere but the app stores and GitHub, become plain text;
+// the tip card goes; links to this site's pages keep the flag. The same bytes on every page, allowed by one hash.
+(() => {
+  'use strict';
+  if (new URLSearchParams(location.search).get('from') !== 'app') return;
+  const KEEP = /^https:\/\/(?:apps\.apple\.com|play\.google\.com|github\.com\/appalaya)\//;
+  for (const tip of document.querySelectorAll('.tip')) tip.remove();
+  for (const a of document.querySelectorAll('a[href]')) {
+    let url = null;
+    try {
+      url = new URL(a.href);
+    } catch {}
+    if (url !== null && url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+    const here = url !== null && url.origin === location.origin;
+    if (here && !a.classList.contains('lockup')) {
+      url.searchParams.set('from', 'app');
+      a.setAttribute('href', url.pathname + url.search + url.hash);
+    } else if (here || url === null || !KEEP.test(url.href)) {
+      const text = document.createElement('span');
+      if (a.className !== '') text.className = a.className;
+      text.append(...a.childNodes);
+      a.replaceWith(text);
+    }
+  }
+})();
+</script>
 </body>
 </html>

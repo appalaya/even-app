@@ -344,7 +344,8 @@ select.select { padding: 0 44px 0 16px; appearance: none; -webkit-appearance: no
 .foot a { color: var(--text-2); text-decoration: none; }
 .foot a:hover { color: var(--text); text-decoration: underline; }
 .foot a[aria-current="page"] { color: var(--text); }
-.foot .org { margin-left: auto; }
+/* The company line: a link, or under from=app plain text in the same colour (ReportInBrowser draws it so). */
+.foot .org { margin-left: auto; color: var(--text-2); }
 
 @media (min-width: 720px) {
   .hero { padding-top: 88px; }
