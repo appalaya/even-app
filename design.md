@@ -179,12 +179,12 @@ Common fields on every event:
 
 | `type` | Payload | Notes |
 |---|---|---|
-| `group.created` | `{ name, currency }` | The one with the smallest `(ts, id)` wins; others are ignored. `name` is 1..80 characters (`LIMITS.groupNameMax`). `currency` is an ISO 4217 code and is immutable for the life of the group. |
+| `group.created` | `{ name, currency }` | The first to arrive at the server wins (smallest R; "A group is created once" under Reducer); any other is a duplicate creation, ignored entirely. `name` is 1..80 characters (`LIMITS.groupNameMax`). `currency` is an ISO 4217 code and is immutable for the life of the group. |
 | `group.renamed` | `{ name }` | `name` as in `group.created`. |
 | `group.closed` | `{ reason: 'rotated', to?: localId }` | Written into the **old** group by whoever rotates. Reducer marks the group read-only with "ask a member for the new invite." |
 | `group.rotated` | `{ from: localId }` | Written into the **new** group by whoever rotates. Any such event, not necessarily the first, links the groups. |
 | `group.moved` | `{ server: string }` | Written into the group before the writer switches servers. Receivers are offered "follow to <host>". |
-| `group.archived` | `{}` | An explicit, reversible end of the group: read-only by choice, still syncs. The latest `group.archived` / `group.unarchived` by `(ts, id)` wins; a repeat is a no-op. Independent of `group.closed` (rotated away, never syncs). |
+| `group.archived` | `{}` | An explicit, reversible end of the group: read-only by choice, still syncs. The latest `group.archived` / `group.unarchived` by `(min(ts, R), ts, id)` ("Ordering") wins; a repeat is a no-op. Independent of `group.closed` (rotated away, never syncs). |
 | `group.unarchived` | `{}` | Reverses `group.archived`. |
 | `member.added` | `{ member: Member }` | For a self-add during join, `by` is the new member's own id. |
 | `member.updated` | `{ id, changes: { name?, emoji? \| null } }` | Field-level last-writer-wins. `emoji: null` clears it. |
@@ -194,7 +194,7 @@ Common fields on every event:
 | `member.done` | `{ id }` | "I'm done adding." `by` is normally the member itself but need not be. **Auto-clear:** an `expense.added` whose `by` is a done member removes it from `doneMembers`, with no extra activity item; `expense.updated` and `payment.added` do not. |
 | `member.undone` | `{ id }` | Reverses `member.done` ("adding more"). |
 | `expense.added` | `{ expense: Expense }` | |
-| `expense.updated` | `{ id, changes: ExpenseChanges }` | Field-level last-writer-wins by `(ts, id)`, with `amount` + `split` as one atomic field. |
+| `expense.updated` | `{ id, changes: ExpenseChanges }` | Field-level last-writer-wins by `(min(ts, R), ts, id)` ("Ordering"), with `amount` + `split` as one atomic field. |
 | `expense.deleted` | `{ id }` | Tombstone. Final; later updates are ignored. |
 | `payment.added` | `{ payment: Payment }` | A settlement from one member to another. |
 | `payment.deleted` | `{ id }` | Tombstone. |
@@ -721,77 +721,113 @@ never silently drop an amount.
 
 ### Ordering
 
-Every event carries a hybrid logical timestamp:
+Every event carries a timestamp its author's phone claims, `ts`, and a server
+stamps every envelope it stores with its own arrival time, R (`received_at`,
+PROTOCOL.md §4): the same for every envelope one request stores, strictly
+greater for a later request, and belonging to one server and epoch. A claim
+counts only as far as R (pre-launch review H2):
+
+- **Effective time.** An event counts at `min(ts, R)`, or at its claimed `ts`
+  while it has no R (not yet pushed or pulled, or from a server without R).
+  Every event sorts by `(min(ts, R), ts, id)` (core `compareLog`), and the
+  reducer's last-writer-wins comparison uses the same key. `ts` breaks a tie
+  of effective times, so an add and its edit from a phone hours fast, pushed
+  in one request and so sharing an R, keep their order whatever their ids.
+- **Hold.** An event with an R whose claimed `ts` is more than W, a day (core
+  `clockAbsorbWindowMs`), past the latest R in the log is held: the reducer
+  skips it as if it changed nothing (no state change, activity item, history
+  entry or placeholder), whatever its type, until a later R brings that
+  horizon past its `ts`. It then takes effect at its effective time, its
+  arrival, so it loses to every write made after it arrived. An event with no
+  R is never held. `dev` plays no part, so a claim decades ahead is held
+  whether it comes from one device id or many.
+
+A new event's timestamp is
 
 ```
-ts = max(Date.now(), lastSeenTs + 1)
+ts = max(Date.now(), lastSeen + 1)
 ```
 
-where `lastSeenTs` is the largest `ts` among the group's events that is not
-more than 24 hours ahead of this device's clock at write time. Events further
-ahead are still applied, but they do not drag the group clock forward, so one
-phone set years ahead cannot push everyone's timestamps into the future. The
-rule is stateless: it is evaluated against the current clock each time an
-event is written, and no receive times are stored.
+where `lastSeen` is the largest effective time among the group's events that
+is not more than W ahead of this device's clock at write time. An event
+further ahead does not drag the group clock forward. The rule is stateless: it
+reads the log and the clock each time an event is written.
 
 An event that **targets an existing entity** (`expense.updated`,
 `expense.deleted`, `payment.deleted`, `member.*` with an `id`) additionally
-takes `ts = max(that, maxTs(entity) + 1)`, where `maxTs(entity)` is the
-largest `ts` among events already targeting that entity, however far ahead,
-counting only the events that take effect: a last-writer-wins write the
-reducer holds back (see "Hold-back" under Reducer) is left out. This
-guarantees an edit or delete sorts after the thing it edits even when the
-original came from a fast clock; the elevated value is still not absorbed
-into the group clock. An edit never climbs over a write that cannot win, so
-one far-future edit no longer drags the next honest edit to the top of the
-range (pre-launch review H2).
+takes `ts = max(that, lastTarget + 1)`, where `lastTarget` is the largest
+effective time among the events about that entity that take effect (a held
+one does not), however far ahead. So an edit or delete sorts after the thing
+it edits even when the original came from a fast clock. An event with an R is
+effective at its arrival at the latest, so a far claim never drags an honest
+edit up. Together these give causality: a write sorts after everything its
+author had seen when it wrote, before its own R arrives and after (core
+`arrival.test.ts`, over simulated histories with a server stamping R).
 
-If the device clock is outside the validator's absolute range, the app
-refuses to write and shows a "check your phone's date" message rather than
-producing events that fail validation everywhere. The computed `ts` can also
-reach the top of the range: when an event about the target that takes
-effect sits at `tsMax − 1`, nothing valid sorts after it. Only a far-future
-clock puts one there, and since held-back writes do not count, what can is
-an event that is not a field write (an `expense.added`, a `member.claimed`),
-or field writes from two device ids at the top, which the log has caught up
-to. A write that holds in either order is then written at the group clock's
-`ts` instead (`ts = max(now, lastSeenTs + 1)`, untargeted): a delete, whose
-tombstone keeps the later add out (the expense or payment disappears from
-the lists and the activity feed, its add with it, and no "deleted" entry
-takes its place), and a member's
-archive, unarchive, done or undone mark or claim, which survives the
-`member.added` that fills its placeholder. It still loses to a competing
-mark the log has caught up to, as any last-writer-wins write does. Only an
-edit that must follow its target to take effect (`expense.updated`, ignored
-before its `expense.added`; `member.updated`, overwritten by its
-`member.added`) is refused then, with the same message: an expense or member
-created at `tsMax − 1` can be deleted or archived but not edited. Every write
-therefore takes its `ts` from `writeTs(nowMs, log, event)` in `core/hlc.ts`,
-null meaning refuse: it compares against the device's clock and the events
-that take effect, never merely the log's maximum (pre-launch review H2).
-`canWrite(nowMs, log, targetId?)`, which is
-`isClockSane(nowMs) && nextTs(nowMs, log, targetId) < tsMax`, is the strict
-form without the fallback.
+**The write gate.** The app refuses to write, and shows "Check your phone's
+date.", when the device clock is outside the validator's absolute range, or
+when this phone runs more than W ahead of the server: its last push (its own
+latest event with an R, across every group: `Store.latestOwnReceipt`) arrived
+more than W before the time the phone stamped on it, and the clock now reads
+at least that stamp and at most W past it (core `aheadOfServer`). It is a
+local check. The first write after a clock goes wrong is not caught (nothing
+has measured the clock yet) and is held everywhere, this phone included; a
+clock set back since the last push, or a push more than W old by this clock,
+says nothing, and the next push measures again.
 
-`at` is the plain wall clock and is what the activity feed shows. `ts` is
-never displayed.
+The computed `ts` can also reach the top of the range, and only over an event
+with no R: when an event about the target with no R sits at `tsMax − 1`,
+nothing valid sorts after it. A write that holds in either order is then
+written at the group clock's `ts` instead (`ts = max(now, lastSeen + 1)`,
+untargeted): a delete, whose tombstone keeps the later add out (the expense
+or payment disappears from the lists and the activity feed, its add with it,
+and no "deleted" entry takes its place), and a member's archive, unarchive,
+done or undone mark or claim, which survives the `member.added` that fills
+its placeholder. Only an edit that must follow its target to take effect
+(`expense.updated`, ignored before its `expense.added`; `member.updated`,
+overwritten by its `member.added`) is refused then, with the same message.
+Every write takes its `ts` from `writeTs(nowMs, log, event, own)` in
+`core/hlc.ts`, null meaning refuse. `canWrite(nowMs, log, targetId?, own?)`
+is the strict form without the fallback: false only for a clock outside the
+range, a phone more than W ahead, or a target with no R at `tsMax − 1`.
+
+**When every R changes.** R belongs to one server and epoch, so a server move
+and an epoch reset (expiry, a wipe, any member's DELETE) clear it with `seq`,
+and the re-push, in claimed-ts order, brings the new copy's. The hold
+survives that: a far claim is still more than W past the new copy's latest R
+(core re-arm tests: the state is the same before and after, and without the
+hold it is not, since the far writes would get the newest R there). The clamp
+does not survive it: on the new copy each event counts at its claim again, so
+a write that arrived well before its claim and was released since moves up to
+its claim; and until the re-push completes, events have no R and count at
+their claims, far ones included. Rotation therefore leaves held events
+behind ("Rotate invite").
+
+A server chooses R, so a hostile one can pick which of two existing writes to
+one field wins, as withholding already lets it, but it cannot make a write
+count later than its author stamped it (even-server `THREAT-MODEL.md`). A
+server clock more than a day behind holds every write until it is fixed.
+
+`at` is the plain wall clock and is what the activity feed shows. `ts` and R
+are never displayed.
 
 This is enough for last-writer-wins on `expense.updated`; it is not a full
 CRDT and does not need to be. Two devices editing the same field while both
-are offline resolve by `(ts, id)`, which is a coin toss weighted by clock. That
-is acceptable for a trip app, and the activity feed shows both edits. A clock
-decades ahead does not win the toss: see "Hold-back" under Reducer.
+are offline resolve by `(min(ts, R), ts, id)`, which is a coin toss weighted
+by clock and arrival. That is acceptable for a trip app, and the activity feed
+shows both edits. A clock decades ahead does not win the toss: it is held.
 
 Server `seq` is never used for ordering state. It is only a sync cursor.
 
 ### Reducer
 
 `core/reduce.ts` exports `reduce(log: LogEntry[], options?): GroupState`,
-where each `LogEntry` is `{ id: envelopeId, event }`. It sorts by `(ts, id)`,
-replays each envelope id once, and folds:
+where each `LogEntry` is `{ id: envelopeId, event, receivedAt? }`. It sorts by
+`(min(ts, R), ts, id)` ("Ordering"), replays each envelope id once, leaves out
+every held event (`liveLog`), and folds:
 
-- `expense.updated` applies each field only if the event's `(ts, id)` is newer
-  than the last write to that field; `amount`+`split` is one field.
+- `expense.updated` applies each field only if the event is newer in that
+  order than the last write to that field; `amount`+`split` is one field.
   `expense.deleted` sets a tombstone that subsequent updates cannot clear.
 - An expense or payment whose currency differs from the group's, or whose
   split does not sum to its amount, is **excluded** from balances and listed
@@ -820,7 +856,7 @@ replays each envelope id once, and folds:
 - `group.closed` sets `closed = true` unless its `to` equals this group's own
   `localId` (which can only happen if a control event was copied by mistake);
   the UI makes the group read-only and shows the reason.
-- `group.moved`: only the latest by `(ts, id)` counts, and only if its
+- `group.moved`: only the latest in the fold's order counts, and only if its
   `server` differs from the group's current `server_url`.
 - `member.done` / `member.undone` add and remove the member in `doneMembers`
   (sorted; a repeat is a no-op; a `member.done` for an unknown id makes a
@@ -830,53 +866,43 @@ replays each envelope id once, and folds:
   do. `allDone` is true when every non-archived member with at least one
   claimed device is in `doneMembers` and there is at least one such member,
   so a name pre-added but never claimed cannot hold the group up.
-- `group.archived` / `group.unarchived`: the latest by `(ts, id)` sets
+- `group.archived` / `group.unarchived`: the latest in the fold's order sets
   `archived`. It is independent of `closed`: a closed group was rotated away
   and never syncs again; an archived one is read-only by choice, still
   syncs, and can be unarchived.
-- **Hold-back** (pre-launch review H2). A write to a last-writer-wins field
-  (`group.renamed`, `group.archived`, `group.unarchived`, `group.moved`,
-  `member.updated`, `member.archived`, `member.unarchived`, `member.done`,
-  `member.undone`, `expense.updated`; core `writesLastWriterField`) does not
-  win while its `ts` is more than `LIMITS.holdBackMs`, ten years, ahead of
-  every event written by another device. It takes effect in its `(ts, id)`
-  place once the log catches up, that is once some other device's event
-  reaches within ten years of it. Until then the fold ignores it like an
-  event that changes nothing: no state change, activity item, history entry
-  or placeholder. Only one device can be that far ahead of all the others, so
-  the rule is one number per log, core `holdBackHorizon`: the latest `ts` by
-  any device other than the one holding the log's latest `ts`, plus the
-  window; nothing is held when one device wrote the whole log or two share
-  its latest `ts`. It reads only the `(dev, ts)` pairs of the de-duplicated
-  log, so it is deterministic and permutation-invariant like the rest of the
-  fold, and every phone with the same log agrees. So the review's
-  `group.archived` at `tsMax − 1` (a hostile member's, or a phone whose clock
-  reads 2099) never archives the group, and an unarchive or a rename at now
-  stands; a phone hours, or even years, fast wins as it always did.
-  Creations, claims, tombstones and control events are not fields and take
-  effect whatever their `ts`: holding back an `expense.added` would drop its
-  money from balances without a word.
-  - *Why ten years, not the absorb window's day.* With no clock to read, the
-    log's "now" is the latest event of another device, and that lags by
-    however long the other members have been quiet. With a day, a member
-    editing alone two days after everyone else's last event would see their
-    renames, archives and expense edits held until someone else wrote, and in
-    a group whose other members only read, every edit its one writer made a
-    day after their last event would wait for them. Ten years is longer than
-    a group is likely to keep a member who never writes, and far shorter
-    than the distance to the top of the range, so the rule catches a clock
-    decades off and nothing an honest phone writes. A write less than ten
-    years ahead wins until real time passes it, as before; for an entity's
-    fields an honest edit climbs over it ("Ordering"), and the group's name
-    and archive state are left behind by regenerating the invite ("Rotation,
-    moving, closing").
-  - *What it does not stop.* `dev` is the writer's own claim, so a member who
-    writes the same far event from two device ids has caught the log up
-    themselves and wins as before; field writes from two ids at `tsMax − 1`
-    also still freeze the entity they target ("Ordering"). Against a hostile
-    member the remedy is regenerating the invite: the new group starts the
-    group's name and archive state afresh at the rotator's clock, while
-    member and expense events cross as they are.
+- **Hold** (pre-launch review H2, "Ordering"). An event with an R whose
+  claimed `ts` is more than a day past the latest R in the log is left out
+  of the fold, whatever its type: no state change, activity item, history
+  entry or placeholder, and it names no actor. A later R that brings the
+  horizon past its `ts` releases it at its arrival. The horizon reads only the
+  R values of the de-duplicated log, so it is deterministic and
+  permutation-invariant like the rest of the fold, and every phone holding the
+  same log and the same R agrees. So the review's `group.archived` at
+  `tsMax − 1` (a hostile member's, from any number of device ids, or a phone
+  whose clock reads 2099) never archives the group once a server has stamped
+  it, and an unarchive at now stands. This replaces the first attempt's
+  ten-year, device-anchored hold-back (`5539948`), which a second forged
+  device id defeated and which let a far `expense.added` through.
+- **A group is created once** (pre-launch review H5, a past-dated
+  `group.created`). The `group.created` that takes effect is the first to arrive (core
+  `creationOf`): among the creations the fold applies, the smallest R, one
+  with an R before one without, then the fold's order (a log no server has
+  stamped falls back to that order alone). Every other `group.created` is a
+  duplicate creation and is ignored entirely: no state, no activity item,
+  never the group's name or currency, whatever `ts` it claims. This is the
+  rule chosen over keeping first-writer by the fold's order and relying on
+  rotation's copy: a duplicate claiming 2024-01-01 sorts first in
+  `(min(ts, R), ts, id)`, so that rule would hand it the group's immutable
+  currency (every expense `currency_mismatch`, empty balances) and rotation
+  would copy it. Rotation copies only the creation that took effect.
+  - *What it does not stop.* Arrival is re-formed whenever every R is: after
+    a move or an epoch reset the re-push runs in claimed-ts order, so a
+    backdated duplicate is the first to arrive on the new copy and becomes the
+    creation there, and the hostile member can force that with a DELETE and a
+    re-push of their own. Regenerating the invite before that carries only the
+    honest creation, and the removed member cannot write to the new group. A
+    phone that kept the creation it first applied (a per-phone pin) would close
+    this; it is not built.
 
 `GroupState` contains the group meta (including `archived`), members (with
 device sets and avatars), `doneMembers` (who has said "I'm done adding") and
@@ -917,16 +943,18 @@ and nobody needs it for a trip.
   `invalid`, the group screen shows a hard "Update Even to see everything in
   this group." banner, not just a counter, because balances are known to be
   incomplete.
-- The hold-back rule (Reducer) changed how existing logs reduce, on the
-  current `sv` and with no migration: a log holding a last-writer-wins write
-  more than ten years ahead of every other device's events now reads as if
-  that write had not arrived yet. It is additive in the sense that matters
-  here: it adds no field and rejects no event, so every build still accepts
-  every event it accepted before, and a build without the rule simply keeps
-  the old winner (the far write) and keeps climbing over it when it edits.
-  Until those builds are gone the two can show such a group differently. Only
-  a clock decades off writes such a log, so no honest group reads
-  differently, and no event is rewritten.
+- The arrival-time rule ("Ordering") is additive on the current `sv`, with
+  no body change and no migration of an event: R travels beside the
+  ciphertext (PROTOCOL.md §4), never in a body, and the client keeps it in its
+  own column (schema v5). A build without the rule ignores R and keeps the old
+  claimed-ts order, so until such builds are gone it can show a group with a
+  far claim, or a duplicate `group.created`, differently: it lets the far
+  claim win and the earliest claimed creation take the group, as before. A
+  build with the rule shows a log no server has stamped (rows from before
+  v5, a server without R) exactly as before too, until the next push or pull
+  brings R. A build that predates R on the wire treats a pulled envelope that
+  carries `received_at` as junk (its `envelopeShape` refuses the extra key),
+  so the server half needs those builds gone first.
 - The validator checks a currency's shape only, so a group's currency (from
   `group.created`) may be one this build's frozen ISO 4217 table does not
   know: a newer table's, or a hostile member's. That group shows the same
@@ -980,22 +1008,39 @@ CREATE TABLE events (
   status     TEXT NOT NULL,                -- 'ok' | 'undecryptable' | 'invalid' | 'unsupported_envelope' | 'unsupported_body'
   push_state TEXT NOT NULL DEFAULT 'pending',   -- 'pending' | 'rejected'
   size       INTEGER,                      -- stored size as a server counts it (decoded c + 64); null if not an envelope
+  received_at INTEGER,                     -- R: when the current server first stored it this epoch; null until reported
   PRIMARY KEY (local_id, id)
 );
 CREATE INDEX events_outbox ON events (local_id) WHERE acked = 0 AND push_state = 'pending';
 CREATE INDEX events_ts     ON events (local_id, ts);
+CREATE INDEX events_own_received ON events (received_at, ts)
+  WHERE origin = 'local' AND received_at IS NOT NULL;
 ```
 
 - **The outbox is a query, not a table**: `acked = 0 AND push_state = 'pending'`.
   Rows inserted from a pull are inserted with `acked = 1`.
 - **The cursor and epoch are per group per server.** Changing `server_url`
   re-encrypts every readable envelope for the new group id, resets `cursor`
-  to 0, clears `epoch`, sets `acked = 0` and `push_state = 'pending'`
-  everywhere so the whole log is replayed to the new server, and **drops**
-  `undecryptable` and `unsupported_envelope` rows, which cannot be
-  re-encrypted (relabelling them would forge the associated data).
+  to 0, clears `epoch`, sets `acked = 0`, `seq = null`, `received_at = null`
+  and `push_state = 'pending'` everywhere so the whole log is replayed to the
+  new server, and **drops** `undecryptable` and `unsupported_envelope` rows,
+  which cannot be re-encrypted (relabelling them would forge the associated
+  data).
+- **`received_at` is R** ("Ordering"), the server's own arrival time for the
+  envelope. It is set from every push response (its `received_at` list, one
+  per envelope sent) and every pulled page, overwriting what is stored rather
+  than skipping a row it has; a value that is not an integer in
+  `[tsMin, tsMax)` is treated as absent (core `isReceivedAt`), never an error.
+  It belongs to one server and epoch, so the epoch rule's `resetAcked` and a
+  server change clear it together with `seq`; a group-file import keeps it
+  (`keepReceived`: same server, same epoch) and may add the file's as a
+  provisional one ("Group file"). It is never sent to a server: the outbox
+  reads `id`, `ts` and `envelope`. The write gate reads this phone's latest own
+  row with one (`latestOwnReceipt`, served by `events_own_received`).
 - `ts` cached from the body, `name_cache` and `currency_cache` are the only
   decrypted information kept on disk, as stated under Architecture.
+  `received_at` is not decrypted: the server knows it already, and every
+  member learns it (even-server `THREAT-MODEL.md`).
   `pending_deletes.auth_token` is the only credential.
 - `status = 'undecryptable'` rows (AEAD failure under the correct key) are
   capped at 1,000 per group; beyond that the oldest are dropped, and settings
@@ -1029,6 +1074,10 @@ version bump; shipped migrations are never edited.
   is one SQL sum. Rows already stored are measured by the migration, 300 at a
   time; no envelope is rewritten. It is a size of ciphertext, not decrypted
   content.
+- v5: adds `events.received_at` (pre-launch review H2) and the partial index
+  `events_own_received`. Every stored row starts with none: the next push or
+  pull of the row supplies it, and until then the event keeps its claimed
+  `ts` ("Ordering"). No envelope is rewritten.
 
 When the store cannot open (a database written by a newer build, a failed
 migration), the app shows the StartupError board instead of Groups: "Even
@@ -1088,11 +1137,16 @@ under Rotation.
    group cycles skip this step.
 1. **Push**: select outbox events in `ts` order, send in batches of
    `min(max_batch, 100, current batch size)`. On `200`, mark **every**
-   envelope in the batch `acked = 1` (accepted or duplicate). Apply the epoch
-   rule below to the response.
+   envelope in the batch `acked = 1` (accepted or duplicate) and, in the same
+   transaction, store the response's `received_at` on each, when the list has
+   exactly one value per envelope sent (a server without it gives none, and
+   the next pull of those envelopes supplies R). Apply the epoch rule below to
+   the response.
 2. **Pull**: `GET …?since=cursor&limit=min(max_page, 1000)` while `more`,
    within the cycle's budget (below). Apply the epoch rule **before**
-   committing the page. For each envelope: check its structure and `v` with
+   committing the page. For each envelope: take off the server's own fields,
+   `seq` and `received_at` (kept for the row; an unusable R is none), then
+   check its structure and `v` with
    `envelopeShape` from `core/envelope.ts`, which accepts any positive
    integer `v` (not ok → `undecryptable`: junk a conforming server never
    returns; ok with `v ≠ 1` → `unsupported_envelope`, kept per protocol §10);
@@ -1100,8 +1154,8 @@ under Rotation.
    open with AAD for this server's group id (fail → `undecryptable`);
    `parseEvent` (fail → `invalid`, unknown `sv`/`type` → `unsupported_body`);
    else `ok`, cache `ts`. Insert with `acked = 1`,
-   `origin = 'remote'`, ignore if present; on conflict set `acked = 1` and
-   `seq`. Commit each page **and** the cursor update in one SQLite
+   `origin = 'remote'` and R, ignore if present; on conflict set `acked = 1`,
+   `seq` and R. Commit each page **and** the cursor update in one SQLite
    transaction. Each opened body goes into the decode cache (below), and an
    envelope the cache already holds is not opened again.
 3. **Recompute**: invalidate the group's memoised state; observers re-render.
@@ -1151,8 +1205,9 @@ normal end of a delete-or-expiry recovery, not instability. Otherwise, if the
 response's epoch differs from the stored one, or is `null` where a real one
 is stored: if `epoch_resets_this_cycle` is already 1, stop the group with
 `last_sync_error = 'epoch_unstable'`; else increment it, store the new epoch
-(or `'unknown'` for `null`), set `cursor = 0`, set `acked = 0` on every event
-(rejected rows stay rejected), and restart the cycle. The group's full log is
+(or `'unknown'` for `null`), set `cursor = 0`, set `acked = 0` and clear `seq`
+and `received_at` on every event (rejected rows stay rejected), and restart
+the cycle. The group's full log is
 re-pushed (the server ignores what it already has) and re-pulled. This is the
 self-heal for expiry, accidental deletion, and server replacement, and it
 costs at most one full log's worth of traffic, up to the server's group cap.
@@ -1242,8 +1297,8 @@ group; v2 may add a checkpoint event.
 ```ts
 interface Transport {
   info(): Promise<ServerInfo>;
-  push(groupId: string, token: Uint8Array, envelopes: Envelope[]): Promise<{ accepted: number; duplicates: number; seq: number; epoch: string }>;
-  pull(groupId: string, token: Uint8Array, since: number, limit: number): Promise<{ events: StoredEnvelope[]; next: number; more: boolean; epoch: string | null }>;
+  push(groupId: string, token: Uint8Array, envelopes: Envelope[]): Promise<{ accepted: number; duplicates: number; seq: number; epoch: string; received_at?: unknown[] }>;
+  pull(groupId: string, token: Uint8Array, since: number, limit: number): Promise<{ events: StoredEnvelope[]; next: number; more: boolean; epoch: string | null }>;  // each with seq and received_at
   delete(groupId: string, token: Uint8Array): Promise<void>;
 }
 ```
@@ -1273,18 +1328,28 @@ false there. The group's server URL is always the canonical `https` form.
 
 Not a transport; two functions.
 
-- `exportGroup()` writes `{ format: "even-group", v: 1, invite, envelopes }`
-  to a `.even` file and hands it to the share sheet. The file contains the
-  secret next to the ciphertext: it is exactly as sensitive as the invite and
-  the share sheet says so. It is called a **group file**, never "encrypted
-  export".
+- `exportGroup()` writes `{ format: "even-group", v: 1, invite, envelopes,
+  received }` to a `.even` file and hands it to the share sheet. The file
+  contains the secret next to the ciphertext: it is exactly as sensitive as
+  the invite and the share sheet says so. It is called a **group file**, never
+  "encrypted export". `received` is optional: `{ "<envelope id>": ms }`, the R
+  this phone holds for each exported envelope that has one. It sits beside
+  the envelopes, never inside one, because an older importer's
+  `envelopeShape` refuses an envelope with any other key (and its parser
+  reads only the four top-level fields, so it ignores the map).
 - `importGroup()` lives on the Groups screen, because it must work for groups
   this phone does not have yet. It reads a file, verifies the invite checksum,
   stores the secret if new, insert-or-ignores every envelope with
   `origin = 'remote'` (re-encrypting readable ones for the current server's
-  group id if the file's server differs, dropping the unreadable), and sets
-  `acked = 0` on **all** of the group's events so the server copy is fully
-  restored on next sync. If the group is locally `closed` or `hidden` (rotated
+  group id if the file's server differs, dropping the unreadable), with the
+  file's `received` value as a provisional R on each row it inserts (an
+  unusable value, or one more than a day past this phone's clock, is
+  dropped: no server stored anything in the future, and a late R would release
+  held writes), and sets `acked = 0` on **all** of the group's events so the
+  server copy is fully restored on next sync, whose push responses then
+  report this phone's server's own R for every row and replace the provisional
+  ones. So a phone that imports a group it never synced holds the far writes
+  every other phone holds, before its first sync. If the group is locally `closed` or `hidden` (rotated
   away), the import is refused unless the user confirms they want to revive
   the old group.
 
@@ -1307,7 +1372,14 @@ the old invite.
    (pre-launch review H2), or one the log has caught up to, never crosses into
    a group where nobody could outrank it. The new group's activity shows the
    name and archive state as the rotator's, from the rotation on; who renamed
-   or archived the group before is not carried over.
+   or archived the group before is not carried over. Nor is any event the
+   rotator's reducer holds ("Ordering"): on the new copy it would have no R
+   until the push and would count at its claim meanwhile. That also leaves
+   behind a held write of a phone a few days fast, which the old group would
+   have released later. Of the `group.created` events only the one that took
+   effect crosses ("A group is created once" under Reducer), so a duplicate
+   creation never reaches the new group. Bodies cross unchanged, `ts`
+   included: re-stamping an event would be writing a different one.
 4. Append `group.rotated { from: oldLocalId }` to the new group, then, at
    the rotator's own clock (`nextTs`), `group.renamed { name }` with the
    group's current name when it differs from the copied `group.created`'s,
@@ -1318,23 +1390,12 @@ the old invite.
    the new group here: the member list, their expenses, and the history all
    carry over unchanged (balances must still add up), and archiving is what
    takes them out of pickers and out of the "done adding" count. The mark is
-   written even when its `ts` cannot outrank a far-future event about that
-   member (the write gate gives it the group clock's `ts`, "Ordering"), so the
-   rotation never fails on one (pre-launch review H2). What the user sees:
-   - the usual case, one phone far ahead (the review's): its writes about the
-     member are held back ("Hold-back" under Reducer), and anything else it
-     wrote (a claim, the member's own add) does not compete with the mark, so
-     the member reads archived in the new group as soon as it opens, and stays
-     so while the log has not caught up to the far write. Should it catch up
-     (another device writing within ten years of it), a far unarchive would
-     take effect in its place and the member would read unarchived again;
-   - a far unarchive of the member that the log has already caught up to
-     (the same write from two device ids at the top): the mark is written
-     and loses. The removed member stays in the new group's pickers and
-     "done adding" count, though they hold no invite to it, and the activity
-     shows both the mark ("Maya archived Priya") and the far unarchive.
-     Archiving them again changes nothing, since nothing below the top of
-     the range outranks it.
+   written even when its `ts` cannot outrank an event about that member with
+   no R at the top of the range (the write gate gives it the group clock's
+   `ts`, "Ordering"), so the rotation never fails on one (pre-launch review
+   H2). A far write about the member that a server stamped is held, from any
+   number of device ids, and stays behind, so the member reads archived in the
+   new group as soon as it opens, and stays so.
 5. Push the new group. Present the new invite.
 6. Append `group.closed { reason: 'rotated', to: newLocalId }` to the **old**
    group and keep syncing the old group until that event is acknowledged;
@@ -1353,7 +1414,8 @@ else: events written by the removed party after the rotation never cross,
 because no device claims them as its own. Control events are never copied.
 The straggler's own name and archive toggles are rescued with the rest of its
 writes: they are its own, at its own clock, and one written after the
-rotation outranks the rotator's re-statement as it should.
+rotation outranks the rotator's re-statement as it should. Its writes the old
+group holds cross too; on the new copy they are held again once pushed.
 Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
 over `my_member_id`. When there are such envelopes (readable, not control
 events), the rescue waits for the person (MoveEntriesPrompt): the next time
@@ -1963,6 +2025,10 @@ Copy boards share, word for word, with one meaning each:
 
 Copy no board draws:
 
+- "Check your phone's date.": the write gate's refusal, where each sheet
+  shows its save error (Add expense, Group settings, Create). It means one
+  thing, that this phone's clock is wrong: outside 2024 to 2099, or more than
+  a day ahead of the server's by its last push ("Ordering").
 - Android's notification channel, shown by the system (Settings › Apps ›
   Even › Notifications): name "Group activity", description "New expenses
   and payments in your groups."
