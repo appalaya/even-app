@@ -28,4 +28,6 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift}"
+  # Tests never compile into the app, wherever they are added later.
+  s.exclude_files = ["Tests/**/*", "**/*Tests/**/*", "**/*Tests.swift", "**/*Test.swift"]
 end
