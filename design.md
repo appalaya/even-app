@@ -1232,6 +1232,18 @@ version bump; shipped migrations are never edited.
   phone with several large groups takes a few minutes through the server's
   read allowance, pausing on its 429s ("Error handling"). No envelope is
   rewritten in the migration itself.
+  - *Release note: what the re-pull does not reach.* Only groups that sync
+    re-pull. A `closed` or `hidden` group never syncs ("Cycle, per group"), so a
+    beta user keeps the junk rows a group got between the server deploy and
+    its closing or hiding on that build (a group this phone rotated away, or
+    hid after a concurrent rotation): a closed one reads "N entries couldn't
+    be read" and its balances may be incomplete; a hidden one is not shown. The
+    cursor reset reaches them too, so the one sync a closed group can still
+    get (its rescue's last sync, "Move entries") pulls its whole log and clears
+    the junk; otherwise importing a group file from a member who holds the
+    group restores it. Groups closed by a member's closure on another phone are
+    not affected: that closure arrived as junk on the beta build too, so the
+    group stayed `active` there and re-pulls (and closes) after the upgrade.
 - v6: adds `groups.creation_id` (pre-launch review H5), null for every group:
   the first creation that takes effect with a server's R is pinned by the
   lifecycle check after the next sync ("A group is created once" under
