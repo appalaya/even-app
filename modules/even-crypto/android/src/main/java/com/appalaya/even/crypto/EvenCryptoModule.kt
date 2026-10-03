@@ -14,6 +14,8 @@ import java.nio.ByteOrder
  * Every function is synchronous (JSI) and works on the caller's typed arrays: the bytes are read out, Tink seals or
  * opens them, and the answer is written into the output array JavaScript allocated. Lengths are checked before
  * anything is read, so a wrong-size argument returns false instead of failing inside Tink. Nothing is kept or logged.
+ * The module's own copies of the key and of every plaintext are zeroed once used; Tink's internal copies (its key
+ * state, the buffers it decrypts into before returning) are not, and wait for the garbage collector.
  *
  * `InsecureNonceXChaCha20Poly1305` (encrypt and decrypt both take the nonce first) takes the nonce from the caller (envelope.ts draws it from the platform CSPRNG); it
  * is the implementation Tink's public `subtle.XChaCha20Poly1305` wraps, without that class's random nonce prefix.
@@ -34,13 +36,18 @@ class EvenCryptoModule : Module() {
       ) {
         return@Function false
       }
+      val keyBytes = bytesOf(key)
+      val plainBytes = bytesOf(plaintext)
       try {
-        val sealed = InsecureNonceXChaCha20Poly1305(bytesOf(key)).encrypt(bytesOf(nonce), bytesOf(plaintext), bytesOf(aad))
+        val sealed = InsecureNonceXChaCha20Poly1305(keyBytes).encrypt(bytesOf(nonce), plainBytes, bytesOf(aad))
         if (sealed.size != out.byteLength) return@Function false
         out.write(sealed, 0, sealed.size)
         true
       } catch (e: Exception) {
-        false // a tag that does not verify (AEADBadTagException), or any other refusal
+        false // Tink refused (it checks the lengths again), or failed in some other way: nothing is written
+      } finally {
+        keyBytes.fill(0)
+        plainBytes.fill(0)
       }
     }
 
@@ -50,13 +57,18 @@ class EvenCryptoModule : Module() {
       ) {
         return@Function false
       }
+      val keyBytes = bytesOf(key)
+      var plain: ByteArray? = null
       try {
-        val plain = InsecureNonceXChaCha20Poly1305(bytesOf(key)).decrypt(bytesOf(nonce), bytesOf(sealed), bytesOf(aad))
+        plain = InsecureNonceXChaCha20Poly1305(keyBytes).decrypt(bytesOf(nonce), bytesOf(sealed), bytesOf(aad))
         if (plain.size != out.byteLength) return@Function false
         out.write(plain, 0, plain.size)
         true
       } catch (e: Exception) {
         false // a tag that does not verify (AEADBadTagException), or any other refusal
+      } finally {
+        keyBytes.fill(0)
+        plain?.fill(0)
       }
     }
 
@@ -85,10 +97,13 @@ class EvenCryptoModule : Module() {
       }
       if (inputTotal != input.byteLength.toLong() || outTotal != out.byteLength.toLong()) return@Function -1
 
+      val keyBytes = bytesOf(key)
       val cipher = try {
-        InsecureNonceXChaCha20Poly1305(bytesOf(key))
+        InsecureNonceXChaCha20Poly1305(keyBytes)
       } catch (e: Exception) {
         return@Function -1
+      } finally {
+        keyBytes.fill(0) // Tink keeps its own copy for the batch; this one is the module's
       }
       val source = bytesOf(input)
       val target = ByteArray(out.byteLength)
@@ -108,6 +123,7 @@ class EvenCryptoModule : Module() {
             flags[i] = 1
             openedCount += 1
           }
+          plain.fill(0)
         } catch (e: Exception) {
           // Not opened: its flag stays 0 and its slot in `out` zeros.
         }
@@ -115,6 +131,7 @@ class EvenCryptoModule : Module() {
         outAt += sealedLength - TAG_BYTES
       }
       if (target.isNotEmpty()) out.write(target, 0, target.size)
+      target.fill(0)
       if (count > 0) opened.write(flags, 0, count)
       openedCount
     }
