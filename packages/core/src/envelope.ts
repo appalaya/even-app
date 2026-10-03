@@ -1,4 +1,4 @@
-import { aead, nobleAead, type AeadSealed } from './aead.js';
+import { aead, nobleAead, reportAeadDisagreement, type AeadSealed } from './aead.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { isId, newId, randomBytes } from './ids.js';
@@ -109,7 +109,8 @@ function sealBytes(key: Uint8Array, groupId: string, id: string, plain: Uint8Arr
  * The installed AEAD's open, with @noble's second opinion on a refusal. When the installed implementation is not
  * @noble and answers null (or throws), the same bytes are opened with @noble, and only @noble's refusal counts. This
  * can only turn a native "no" into the reference's answer, never accept what @noble rejects: a native false negative
- * costs speed, never data. With @noble installed there is nothing to ask twice.
+ * costs speed, never data. When @noble does open it, the disagreement is reported (`onAeadDisagreement`; the app then
+ * stays on @noble). With @noble installed there is nothing to ask twice.
  */
 function aeadOpen(key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, sealed: Uint8Array): Uint8Array | null {
   const impl = aead();
@@ -119,7 +120,10 @@ function aeadOpen(key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, sealed: U
   } catch {
     opened = null; // an implementation that throws instead of answering null is still a failed open, never a crash
   }
-  return opened !== null || impl === nobleAead ? opened : nobleAead.open(key, nonce, aad, sealed);
+  if (opened !== null || impl === nobleAead) return opened;
+  const reference = nobleAead.open(key, nonce, aad, sealed);
+  if (reference !== null) reportAeadDisagreement(impl.name);
+  return reference;
 }
 
 /**
@@ -240,11 +244,16 @@ export function openMany(args: { key: Uint8Array; groupId: string; envelopes: re
   if (opened === null) {
     opened = items.map((item) => aeadOpen(args.key, item.nonce, item.aad, item.sealed));
   } else if (impl !== nobleAead) {
-    // The reference's second opinion on each refusal, as aeadOpen gives one.
+    // The reference's second opinion on each refusal, as aeadOpen gives one; one report for the batch.
+    let disagreed = false;
     opened = opened.map((padded, i) => {
       const item = items[i];
-      return padded !== null || item === undefined ? padded : nobleAead.open(args.key, item.nonce, item.aad, item.sealed);
+      if (padded !== null || item === undefined) return padded;
+      const reference = nobleAead.open(args.key, item.nonce, item.aad, item.sealed);
+      if (reference !== null) disagreed = true;
+      return reference;
     });
+    if (disagreed) reportAeadDisagreement(impl.name);
   }
   const answers = opened;
   at.forEach((index, i) => {

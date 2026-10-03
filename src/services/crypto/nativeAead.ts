@@ -10,7 +10,9 @@ import {
   AEAD_KEY_BYTES,
   AEAD_NONCE_BYTES,
   AEAD_TAG_BYTES,
+  aead,
   nobleAead,
+  onAeadDisagreement,
   setAead,
   type Aead,
   type AeadSealed,
@@ -455,7 +457,9 @@ export function selfTestAead(
 export type AeadStatus =
   | { kind: 'native'; name: string; selfTestMs: number }
   | { kind: 'js'; reason: 'unavailable' }
-  | { kind: 'js'; reason: 'self-test'; code: SelfTestCode };
+  | { kind: 'js'; reason: 'self-test'; code: SelfTestCode }
+  /** It was installed, then refused an envelope @noble opens: @noble for the rest of the process. */
+  | { kind: 'js'; reason: 'disagreed'; name: string };
 
 let installed: AeadStatus | null = null;
 
@@ -467,7 +471,9 @@ export function aeadStatus(): AeadStatus | null {
 /**
  * Once per process: when `native` is present (null where the module is not in the build) and passes `selfTestAead`,
  * installs it for every seal and open; otherwise leaves @noble. Logs one line of fixed words either way, never a
- * key, nonce, or byte of data. Never throws.
+ * key, nonce, or byte of data. If the installed module later refuses an envelope that @noble opens, the app goes
+ * back to @noble for the rest of the process and logs one more fixed line (`aeadStatus` says `disagreed`). Never
+ * throws.
  */
 export function installNativeAead(
   native: NativeCrypto | null,
@@ -489,7 +495,19 @@ export function installNativeAead(
     }
     const ms = Math.round((performance.now() - started) * 10) / 10;
     if (code === null && candidate !== null) {
-      setAead(candidate);
+      const native = candidate;
+      setAead(native);
+      // A refusal @noble overrules (envelope.ts asks it about every one) means this implementation cannot be trusted
+      // to agree: @noble for the rest of the process, and one line of fixed words.
+      onAeadDisagreement(() => {
+        if (aead() !== native) return;
+        setAead(null);
+        onAeadDisagreement(null);
+        installed = { kind: 'js', reason: 'disagreed', name: native.name };
+        log(
+          '[even] crypto: @noble from now on, the native module refused an envelope @noble opens',
+        );
+      });
       status = { kind: 'native', name: candidate.name, selfTestMs: ms };
     } else {
       status = { kind: 'js', reason: 'self-test', code: code ?? 'threw' };
@@ -510,4 +528,5 @@ export function installNativeAead(
 export function resetNativeAeadForTests(): void {
   installed = null;
   setAead(null);
+  onAeadDisagreement(null);
 }

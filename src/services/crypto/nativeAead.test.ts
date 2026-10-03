@@ -1,4 +1,13 @@
-import { aead, deriveLocal, deriveServer, nobleAead, open, seal, type Event } from '@even/core';
+import {
+  aead,
+  deriveLocal,
+  deriveServer,
+  nobleAead,
+  open,
+  openMany,
+  seal,
+  type Event,
+} from '@even/core';
 import { STABLELIB } from '@even/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -233,6 +242,64 @@ describe('installNativeAead', () => {
       ]);
     });
   }
+});
+
+describe('a native false negative after install', () => {
+  const secret = Uint8Array.from({ length: 32 }, (_, i) => 3 * i);
+  const { encryptionKey: key } = deriveLocal(secret);
+  const { groupId } = deriveServer(secret, 'https://sync.even.appalaya.com');
+  const bodies = ['Banff', 'Jasper', 'Field'].map((name) => ({ ...BODY, name }));
+  const envelopes = bodies.map((body) => seal({ key, groupId, body }));
+  /** A module that passes the self-test but refuses envelopes[1] (its nonce), alone or in a batch. */
+  const refusing = () => {
+    const nonce = Uint8Array.from(Buffer.from(envelopes[1]!.n, 'base64url'));
+    const isIt = (n: Uint8Array) => n.length === nonce.length && n.every((b, i) => b === nonce[i]);
+    return goodNative({
+      open: (k, n, a, s, out) => {
+        if (isIt(n)) return false;
+        const plain = nobleAead.open(k, n, a, s);
+        if (plain === null) return false;
+        out.set(plain);
+        return true;
+      },
+      openMany: (k, input, lengths, out, opened) =>
+        packedOpenMany(k, input, lengths, out, opened, (kk, n, a, s) =>
+          isIt(n) ? null : nobleAead.open(kk, n, a, s),
+        ),
+    });
+  };
+
+  it('gives @noble’s answer, goes back to @noble for good, and logs one fixed line', () => {
+    const lines: string[] = [];
+    installNativeAead(refusing(), (line) => lines.push(line));
+    expect(aeadStatus()).toMatchObject({ kind: 'native' });
+    expect(open({ key, groupId, envelope: envelopes[0]! })).toEqual(bodies[0]);
+    expect(open({ key, groupId, envelope: envelopes[1]! })).toEqual(bodies[1]);
+    expect(aead()).toBe(nobleAead);
+    expect(aeadStatus()).toEqual({ kind: 'js', reason: 'disagreed', name: 'stand-in 1.0' });
+    expect(open({ key, groupId, envelope: envelopes[1]! })).toEqual(bodies[1]);
+    expect(lines).toEqual([
+      expect.stringMatching(/^\[even\] crypto: native stand-in 1\.0, self-test passed/),
+      '[even] crypto: @noble from now on, the native module refused an envelope @noble opens',
+    ]);
+  });
+
+  it('does the same from inside a batch, and answers every item as @noble does', () => {
+    const lines: string[] = [];
+    installNativeAead(refusing(), (line) => lines.push(line));
+    const outcomes = openMany({ key, groupId, envelopes });
+    expect(outcomes.map((o) => (o.ok ? o.body : o.error.code))).toEqual(bodies);
+    expect(aead()).toBe(nobleAead);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('does not switch for a refusal @noble shares (a forgery)', () => {
+    installNativeAead(refusing(), () => undefined);
+    const forged = { ...envelopes[0]!, id: envelopes[2]!.id };
+    expect(() => open({ key, groupId, envelope: forged })).toThrow();
+    expect(aeadStatus()).toMatchObject({ kind: 'native' });
+    expect(aead().name).toBe('stand-in 1.0');
+  });
 });
 
 describe('selfTestAead', () => {

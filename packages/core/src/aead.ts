@@ -79,3 +79,23 @@ export function aead(): Aead {
 export function setAead(next: Aead | null): void {
   current = next ?? nobleAead;
 }
+
+let disagreementListener: ((implementation: string) => void) | null = null;
+
+/**
+ * Called with the installed implementation's name whenever @noble opens what it refused (envelope.ts asks @noble
+ * about every refusal): once per `open`, once per `openMany` however many items it concerned. The app goes back to
+ * @noble for the rest of the process and logs it. Null removes it.
+ */
+export function onAeadDisagreement(listener: ((implementation: string) => void) | null): void {
+  disagreementListener = listener;
+}
+
+/** For envelope.ts: @noble opened what `implementation` refused. A listener that throws is ignored. */
+export function reportAeadDisagreement(implementation: string): void {
+  try {
+    disagreementListener?.(implementation);
+  } catch {
+    // Reporting must never turn an open into a failure.
+  }
+}

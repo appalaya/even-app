@@ -51,7 +51,9 @@ function checkCrypto(): Check {
       ? `aead=${status.name}`
       : status.reason === 'unavailable'
         ? 'aead=@noble (no native module)'
-        : `aead=@noble (native self-test FAILED: ${status.code})`;
+        : status.reason === 'disagreed'
+          ? `aead=@noble (native ${status.name} refused an envelope @noble opens)`
+          : `aead=@noble (native self-test FAILED: ${status.code})`;
   const nativeOk = status.kind === 'native' || status.reason === 'unavailable';
   try {
     const secret = newSecret();

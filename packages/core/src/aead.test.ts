@@ -1,6 +1,6 @@
 import { xchacha20 } from '@noble/ciphers/chacha.js';
 import { afterEach, describe, expect, it } from 'vitest';
-import { aead, nobleAead, setAead, type Aead } from './aead.js';
+import { aead, nobleAead, onAeadDisagreement, setAead, type Aead } from './aead.js';
 import { EnvelopeError, open, openMany, resealEnvelope, seal } from './envelope.js';
 import { deriveLocal, deriveServer } from './keys.js';
 import { aeadCrossCheck, aeadVectorChecks, type CheckReport } from './testing/aeadConformance.js';
@@ -9,7 +9,10 @@ import { hchacha20, nodeAead } from './testing/nodeAead.js';
 import { HCHACHA20, WYCHEPROOF } from './testing/xchachaVectors.js';
 import type { Event } from './types.js';
 
-afterEach(() => setAead(null));
+afterEach(() => {
+  setAead(null);
+  onAeadDisagreement(null);
+});
 
 function expectClean(reports: readonly CheckReport[]): void {
   for (const r of reports) {
@@ -221,6 +224,24 @@ describe('setAead', () => {
       const outcomes = openMany({ key, groupId, envelopes: [forged, envelopes[0]!] });
       expect(outcomes.map((o) => (o.ok ? 'ok' : o.error.code))).toEqual(['undecryptable', 'ok']);
       expect(() => open({ key, groupId, envelope: forged })).toThrow(EnvelopeError);
+    });
+
+    it('reports each disagreement (once per open, once per batch), and never a refusal both share', () => {
+      const reports: string[] = [];
+      onAeadDisagreement((name) => reports.push(name));
+      setAead(wronglyRefusing());
+      envelopes.forEach((envelope) => open({ key, groupId, envelope }));
+      expect(reports).toEqual(['false-negative']);
+      openMany({ key, groupId, envelopes: [...envelopes, envelopes[1]!] });
+      expect(reports).toEqual(['false-negative', 'false-negative']);
+      const forged = { ...envelopes[0]!, id: envelopes[2]!.id };
+      expect(() => open({ key, groupId, envelope: forged })).toThrow(EnvelopeError);
+      openMany({ key, groupId, envelopes: [forged] });
+      expect(reports).toHaveLength(2);
+      onAeadDisagreement(() => {
+        throw new Error('a listener that throws');
+      });
+      expect(open({ key, groupId, envelope: envelopes[1]! })).toEqual(bodies[1]);
     });
 
     it('with @noble installed, a refusal is not asked twice', () => {
