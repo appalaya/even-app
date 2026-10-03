@@ -1497,17 +1497,28 @@ export class GroupService {
    * device's own writes, the unpushed outbox included, and nothing else) that it can open, that the new group lacks,
    * and that is not a control event.
    */
+  /** The old group's events this phone's reducer holds now ("Ordering"): neither rotation nor a rescue carries them. */
+  private async heldIn(localId: string): Promise<ReadonlySet<string>> {
+    const log = await this.groupState.entries(localId);
+    const horizon = holdBackHorizon(log);
+    return new Set(log.filter((e) => isHeldBack(e, horizon)).map((e) => e.id));
+  }
+
   private async rescuable(
     store: Store,
     newLocalId: string,
     oldLocalId: string,
     keys: RescueKeys,
+    held: ReadonlySet<string>,
   ): Promise<{ stored: StoredRow; envelope: ParsedEnvelope }[]> {
     const have = new Set((await store.listEnvelopes(newLocalId)).map((row) => row.id));
     const pace = pacer(RESEALS_PER_YIELD);
     const found: { stored: StoredRow; envelope: ParsedEnvelope }[] = [];
     for (const stored of await store.listEnvelopes(oldLocalId)) {
       if (stored.origin !== 'local' || !isReadable(stored.status) || have.has(stored.id)) continue;
+      // A write of this phone's that the old group holds (its clock was more than a day fast) stays behind, as the
+      // rotator leaves held events behind: on the new copy it would count at its claim until pushed.
+      if (held.has(stored.id)) continue;
       if (pace()) await yieldToEventLoop();
       const envelope = parseEnvelopeText(stored.envelope);
       if (envelope === null) continue;
@@ -1538,7 +1549,15 @@ export class GroupService {
     );
     return keys === null
       ? 0
-      : (await this.rescuable(this.store, newLocalId, oldLocalId, keys)).length;
+      : (
+          await this.rescuable(
+            this.store,
+            newLocalId,
+            oldLocalId,
+            keys,
+            await this.heldIn(oldLocalId),
+          )
+        ).length;
   }
 
   /**
@@ -1583,6 +1602,7 @@ export class GroupService {
       // The one exception to "closed groups never sync".
       if (current.state !== 'active') await this.store.setGroupState(oldLocalId, 'active');
       await this.engine.syncGroup(oldLocalId, { trigger: 'pull_to_refresh' });
+      const held = await this.heldIn(oldLocalId);
       const oldSecret = await this.secrets.getSecret(oldLocalId);
       const newSecret = await this.secrets.getSecret(newLocalId);
       rescued = await this.store.transaction(async (tx) => {
@@ -1597,6 +1617,7 @@ export class GroupService {
             newLocalId,
             oldLocalId,
             keys,
+            held,
           )) {
             let resealed;
             try {

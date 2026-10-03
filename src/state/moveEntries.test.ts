@@ -4,14 +4,16 @@
  * old group's settings after Not now, and asks nothing when there is nothing to carry. On the fake store, with a
  * rotator (A) and a straggler (B) through the fake server.
  */
-import { deriveLocal, deriveServer, open, parseEvent } from '@even/core';
+import { deriveLocal, deriveServer, LIMITS, newId, open, parseEvent } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { GroupService } from './groups';
 import { parseNotNow, recognitionStep } from './moveOffers';
 import {
+  body,
   createWorld,
   expectSynced,
+  injectEvent,
   SERVER,
   secretOn,
   sync,
@@ -175,6 +177,41 @@ describe('MoveEntriesPrompt on the fake store', () => {
     expect(moved.map((r) => r.title).sort()).toEqual(['Ferry', 'Late dinner']);
     for (const row of moved) expect(row).toMatchObject({ origin: 'local' });
     expect((await b.services.groupState.list()).map((r) => r.localId)).toEqual([g2]);
+  });
+
+  it("Move leaves behind a write of this phone's that the old group holds, as the rotator does", async () => {
+    const { b, g1, g2, nathan } = await rotated(['Late dinner']);
+    // A write this phone stamped years ahead (its clock was wrong): once the old group's last sync stamps it, it is
+    // held there, and it does not cross.
+    const far = await injectEvent(
+      b,
+      g1,
+      body(
+        {
+          type: 'expense.added',
+          expense: {
+            id: newId(),
+            title: 'Far',
+            amount: 3_000,
+            currency: 'CAD',
+            paidBy: nathan,
+            date: '2026-02-10',
+            category: 'food',
+            split: { [nathan]: 3_000 },
+          },
+        },
+        nathan,
+        b.services.deviceId,
+        LIMITS.tsMax - 1,
+      ),
+    );
+    await g(b).moveEntries(g2, g1);
+    await b.services.idle();
+    expect((await b.store.dump(g1)).find((r) => r.id === far)?.receivedAt).not.toBeNull();
+    const moved = (await expenseRows(b, g2)).map((r) => r.title);
+    expect(moved).toContain('Late dinner');
+    expect(moved).not.toContain('Far');
+    expect((await b.store.dump(g2)).map((r) => r.id)).not.toContain(far);
   });
 
   it('Not now keeps only groups this phone still shows', async () => {

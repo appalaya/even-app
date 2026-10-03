@@ -221,8 +221,12 @@ arguments in the wrong order.)
 again with @noble, alone or within a batch, and only @noble's refusal counts.
 This can only turn a native "no" into the reference's answer, never accept
 what @noble rejects: a native false negative costs speed (a forgery or a
-foreign envelope is decrypted twice), never data. A native false positive is
-what the self-test and the vectors guard against.
+foreign envelope is decrypted twice), never data. If @noble does open what the
+native implementation refused, core reports it (`onAeadDisagreement`), and the
+app goes back to @noble for the rest of the process and logs one fixed line,
+`[even] crypto: @noble from now on, the native module refused an envelope
+@noble opens`. A native false positive is what the self-test and the vectors
+guard against.
 
 **Batches.** The derive opens up to 200 envelopes not yet in the decode cache
 with one core `openMany`, which is one native call: every nonce, AAD and
@@ -1580,7 +1584,9 @@ because no device claims them as its own. Control events are never copied.
 The straggler's own name and archive toggles are rescued with the rest of its
 writes: they are its own, at its own clock, and one written after the
 rotation outranks the rotator's re-statement as it should. Its writes the old
-group holds cross too; on the new copy they are held again once pushed.
+group holds (a claim more than a day past the latest R, "Ordering") stay
+behind, as the rotator leaves held events behind: on the new copy they would
+count at their claims until pushed.
 Set `acked = 0` on the rescued rows, set the old group to `hidden`, and carry
 over `my_member_id`. When there are such envelopes (readable, not control
 events), the rescue waits for the person (MoveEntriesPrompt): the next time
