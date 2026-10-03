@@ -21,7 +21,7 @@ including the parts the server never sees.
 - **State**: React Context + hooks over a memoised per-group derived state; SQLite is the source of truth
 - **Background**: expo-background-task, expo-notifications (local only)
 - **Camera and QR**: expo-camera for reading invite QR codes only (permission text "Even uses the camera only to read invite QR codes."; no microphone; Android blocks `RECORD_AUDIO` and `WRITE_SETTINGS`), `uqr` to encode the invite link (`jsqr` in tests only), expo-brightness to lift the screen while a code is shown
-- **In-app browser**: expo-web-browser for the contact page (Help and feedback, Report this group) and About's Privacy, Terms and Source code. On Android it is a Chrome Custom Tab, accepted as it is: it closes with an ✕ instead of Done, adds Chrome's minimise, share and ⋮ menu, and shows Chrome's own first-run screen the first time a Custom Tab opens on the phone; its bar takes `surface`, and Back returns to the app
+- **In-app browser**: expo-web-browser for the contact page (Help and feedback, Report this group) and About's Privacy, Terms and Source code. On Android it is a Chrome Custom Tab, accepted as it is: it closes with an ✕ instead of Done, adds Chrome's minimise, share and ⋮ menu, and shows Chrome's own first-run screen the first time a Custom Tab opens on the phone; its bar takes `surface`, and Back returns to the app. Every page of ours it opens carries `?from=app` before any fragment (`fromApp` in `features/settings/about.ts`; `LINKS`, `HELP_PAGE` and `reportUrl` carry it, and `useInAppBrowser` applies it to whatever it opens, a server's terms that point at our site included). Why: the website's home page has the tip card, a link to Stripe, and App Store Review Guideline 3.1.1 and Google Play's Payments policy treat a way to pay from inside the app, outside the store's billing, as bypassing in-app purchase. Under the flag the site's header lockup and its "© 2026 Appalaya Inc." line are plain text, links between its pages keep the flag, and the tip card is gone, so nothing reached from the app leads to a payment; tips stay on the website, for people who come to it outside the app. The source-code link is GitHub's and goes as it is. Without JavaScript the site's links stay as they are, which the in-app browsers, both running JavaScript, never see (`web/README.md`, "Pages the app opens")
 - **Tests**: Vitest for `packages/core`; the app has no simulator-based test suite in v1
 
 ## Architecture Overview
@@ -1889,8 +1889,9 @@ script serves `/api/*` (the contact form); every other path is a static asset.
   package), store badges, and the code in a copy box with the sentence
   "Installed already? Open Even and tap Join with code." The fragment is never
   sent anywhere.
-- Served with `Content-Security-Policy: default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'`.
-  The hash covers one inline `<script>` block; it uses `addEventListener`,
+- Served with `Content-Security-Policy: default-src 'none'; script-src 'sha256-…' 'sha256-…'; style-src 'sha256-…'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'`.
+  The script hashes cover its own inline `<script>` block and the `from=app`
+  script every page shares (under In-app browser, in Stack); its own uses `addEventListener`,
   never `on*=` attributes, and all styling is in one hashed `<style>` block
   with no `style=""` attributes, since hashes cover neither. No analytics, no
   third-party scripts, and Cloudflare's script-injecting features (Rocket
@@ -1899,7 +1900,9 @@ script serves `/api/*` (the contact form); every other path is a static asset.
   LandingWebDesktop): the heading "Keep Even free", one sentence, and a "Leave
   a tip" soft button, in the claim cards' style with `.button-soft`. The button
   is a plain link to Stripe's Payment Link; nothing from Stripe loads on the
-  site, and the app links to no tip page. Tips go to Appalaya Inc., are not
+  site, and the app links to no tip page: the pages it opens carry `?from=app`,
+  under which no link leads to `/` and the card is removed even if `/` is
+  reached (In-app browser, under Stack). Tips go to Appalaya Inc., are not
   tax-deductible or refundable, and unlock nothing; `/terms` and `/privacy`
   each have a Tips section.
 - `/terms`, `/privacy`, `/abuse`: plain pages. The privacy page is
@@ -1910,9 +1913,9 @@ script serves `/api/*` (the contact form); every other path is a static asset.
   by `POST /api/contact`. A report takes the invite link and derives the group
   id in the browser (`web/contact-lib.js`, checked against `@even/core`), so
   only the id and the server origin are sent, never the key; the page says so
-  in the drawn sentence. The app opens it with the group in the URL fragment,
-  `#purpose=report&id=<groupId>&server=<canonical server URL>`, or with
-  `#purpose=help` / `#purpose=feedback`; a server that is not Appalaya's gets
+  in the drawn sentence. The app opens it with `?from=app` and the group in the
+  URL fragment, `?from=app#purpose=report&id=<groupId>&server=<canonical server URL>`,
+  or with `#purpose=help` / `#purpose=feedback`; a server that is not Appalaya's gets
   the "we can't act on it, but we'll read your report" line, and a server with
   a path cannot be reported. The Worker checks same origin, validates, verifies
   a Turnstile token (action `contact`), rate-limits per IP, sends one plain-text
@@ -1921,7 +1924,8 @@ script serves `/api/*` (the contact form); every other path is a static asset.
   The page's CSP allows only `challenges.cloudflare.com` beyond `'self'`; its
   scripts are external files (hash-free, so the tests run the shipped code).
 - Store badges are the official Apple and Google artwork, self-hosted under
-  `/badges/`; the footer carries "© 2026 Appalaya Inc." linking to appalaya.com.
+  `/badges/`; the footer carries "© 2026 Appalaya Inc." linking to appalaya.com
+  (plain text, in the same place and colour, under `?from=app`).
 
 ## Navigation
 

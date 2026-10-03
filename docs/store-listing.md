@@ -144,7 +144,7 @@ https://even.appalaya.com
 - **Sign-in required:** unticked. Even has no accounts.
 - **Contact Information:** first name, last name and phone of whoever answers App Review. Apple doesn't
   publish them. **Email:** `support@appalaya.com`. This is a console field, so the mailbox is allowed here.
-- **Notes** · limit 4000 · 1905
+- **Notes** · limit 4000 · 2224
 
 ```text
 Even has no accounts and no sign-in. Nothing needs to be set up before review.
@@ -165,6 +165,8 @@ A group's content is shared only among people who hold its invite. "Report this 
 
 The camera is used only to scan invite QR codes. Notifications are local, from background refresh; there is no push server. Encryption: the source code is public, so the app uses the open-source exemption (ITSAppUsesNonExemptEncryption is false).
 
+The web pages the app opens (Privacy, Terms and the contact page) are loaded with ?from=app: with it, the website's header and footer don't link to its home page or to appalaya.com, links between its pages keep the flag, and the tip card on its home page is hidden, so nothing reached from the app leads to a payment.
+
 Questions: support@appalaya.com, or https://even.appalaya.com/contact
 ```
 
@@ -172,7 +174,10 @@ The labels in the notes match the app: "Create group", "People (optional)", "You
 "Join with code", "Share link", "Show QR code", "Leave group", the Leave sheet's checkbox (ticked by
 default), "Report this group" and "Regenerate invite link". The notes put a mailbox in a console field,
 which is allowed. The paragraph on reporting is there because reviewers ask apps with shared content how
-abuse is reported and how someone is removed (App Review Guideline 1.2).
+abuse is reported and how someone is removed (App Review Guideline 1.2). The paragraph on `?from=app` is there
+because the website's home page has a tip link to Stripe, and a way to pay from inside the app, outside Apple's
+billing, is what Guideline 3.1.1 rules out; it says why a reviewer who follows links from Privacy, Terms or Contact
+never finds it (`web/README.md`, "Pages the app opens").
 
 **Version Release:** "Manually release this version", so 1.0 goes out when you choose.
 
@@ -290,7 +295,8 @@ private, that section says what changes.
 ### Pricing and Availability
 
 - **Price:** Free (USD 0.00). There are no in-app purchases. Tips happen on the website only, and the app
-  links to no tip page.
+  links to no tip page: the pages it opens carry `?from=app`, which hides the tip card and the website's links to
+  its home page (see the Notes above).
 - **Availability:** all countries and regions except **China mainland**, which needs an ICP filing number in
   App Store Connect before an app can be offered there.
 - **iPhone and iPad Apps on Apple Silicon Macs** and **Apple Vision Pro:** recommended **unticked** for 1.0.
