@@ -32,7 +32,7 @@ class EvenCryptoModule : Module() {
 
     Function("seal") { key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, plaintext: Uint8Array, out: Uint8Array ->
       if (key.byteLength != KEY_BYTES || nonce.byteLength != NONCE_BYTES ||
-        out.byteLength != plaintext.byteLength + TAG_BYTES
+        out.byteLength.toLong() != plaintext.byteLength.toLong() + TAG_BYTES
       ) {
         return@Function false
       }
@@ -79,7 +79,11 @@ class EvenCryptoModule : Module() {
     // key schedule once for the batch.
     Function("openMany") { key: Uint8Array, input: Uint8Array, lengths: Int32Array, out: Uint8Array, opened: Uint8Array ->
       val count = opened.byteLength
-      if (key.byteLength != KEY_BYTES || lengths.byteLength != count * 2 * Int.SIZE_BYTES) return@Function -1
+      // Every size below is summed as a Long, so lengths near Int.MAX_VALUE cannot wrap round into a layout that
+      // seems to add up.
+      if (key.byteLength != KEY_BYTES || lengths.byteLength.toLong() != count.toLong() * 2L * Int.SIZE_BYTES) {
+        return@Function -1
+      }
       val lens = IntArray(count * 2)
       if (count > 0) {
         val raw = ByteArray(lengths.byteLength)
@@ -92,10 +96,11 @@ class EvenCryptoModule : Module() {
         val aadLength = lens[2 * i]
         val sealedLength = lens[2 * i + 1]
         if (aadLength < 0 || sealedLength < TAG_BYTES) return@Function -1
-        inputTotal += NONCE_BYTES + aadLength + sealedLength
-        outTotal += sealedLength - TAG_BYTES
+        inputTotal += NONCE_BYTES.toLong() + aadLength.toLong() + sealedLength.toLong()
+        outTotal += sealedLength.toLong() - TAG_BYTES
       }
       if (inputTotal != input.byteLength.toLong() || outTotal != out.byteLength.toLong()) return@Function -1
+      // From here every offset is at most input.byteLength or out.byteLength, so Int arithmetic cannot overflow.
 
       val keyBytes = bytesOf(key)
       val cipher = try {
