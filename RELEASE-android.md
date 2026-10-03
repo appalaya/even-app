@@ -182,8 +182,8 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   `git checkout -- android/app/build.gradle`. The workflow also fails any bundle not signed with the upload key.
 - The hand edits. In `android/build.gradle`: no JitPack repository (the template adds
   `maven { url 'https://www.jitpack.io' }` for every project; nothing the app uses resolves from it, checked by
-  building debug and release with `--refresh-dependencies` without it, so it is gone). `android/gradle/verification-metadata.xml`
-  (Tink's sha256, above). In `android/app/build.gradle`: the "Even:" block (signing and version numbers from the
+  building debug and release with `--refresh-dependencies` without it, so it is gone).
+  `android/gradle/verification-metadata.xml` (Tink's sha256, above). In `android/app/build.gradle`: the "Even:" block (signing and version numbers from the
   environment), `signingConfigs.release`, `buildTypes.release` using it, and the two assignments after
   `defaultConfig`. With `--no-clean`, prebuild rewrites the first `versionCode` and `versionName` literals in the
   file (the ones in `defaultConfig`) from `app.json`, so leave those alone; the assignments after them win. In

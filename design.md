@@ -175,7 +175,11 @@ logs nothing, and both libraries verify the tag in constant time.
 
 - iOS: libsodium's `crypto_aead_xchacha20poly1305_ietf_*`, from swift-sodium
   0.11.0's `Clibsodium` (libsodium 1.0.22), a Swift package the podspec adds
-  with React Native's `spm_dependency`; `Package.resolved` pins the commit.
+  with React Native's `spm_dependency`. The library is a prebuilt binary
+  committed inside the swift-sodium repository; `Package.resolved` pins the
+  commit (the signed 0.11.0 tag's), and as GitHub publishes no separate
+  checksum for it, the iOS workflow checks that revision and the sha256 of
+  the device and simulator slices before it archives (RELEASE.md).
   swift-sodium's only CocoaPods release (0.9.1, libsodium 1.0.18, 2020) does
   not link: its `libSodium.a` and `libsodium.a` collide on a case-insensitive
   file system.
@@ -183,7 +187,9 @@ logs nothing, and both libraries verify the tag in constant time.
   Tink's public `subtle.XChaCha20Poly1305` wraps, taking the nonce from the
   caller). Pure Java: no `.so` per ABI, nothing to align for 16 KB pages, no
   JNA, which is why it was chosen over lazysodium-android. An internal Tink
-  API, so the version is pinned exactly.
+  API, so the version is pinned with Gradle's `strictly`, and Gradle checks
+  the jar against Maven Central's published sha256 on every build
+  (`android/gradle/verification-metadata.xml`, RELEASE-android.md).
 
 **Installed only after a self-test.** `openAppServices` (the background task
 included) calls `installNativeAead` (`services/crypto/nativeAead.ts`) once per
@@ -212,9 +218,12 @@ line of fixed words is logged, with a code on failure:
 `[even] crypto: @noble, the native module failed its self-test (vector-open)`.
 On the iPhone 17 simulator in a debug build it takes 13.7 to 16.7 ms at
 startup and 6.2 ms when run again (Hermes compiles each function on first use
-in a debug build); 4.6 ms of the run is @noble's own 8,176-byte seal. (It
-caught a real fault on its first Android run: the module passed Tink's decrypt
-arguments in the wrong order.)
+in a debug build); 2.3 ms of the run is @noble's own 8,176-byte seal. On the
+Pixel 10 emulator a release build takes 14 to 28.6 ms at startup, most of it
+Tink's 70 seals; a debuggable build, with ART's optimisations off, 57.5 ms
+(about 25 when run again). Before these cases were added it took 5 to 13 ms.
+(It caught a real fault on its first Android run: the module passed Tink's
+decrypt arguments in the wrong order.)
 
 **A refusal gets a second opinion.** When the installed implementation is not
 @noble and refuses an envelope (or throws), `envelope.ts` opens the same bytes
@@ -231,9 +240,11 @@ guard against.
 **Batches.** The derive opens up to 200 envelopes not yet in the decode cache
 with one core `openMany`, which is one native call: every nonce, AAD and
 ciphertext packed into one array, their lengths into another, the plaintexts
-back in a third. Each envelope's outcome is exactly what `open` would return
-or throw; if the batch call fails, they are opened one by one. The pull,
-rotation and moves still open and seal one envelope per call.
+back in a third. A native call never carries more than 200 envelopes (about
+1.6 MB at the largest size), whoever asks. Each envelope's outcome is exactly
+what `open` would return or throw; if the batch call fails, they are opened
+one by one. The pull, rotation and moves still open and seal one envelope per
+call.
 
 **Tested in both places.** `@even/core/testing` (test data and checks only;
 nothing the app ships imports it) holds the vectors @noble is tested against
@@ -244,15 +255,22 @@ suite. Node runs them on @noble and on a node:crypto implementation (OpenSSL's
 ChaCha20-Poly1305 under an HChaCha20 subkey). A phone runs them on the native
 one through `even://dev/crypto` (development builds only), with a seeded
 cross-check of thousands of random cases against @noble, plaintexts of 0 to
-8,192 bytes, and the timings in "Performance: large groups".
+8,192 bytes, and the timings in "Performance: large groups". CI checks that the
+production bundles hold none of it (`scripts/check-release-bundle.mjs`).
 
 **Threat model.** Nothing changes on the wire or on disk, and nothing new
-reaches the network. On iOS libsodium reads and writes the JavaScript buffers
-in place and wipes the subkey it derives; on Android the key, the ciphertext
-and the plaintext are copied into Java arrays for the length of one call and
-left to the garbage collector, as JavaScript's own copies are. Nothing is
-kept between calls or logged. The native code is new trusted code in the app:
-libsodium and Tink, each pinned.
+reaches the network. One library per platform is new trusted code in the app:
+libsodium on iOS, a prebuilt binary committed inside the swift-sodium
+repository at a pinned commit, with no checksum published apart from it (the
+iOS workflow checks its sha256 itself); Tink on Android, pinned and checked
+against Maven Central's sha256 by Gradle. On iOS libsodium reads and writes
+the JavaScript buffers in place and wipes the subkey it derives. On Android
+the key, the ciphertext and the plaintext are copied into Java arrays for the
+length of one call; the module zeroes its own copies of the key and the
+plaintexts once used, and Tink's internal copies are not wiped, as
+JavaScript's own copies are not. Nothing is kept between calls. The modules
+log nothing; the app logs one line of fixed words at startup, and one more if
+it ever goes back to @noble.
 
 ## Event log
 
