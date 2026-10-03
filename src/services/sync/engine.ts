@@ -292,9 +292,11 @@ function junkText(id: string, rest: Record<string, unknown>): string {
  * design.md "Cycle, per group", step 2, for one pulled envelope. Returns null only when the entry has no usable
  * id (it cannot be stored or deduplicated; a conforming server never sends one). `known` answers for an envelope
  * this launch already opened (the shared `DecodeCache`, by id, exact text and group id): a valid event found there
- * is not opened again, which is what a pull after a server move or an epoch reset brings back. The server's own
- * fields, `seq` and `received_at` (PROTOCOL.md §4), are taken off before the envelope's shape is checked; an R that is
- * not usable (core `isReceivedAt`) is stored as none.
+ * is not opened again, which is what a pull after a server move or an epoch reset brings back. The envelope is the
+ * entry's `id`, `v`, `n` and `c`; every other key is ignored (PROTOCOL.md §11: clients ignore response fields they do
+ * not know), so a field a server adds later cannot make every envelope junk, as `received_at` did to the builds before
+ * it. `seq` and `received_at` (§4) are kept for the row; an R that is not usable (core `isReceivedAt`) is stored as
+ * none. The entry is junk only when those four fields are not an envelope.
  */
 export function classifyPulled(
   raw: unknown,
@@ -306,6 +308,8 @@ export function classifyPulled(
   const { seq, received_at: receivedAt, ...rest } = raw;
   const id = rest.id;
   if (typeof id !== 'string' || !isId(id)) return null;
+  // The four envelope fields only: whatever else a server adds to a pulled entry is not the envelope's.
+  const fields = { id, v: rest.v, n: rest.n, c: rest.c };
   const base = {
     id,
     origin: 'remote' as const,
@@ -314,7 +318,7 @@ export function classifyPulled(
     receivedAt: isReceivedAt(receivedAt) ? receivedAt : null,
   };
 
-  const shape = envelopeShape(rest);
+  const shape = envelopeShape(fields);
   if (!shape.ok) {
     return {
       row: { ...base, ts: null, envelope: junkText(id, rest), status: 'undecryptable' },
@@ -322,7 +326,7 @@ export function classifyPulled(
       type: null,
     };
   }
-  const envelope = { id, v: rest.v, n: rest.n, c: rest.c } as Envelope;
+  const envelope = fields as Envelope;
   const text = JSON.stringify(envelope);
   if (shape.v !== PROTOCOL.version) {
     return {

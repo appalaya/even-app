@@ -231,10 +231,33 @@ describe('classifyPulled and received_at', () => {
       status: 'ok',
       receivedAt: null,
     });
-    // Any other extra field is still not an envelope.
+  });
+
+  it('ignores every other key a server adds, and is junk only when id, v, n and c are not an envelope', () => {
+    const envelope = sealFor(keys, ev.expense('Dinner'));
+    const extra = {
+      ...envelope,
+      seq: 4,
+      received_at: 1_760_000_000_000,
+      flags: ['new'],
+      extra: { a: 1 },
+    };
+    const classified = classifyPulled(extra, keys.key, keys.groupId);
+    expect(classified?.row).toMatchObject({ status: 'ok', seq: 4, receivedAt: 1_760_000_000_000 });
+    // Stored as the four fields alone, the form every other path keeps.
+    expect(classified?.row.envelope).toBe(
+      JSON.stringify({ id: envelope.id, v: envelope.v, n: envelope.n, c: envelope.c }),
+    );
+    expect(classified?.event?.type).toBe('expense.added');
+    // A missing or malformed field is still junk, extra keys or not.
+    const { n: _n, ...noNonce } = extra;
+    expect(classifyPulled(noNonce, keys.key, keys.groupId)?.row.status).toBe('undecryptable');
     expect(
-      classifyPulled({ ...envelope, seq: 4, extra: 1 }, keys.key, keys.groupId)?.row.status,
+      classifyPulled({ ...extra, c: 'not base64url!' }, keys.key, keys.groupId)?.row.status,
     ).toBe('undecryptable');
+    expect(classifyPulled({ ...extra, v: 2 }, keys.key, keys.groupId)?.row.status).toBe(
+      'unsupported_envelope',
+    );
   });
 });
 
@@ -783,9 +806,16 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       expect(row(ids.wrongKey)).toMatchObject({ status: 'undecryptable', ts: null });
       expect(row(ids.v2)).toMatchObject({ status: 'unsupported_envelope', ts: null });
       expect(row(ids.junk)).toMatchObject({ status: 'undecryptable', ts: null });
-      expect(row(ids.extraField)).toMatchObject({ status: 'undecryptable' });
+      // A key the protocol does not name is ignored (PROTOCOL.md §11), not junk: the envelope is its four fields.
+      expect(row(ids.extraField)).toMatchObject({ status: 'ok', ts: good.ts });
+      expect(Object.keys(JSON.parse(row(ids.extraField)?.envelope ?? '{}')).sort()).toEqual([
+        'c',
+        'id',
+        'n',
+        'v',
+      ]);
       expect(rows.size).toBe(9);
-      expect(result.newOkIds).toEqual([bySeq.get(ids.ok)]);
+      expect(result.newOkIds).toEqual([bySeq.get(ids.ok), bySeq.get(ids.extraField)]);
       expect(h.store.calls).toContain('pruneUndecryptable');
       // Stored text is the envelope without `seq`.
       expect(Object.keys(JSON.parse(row(ids.ok)?.envelope ?? '{}')).sort()).toEqual([

@@ -1239,9 +1239,12 @@ under Rotation.
    the response.
 2. **Pull**: `GET …?since=cursor&limit=min(max_page, 1000)` while `more`,
    within the cycle's budget (below). Apply the epoch rule **before**
-   committing the page. For each envelope: take off the server's own fields,
-   `seq` and `received_at` (kept for the row; an unusable R is none), then
-   check its structure and `v` with
+   committing the page. For each envelope: keep the server's own fields,
+   `seq` and `received_at`, for the row (an unusable R is none), take the
+   envelope as the entry's `id`, `v`, `n` and `c` alone, ignoring every other
+   key (PROTOCOL.md §11: a client ignores response fields it does not know; the
+   builds before `received_at` failed to, and junked every envelope once the
+   server added it, "Migrations"), then check its structure and `v` with
    `envelopeShape` from `core/envelope.ts`, which accepts any positive
    integer `v` (not ok → `undecryptable`: junk a conforming server never
    returns; ok with `v ≠ 1` → `unsupported_envelope`, kept per protocol §10);
