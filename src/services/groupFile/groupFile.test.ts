@@ -7,6 +7,7 @@ import {
   deriveLocal,
   deriveServer,
   encodeInvite,
+  envelopeShape,
   makeInvite,
   newId,
   seal,
@@ -31,6 +32,7 @@ import {
   GROUP_FILE_MIME,
   GROUP_FILE_UTI,
   parseGroupFile,
+  provisionalReceived,
   type GroupFileV1,
 } from './groupFile';
 
@@ -305,6 +307,63 @@ describe.each(STORE_KINDS)('group file on the %s store', (kind) => {
       outcome: 'invalid',
       problem: 'checksum',
     });
+  });
+
+  it('carries each R beside the envelopes, never in one, and an importer takes them until its server reports its own', async () => {
+    const w = await setup(kind);
+    const a = await w.device('A');
+    const { localId } = await trip(a);
+    expectSynced(await sync(a, localId));
+    const { text, file } = await exported(a, localId);
+    const onA = new Map((await a.store.dump(localId)).map((r) => [r.id, r.receivedAt]));
+    expect(Object.keys(file.received ?? {}).sort()).toEqual(file.envelopes.map((e) => e.id).sort());
+    for (const e of file.envelopes) expect(file.received?.[e.id]).toBe(onA.get(e.id));
+    // What an importer from before R checks: each envelope is exactly {id, v, n, c}.
+    for (const e of file.envelopes) expect(envelopeShape(e).ok).toBe(true);
+
+    await w.clock.advance(60_000);
+    const c = await w.device('C');
+    await c.services.groups.importGroupFile(text);
+    const imported = await c.store.dump(localId);
+    expect(imported.map((r) => [r.acked, r.receivedAt])).toEqual(
+      imported.map((r) => [false, onA.get(r.id)]),
+    );
+    // C's server reports its own R on the next push (a duplicate reports the stored value) and replaces them.
+    const secret = await secretOn(a, localId);
+    w.server().wipe(deriveServer(secret, SERVER).groupId);
+    await w.clock.advance(60_000);
+    expectSynced(await sync(c, localId));
+    const arrivals = w.server().receivedAt(deriveServer(secret, SERVER).groupId);
+    for (const row of await c.store.dump(localId)) {
+      expect(row.receivedAt).toBe(arrivals.get(row.id));
+      expect(row.receivedAt).toBeGreaterThan(onA.get(row.id) as number);
+    }
+  });
+
+  it('takes only usable R values, none later than a day past this clock, and none for a file without the map', () => {
+    const now = 1_760_000_000_000;
+    const day = 24 * 60 * 60 * 1000;
+    // As JSON.parse reads a file: `__proto__` is an ordinary key there.
+    const received = JSON.parse(
+      `{"a":${now},"b":${now + day},"c":${now + day + 1},"d":0.5,"e":"x","__proto__":${now}}`,
+    ) as Record<string, unknown>;
+    expect([...provisionalReceived(received, now)]).toEqual([
+      ['a', now],
+      ['b', now + day],
+      ['__proto__', now],
+    ]);
+    expect(provisionalReceived(undefined, now).size).toBe(0);
+    // A map that is not an object is no map: the file still imports.
+    const parsed = parseGroupFile(
+      JSON.stringify({
+        format: GROUP_FILE_FORMAT,
+        v: 1,
+        invite: 'x',
+        envelopes: [],
+        received: [1],
+      }),
+    );
+    expect(parsed.ok && parsed.file.received).toBeUndefined();
   });
 
   it('picks a file through the file interface; a cancelled pick is null', async () => {

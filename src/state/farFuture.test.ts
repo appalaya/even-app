@@ -364,6 +364,35 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect((await state(t.h, t.g1)).state.name).toBe('Banff 2026');
   });
 
+  it("a group-file round trip keeps them held: the importer takes the file's R until its own server reports one", async () => {
+    const t = await trio(await setup(kind));
+    await farWrite(t, { type: 'group.archived' }, { devs: deviceIds(t, 2) });
+    await farWrite(t, { type: 'group.renamed', name: 'Pwned' }, { devs: deviceIds(t, 2) });
+    await g(t.a).exportGroupFile(t.g1);
+    const text = t.a.files.shared.at(-1)?.contents ?? '';
+    const expected = (await state(t.a, t.g1)).state;
+    expect([expected.archived, expected.name]).toEqual([false, 'Banff 2026']);
+
+    // A phone that never synced this group: the file's R alone holds the far writes.
+    const c = await t.w.device('C');
+    expect(await g(c).importGroupFile(text)).toMatchObject({ outcome: 'imported', created: true });
+    const onC = (await state(c, t.g1)).state;
+    expect([onC.archived, onC.name]).toEqual([false, 'Banff 2026']);
+    expect(onC.activity).toEqual(expected.activity);
+    expectSynced(await sync(c, t.g1));
+    expect((await state(c, t.g1)).state).toMatchObject({ archived: false, name: 'Banff 2026' });
+
+    // The same file without its R map (an exporter from before R): until it syncs, the importer sees them at their
+    // claim, as every phone did before the rule.
+    const bare = JSON.parse(text) as Record<string, unknown>;
+    delete bare.received;
+    const e = await t.w.device('E');
+    await g(e).importGroupFile(JSON.stringify(bare));
+    expect((await state(e, t.g1)).state).toMatchObject({ archived: true, name: 'Pwned' });
+    expectSynced(await sync(e, t.g1));
+    expect((await state(e, t.g1)).state).toMatchObject({ archived: false, name: 'Banff 2026' });
+  });
+
   // ----- Regenerating the invite -----
 
   it('rotation leaves the group-level toggles behind and re-states the name and archive state at its own clock', async () => {

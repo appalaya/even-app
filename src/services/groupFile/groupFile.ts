@@ -1,14 +1,18 @@
 /**
  * The group file (design.md "Group file"): not a transport, two functions.
  *
- * - `exportGroupFile` writes `{ format: "even-group", v: 1, invite, envelopes }` and hands it to the share sheet.
- *   `invite` is the invite code (base64url, checksummed), so the file carries the secret next to the ciphertext: it
- *   is exactly as sensitive as the invite. It is called a group file, never "encrypted export".
+ * - `exportGroupFile` writes `{ format: "even-group", v: 1, invite, envelopes, received }` and hands it to the share
+ *   sheet. `invite` is the invite code (base64url, checksummed), so the file carries the secret next to the
+ *   ciphertext: it is exactly as sensitive as the invite. It is called a group file, never "encrypted export".
+ *   `received` (optional) maps envelope ids to the R the exporter's server reported for them; it sits beside the
+ *   envelopes, never inside one, since an older importer's `envelopeShape` refuses an envelope with any other key.
  * - `importGroupFile` works for groups this phone does not have yet: verifies the invite checksum, stores the secret
  *   if new, insert-or-ignores every envelope with `origin = 'remote'` (re-encrypting readable ones for the current
- *   server's group id when the file's server differs, dropping the unreadable), and sets `acked = 0` on all of the
- *   group's events so the server copy is fully restored on the next sync. A group that is locally `closed` or
- *   `hidden` (rotated away) is refused unless the caller passes `force` after the user confirms reviving it.
+ *   server's group id when the file's server differs, dropping the unreadable), with the file's `received` value as a
+ *   provisional R (design.md "Group file"), and sets `acked = 0` on all of the group's events so the server copy is
+ *   fully restored on the next sync, whose push responses then report this server's own R for every row. A group that
+ *   is locally `closed` or `hidden` (rotated away) is refused unless the caller passes `force` after the user confirms
+ *   reviving it.
  *
  * Every re-encryption is core's byte-exact `resealEnvelope`, so a body this client cannot read crosses bit for bit.
  * No decrypted content is written anywhere; the only plaintext derived is the name/currency cache.
@@ -21,6 +25,7 @@ import {
   envelopeShape,
   isCurrency,
   isGroupName,
+  isReceivedAt,
   LIMITS,
   makeInvite,
   open,
@@ -60,6 +65,11 @@ export interface GroupFileV1 {
   /** The invite code (what "Copy code" gives): server, secret, checksum, name, currency. */
   invite: string;
   envelopes: FileEnvelope[];
+  /**
+   * Optional: the R (Unix ms) the exporter's server reported for an envelope, by envelope id, for those it had one
+   * for. An importer takes it as a provisional R until its own server reports one. Never inside an envelope.
+   */
+  received?: Record<string, number>;
 }
 
 export class GroupFileError extends Error {
@@ -104,6 +114,8 @@ export async function buildGroupFile(
   const invite = encodeInvite(makeInvite(secret, row.serverUrl, extras));
 
   const envelopes: FileEnvelope[] = [];
+  const received: Record<string, number> = {};
+  let anyReceived = false;
   for (const stored of await deps.store.listEnvelopes(localId)) {
     // Undecryptable rows cannot be read by anyone holding this secret; junk is not an envelope at all.
     if (stored.status === 'undecryptable') continue;
@@ -116,12 +128,23 @@ export async function buildGroupFile(
     if (!envelopeShape(value).ok) continue;
     const { id, v, n, c } = value as FileEnvelope;
     envelopes.push({ id, v, n, c });
+    if (stored.receivedAt !== null) {
+      // A data property even for an id like `__proto__`: plain assignment would set the prototype instead.
+      Object.defineProperty(received, id, {
+        value: stored.receivedAt,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      anyReceived = true;
+    }
   }
   const file: GroupFileV1 = {
     format: GROUP_FILE_FORMAT,
     v: GROUP_FILE_VERSION,
     invite,
     envelopes,
+    ...(anyReceived ? { received } : {}),
   };
   return {
     fileName: `${fileBaseName(row.nameCache ?? '')}.${GROUP_FILE_EXTENSION}`,
@@ -211,15 +234,32 @@ export function parseGroupFile(
   if (typeof value.invite !== 'string' || !Array.isArray(value.envelopes)) {
     return { ok: false, problem: 'format' };
   }
-  return {
-    ok: true,
-    file: {
-      format: GROUP_FILE_FORMAT,
-      v: GROUP_FILE_VERSION,
-      invite: value.invite,
-      envelopes: value.envelopes as FileEnvelope[],
-    },
+  const file: GroupFileV1 = {
+    format: GROUP_FILE_FORMAT,
+    v: GROUP_FILE_VERSION,
+    invite: value.invite,
+    envelopes: value.envelopes as FileEnvelope[],
   };
+  // Optional and additive: anything but an object there is read as no map at all, never as a bad file.
+  if (isRecord(value.received)) file.received = value.received as Record<string, number>;
+  return { ok: true, file };
+}
+
+/**
+ * The file's `received` map as provisional R values, by envelope id: only usable ones (core `isReceivedAt`), and none
+ * later than a day past this phone's clock, since no server can have stored an envelope in the future. A hostile file
+ * could otherwise claim a late R for its own far writes and release them until the next sync replaces it.
+ */
+export function provisionalReceived(
+  received: Record<string, unknown> | undefined,
+  nowMs: number,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (received === undefined) return out;
+  for (const [id, value] of Object.entries(received)) {
+    if (isReceivedAt(value) && value <= nowMs + LIMITS.clockAbsorbWindowMs) out.set(id, value);
+  }
+  return out;
 }
 
 function problemOf(code: InviteErrorCode): ImportProblem {
@@ -296,6 +336,7 @@ export async function importGroupFile(
   }
   const targetServer = existing?.serverUrl ?? fileServer;
   const reencrypt = targetServer !== fileServer;
+  const received = provisionalReceived(parsed.file.received, deps.now());
   const fileGroupId = deriveServer(secret, fileServer).groupId;
   const targetGroupId = deriveServer(secret, targetServer).groupId;
 
@@ -327,6 +368,7 @@ export async function importGroupFile(
         ts: null,
         envelope: JSON.stringify({ id, v, n, c }),
         status: 'unsupported_envelope',
+        receivedAt: received.get(id) ?? null,
       });
       continue;
     }
@@ -351,6 +393,7 @@ export async function importGroupFile(
         })
       : envelope;
     seen.add(id);
+    const receivedAt = received.get(id);
     rows.push({
       id,
       origin: 'remote',
@@ -359,9 +402,10 @@ export async function importGroupFile(
       ts: event?.ts ?? plausibleTs(body),
       envelope: JSON.stringify(stored),
       status,
+      receivedAt: receivedAt ?? null,
     });
     if (event?.type === 'group.created' || event?.type === 'group.renamed') {
-      naming.push({ id, event });
+      naming.push(receivedAt === undefined ? { id, event } : { id, event, receivedAt });
     }
     if (event?.type === 'group.closed' && event.to !== localId) closedInFile = true;
   }
@@ -406,7 +450,9 @@ export async function importGroupFile(
       await tx.setGroupState(localId, finalState);
     }
     const inserted = rows.length === 0 ? [] : (await tx.insertEvents(localId, rows)).inserted;
-    await tx.resetAcked(localId);
+    // Every row is pushed again, and each push response reports this server's R for it; until then the R this phone
+    // already had (same server, same epoch) and the file's provisional ones stay.
+    await tx.resetAcked(localId, { keepReceived: true });
     return inserted;
   });
 
