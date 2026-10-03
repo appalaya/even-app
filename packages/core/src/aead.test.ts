@@ -282,6 +282,21 @@ describe('setAead', () => {
     }
   });
 
+  it('seal and resealEnvelope refuse an implementation whose output is not the padded plaintext plus a 16-byte tag', () => {
+    const sealed = seal({ key, groupId, body });
+    const changes = [
+      (s: Uint8Array) => s.subarray(0, s.length - 1),
+      (s: Uint8Array) => Uint8Array.of(...s, 0),
+      () => new Uint8Array(0),
+    ];
+    for (const change of changes) {
+      setAead({ ...nobleAead, name: 'odd-length', seal: (k, n, a, p) => change(nobleAead.seal(k, n, a, p)) });
+      const message = 'aead: the sealed length is not the padded length plus the tag';
+      expect(() => seal({ key, groupId, body })).toThrow(message);
+      expect(() => resealEnvelope({ key, groupId, newKey: key, newGroupId: groupId, envelope: sealed })).toThrow(message);
+    }
+  });
+
   it('nobleAead refuses a wrong-size key or nonce on seal, and answers null on open', () => {
     const k = new Uint8Array(32);
     const n = new Uint8Array(24);

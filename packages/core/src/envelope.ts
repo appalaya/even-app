@@ -102,6 +102,10 @@ function sealBytes(key: Uint8Array, groupId: string, id: string, plain: Uint8Arr
   const v = PROTOCOL.version;
   const nonce = randomBytes(LIMITS.nonceLength);
   const ciphertext = aead().seal(key, nonce, aadFor(groupId, v, id), padded);
+  // Whatever implementation is installed, an envelope leaves here only as padded plaintext plus a 16-byte tag.
+  if (!(ciphertext instanceof Uint8Array) || ciphertext.length !== padded.length + LIMITS.tagLength) {
+    throw new Error('aead: the sealed length is not the padded length plus the tag');
+  }
   return { id, v, n: b64urlEncode(nonce), c: b64urlEncode(ciphertext) };
 }
 
