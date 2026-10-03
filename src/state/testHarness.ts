@@ -24,6 +24,8 @@ export const OTHER_SERVER = 'https://other.test';
 
 export interface Device {
   name: string;
+  /** How far this phone's clock runs ahead of the world's (the servers'); a test may change it ("fixing the date"). */
+  clock: { offsetMs: number };
   store: TestStore;
   secrets: MemorySecrets;
   files: MemoryFileIO;
@@ -38,7 +40,7 @@ export interface World {
   clock: FakeClock;
   /** The fake server at `url`, created on first use. */
   server(url?: string): FakeServer;
-  device(name?: string): Promise<Device>;
+  device(name?: string, options?: { clockOffsetMs?: number }): Promise<Device>;
   /** The same device after an app restart: new services over the same store and secrets. */
   restart(d: Device): Promise<Device>;
   /**
@@ -69,6 +71,7 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
     store: TestStore,
     secrets: MemorySecrets,
     files: MemoryFileIO,
+    skew: { offsetMs: number } = { offsetMs: 0 },
   ): Promise<Device> {
     const events: SyncEvent[] = [];
     const logs: string[] = [];
@@ -93,7 +96,7 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
       files,
       notifications: permission,
       transportFor: (url) => server(url).transport(),
-      now: clock.now,
+      now: () => clock.now() + skew.offsetMs,
       sleep: clock.sleep,
       schedule: clock.schedule,
       log: (message, detail) =>
@@ -102,26 +105,41 @@ export async function createWorld(kind: StoreKind, start?: number): Promise<Worl
     });
     services.engine.subscribe((event) => events.push(event));
     await services.idle();
-    const created: Device = { name, store, secrets, files, services, events, logs, notifications };
+    const created: Device = {
+      name,
+      clock: skew,
+      store,
+      secrets,
+      files,
+      services,
+      events,
+      logs,
+      notifications,
+    };
     devices.push(created);
     return created;
   }
 
-  async function device(name = `device${devices.length + 1}`): Promise<Device> {
-    return open(name, await openTestStore(kind), createMemorySecrets(), createMemoryFileIO());
+  async function device(
+    name = `device${devices.length + 1}`,
+    options: { clockOffsetMs?: number } = {},
+  ): Promise<Device> {
+    return open(name, await openTestStore(kind), createMemorySecrets(), createMemoryFileIO(), {
+      offsetMs: options.clockOffsetMs ?? 0,
+    });
   }
 
   async function restart(d: Device): Promise<Device> {
     d.services.dispose();
     devices.splice(devices.indexOf(d), 1);
-    return open(d.name, d.store, d.secrets, d.files);
+    return open(d.name, d.store, d.secrets, d.files, d.clock);
   }
 
   async function reinstall(d: Device): Promise<Device> {
     d.services.dispose();
     devices.splice(devices.indexOf(d), 1);
     await d.store.close();
-    return open(d.name, await openTestStore(kind), d.secrets, createMemoryFileIO());
+    return open(d.name, await openTestStore(kind), d.secrets, createMemoryFileIO(), d.clock);
   }
 
   return {

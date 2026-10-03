@@ -18,7 +18,7 @@
  * group row, and `insertEvents`, reject with `group_not_found` when the row is missing (for example Leave ran
  * mid-sync), which also rolls back the surrounding `transaction`.
  */
-import type { Envelope } from '@even/core';
+import type { Envelope, OwnReceipt } from '@even/core';
 
 // ---------- Column enums ----------
 
@@ -156,13 +156,11 @@ export type StoredEnvelopeRow = Pick<
 >;
 
 /**
- * This phone's latest own event a server has given an R: its claimed `ts` and that R (`Store.latestOwnReceipt`). The
- * write gate compares them to tell whether this phone's clock is more than a day ahead of the server's.
+ * This phone's latest own event a server has given an R: its claimed `ts` and that R (`Store.latestOwnReceipt`), core's
+ * `OwnReceipt`. The write gate (core `aheadOfServer`) compares them to tell whether this phone's clock is more than a
+ * day ahead of the server's.
  */
-export interface OwnReceipt {
-  ts: number;
-  receivedAt: number;
-}
+export type { OwnReceipt };
 
 /** Result of `insertEvents`. */
 export interface InsertEventsResult {

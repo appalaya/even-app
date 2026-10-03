@@ -20,7 +20,9 @@ import {
 } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { saveErrorMessage } from '../features/addExpense/labels';
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
+import { isStateError } from './errors';
 import type { GroupService } from './groups';
 import {
   body,
@@ -391,6 +393,62 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect((await state(e, t.g1)).state).toMatchObject({ archived: true, name: 'Pwned' });
     expectSynced(await sync(e, t.g1));
     expect((await state(e, t.g1)).state).toMatchObject({ archived: false, name: 'Banff 2026' });
+  });
+
+  it('a phone 3 days ahead gets "Check your phone\'s date" once a push shows it; fixing the date clears it', async () => {
+    const w = await setup(kind);
+    const day = 24 * 60 * 60 * 1000;
+    const a = await w.device('A');
+    const f = await w.device('F', { clockOffsetMs: 3 * day });
+    const { localId: g1, memberId: maya } = await g(a).createGroup({
+      name: 'Banff 2026',
+      currency: 'CAD',
+      myName: 'Maya',
+      people: ['Nathan'],
+      serverUrl: SERVER,
+    });
+    expectSynced(await sync(a, g1));
+    await g(f).joinInvite((await g(a).inviteFor(g1)).code);
+    const nathan = memberId((await state(f, g1)).state, 'Nathan');
+    // Nothing tells this phone yet that its clock is off: its first write goes out, stamped three days ahead.
+    await g(f).claimMember(g1, nathan);
+    expectSynced(await sync(f, g1));
+    const claim = (await f.store.dump(g1)).find((r) => r.origin === 'local');
+    expect((claim?.ts ?? 0) - (claim?.receivedAt ?? 0)).toBeGreaterThan(day);
+    // Held everywhere, this phone included, like any claim more than a day past the latest R.
+    expect((await state(f, g1)).state.members.get(nathan)?.devices).toEqual([]);
+
+    // From now on every write is refused with the existing copy, and so is creating a group.
+    const dinner = expense(nathan, 'Dinner', [maya, nathan]);
+    let refused: unknown = null;
+    try {
+      await g(f).addExpense(g1, dinner);
+    } catch (error) {
+      refused = error;
+    }
+    expect(isStateError(refused, 'clock')).toBe(true);
+    expect(saveErrorMessage(refused)).toBe("Check your phone's date.");
+    let created: unknown = null;
+    try {
+      await g(f).createGroup({
+        name: 'Other',
+        currency: 'CAD',
+        myName: 'Nathan',
+        serverUrl: SERVER,
+      });
+    } catch (error) {
+      created = error;
+    }
+    expect(isStateError(created, 'clock')).toBe(true);
+    // A phone whose clock is right writes on.
+    await g(a).addExpense(g1, expense(maya, 'Gas', [maya, nathan]));
+
+    // The date fixed: writes go through, and the next push measures again.
+    f.clock.offsetMs = 0;
+    const id = await g(f).addExpense(g1, dinner);
+    expectSynced(await sync(f, g1));
+    expectSynced(await sync(a, g1));
+    expect((await state(a, g1)).state.expenses.has(id)).toBe(true);
   });
 
   // ----- Regenerating the invite -----

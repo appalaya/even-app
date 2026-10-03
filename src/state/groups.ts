@@ -6,8 +6,10 @@
  * 1. per group, one write at a time, so each event's `ts` sees the previous one;
  * 2. the permission and uniqueness rules are checked against the current derived state (honest clients enforce
  *    them; the reducer cannot);
- * 3. `ts` from core `writeTs(now, log, event)` (`nextTs` behind the write gate), and the body must pass `parseEvent`
- *    before it is sealed, so this device never produces an event that fails validation on another phone;
+ * 3. `ts` from core `writeTs(now, log, event, own)` (`nextTs` behind the write gate; `own` is this phone's last push
+ *    as a server stamped it, so the gate refuses while the clock runs more than a day ahead of the server's), and the
+ *    body must pass `parseEvent` before it is sealed, so this device never produces an event that fails validation on
+ *    another phone;
  * 4. the envelope is sealed for the `server_url` read inside the same transaction as its insert (origin `local`,
  *    unacked), so no write can land sealed for an old server's group id;
  * 5. the group's derived state is invalidated and a `local_write` sync is requested.
@@ -33,6 +35,7 @@ import {
   deriveLocal,
   deriveServer,
   encodeInvite,
+  aheadOfServer,
   hasBidiControl,
   holdBackHorizon,
   inviteLink,
@@ -56,6 +59,7 @@ import {
   type Category,
   type Event,
   type EventPayload,
+  type OwnReceipt,
   type Expense,
   type ExpenseChanges,
   type GroupState,
@@ -461,7 +465,10 @@ export class GroupService {
     }
     const serverUrl = this.canonical(input.serverUrl ?? PROTOCOL.defaultServer);
     const now = this.now();
-    if (!isClockSane(now)) throw new StateError('clock', "check your phone's date");
+    const own = await this.store.latestOwnReceipt();
+    if (!isClockSane(now) || aheadOfServer(now, own)) {
+      throw new StateError('clock', "check your phone's date");
+    }
 
     const secret = newSecret();
     const { localId, encryptionKey: key } = deriveLocal(secret);
@@ -487,7 +494,7 @@ export class GroupService {
         by: memberId,
       })),
     ];
-    const entries = this.buildEvents(now, [], drafts, memberId);
+    const entries = this.buildEvents(now, [], drafts, memberId, own);
     const rows = this.sealRows(entries, key, deriveServer(secret, serverUrl).groupId);
 
     await this.secrets.setSecret(localId, secret, serverUrl);
@@ -1082,7 +1089,10 @@ export class GroupService {
       const oldSecret = await this.secretOf(localId);
       const oldKey = deriveLocal(oldSecret).encryptionKey;
       const now = this.now();
-      if (!isClockSane(now)) throw new StateError('clock', "check your phone's date");
+      const own = await this.store.latestOwnReceipt();
+      if (!isClockSane(now) || aheadOfServer(now, own)) {
+        throw new StateError('clock', "check your phone's date");
+      }
 
       // 2. A new secret: new local id, new key.
       const secret = newSecret();
@@ -1186,7 +1196,7 @@ export class GroupService {
           if (removed !== undefined && state.members.get(removed)?.archived !== true) {
             marks.push({ payload: { type: 'member.archived', id: removed } });
           }
-          const markEntries = this.buildEvents(now, newLog, marks, me);
+          const markEntries = this.buildEvents(now, newLog, marks, me, own);
           await tx.insertEvents(newLocalId, this.sealRows(markEntries, newKey, newGroupId));
 
           // 6. The closure of the old group (pushed after the new group; see the header).
@@ -1195,6 +1205,7 @@ export class GroupService {
             oldLog,
             [{ payload: { type: 'group.closed', reason: 'rotated', to: newLocalId } }],
             me,
+            own,
           );
           await tx.insertEvents(localId, this.sealRows(closure, oldKey, oldGroupId));
         });
@@ -1834,15 +1845,18 @@ export class GroupService {
   }
 
   /**
-   * Events for `drafts`, in order, each with `ts = writeTs(now, log so far, event)`, validated by `parseEvent`. A
-   * write that holds in either order (a delete, a member's archive, done mark or claim) is not refused for a target a
-   * far-future event pins at the top of the range: it takes the group clock's `ts` (design.md "Ordering").
+   * Events for `drafts`, in order, each with `ts = writeTs(now, log so far, event, own)`, validated by `parseEvent`.
+   * Refused ("check your phone's date") while the clock is outside the validator's range or `own`, this phone's last
+   * push, shows it more than a day ahead of the server. A write that holds in either order (a delete, a member's
+   * archive, done mark or claim) is not refused for a target a far-future event with no R pins at the top of the
+   * range: it takes the group clock's `ts` (design.md "Ordering").
    */
   private buildEvents(
     now: number,
     log: readonly LogEntry[],
     drafts: readonly Draft[],
     by: string | null,
+    own: OwnReceipt | null,
   ): LogEntry[] {
     const working: LogEntry[] = [...log];
     const out: LogEntry[] = [];
@@ -1858,7 +1872,7 @@ export class GroupService {
         dev: this.deviceId,
         ...draft.payload,
       } as Event;
-      const ts = writeTs(now, working, provisional);
+      const ts = writeTs(now, working, provisional, own);
       if (ts === null) throw new StateError('clock', "check your phone's date");
       const event = parseEvent({ ...provisional, ts });
       if (event === null) {
@@ -1947,7 +1961,8 @@ export class GroupService {
         return [];
       }
       const log = await this.groupState.entries(localId);
-      const entries = this.buildEvents(this.now(), log, drafts, context.me);
+      const own = await this.store.latestOwnReceipt();
+      const entries = this.buildEvents(this.now(), log, drafts, context.me, own);
       const secret = await this.secretOf(localId);
       const key = deriveLocal(secret).encryptionKey;
       await this.store.transaction(async (tx) => {
