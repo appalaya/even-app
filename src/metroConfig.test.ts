@@ -77,6 +77,35 @@ describe('metro.config.js blocks the dev seed and routes from production bundles
     expect(blocked(development, '.dev/sync-server/db.sqlite')).toBe(true);
   });
 
+  it('production blocks the native-crypto harness and its route', () => {
+    expect(DEV_ONLY).toContain('src/dev/cryptoHarness.ts');
+    expect(DEV_ONLY).toContain('src/app/dev/crypto.tsx');
+    expect(blocked(production, 'src/dev/cryptoHarness.ts')).toBe(true);
+    expect(blocked(production, 'src/app/dev/crypto.tsx')).toBe(true);
+  });
+
+  it('only development files and tests import @even/core/testing (the vectors and the test suites)', () => {
+    const shipped = [
+      ...readdirSync(join(ROOT, 'src'), { recursive: true, encoding: 'utf8' }).map((n) =>
+        join('src', n),
+      ),
+      ...readdirSync(join(ROOT, 'modules'), { recursive: true, encoding: 'utf8' }).map((n) =>
+        join('modules', n),
+      ),
+      ...readdirSync(join(ROOT, 'packages/core/src'), { recursive: true, encoding: 'utf8' })
+        .filter((n) => !n.startsWith('testing'))
+        .map((n) => join('packages/core/src', n)),
+    ].filter(
+      (file) => /\.(ts|tsx)$/.test(file) && !/\.test\.ts$/.test(file) && !DEV_ONLY.includes(file),
+    );
+    expect(shipped).toContain('src/services/crypto/nativeAead.ts');
+    expect(shipped).toContain('packages/core/src/envelope.ts');
+    for (const file of shipped) {
+      const text = readFileSync(join(ROOT, file), 'utf8');
+      expect(/['"](?:@even\/core\/testing|\.\/testing\/[^'"]*)['"]/.test(text), file).toBe(false);
+    }
+  });
+
   it('nothing outside the two folders imports from them, so blocking them breaks no import', () => {
     const outside = readdirSync(join(ROOT, 'src'), { recursive: true, encoding: 'utf8' })
       .filter((name) => /\.(ts|tsx)$/.test(name) && !/\.test\.ts$/.test(name))

@@ -50,6 +50,11 @@ jobs:
       - name: Landing page
         run: node web/scripts/check.mjs
 
+      # The iOS and Android production bundles (what release builds embed) hold none of the development
+      # crypto harness or its test vectors (scripts/check-release-bundle.mjs).
+      - name: Release bundles leave out the crypto harness and vectors
+        run: node scripts/check-release-bundle.mjs
+
       - name: TestFlight What to Test is under 1 KB
         run: |
           bytes=$(wc -c < TestFlight/WhatToTest.en-US.txt | tr -d ' ')
