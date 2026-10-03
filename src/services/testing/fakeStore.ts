@@ -9,7 +9,7 @@
  *   `ok` has a `ts`), all or nothing, and the group row must exist.
  * - the outbox is `acked = 0 AND push_state = 'pending'`, ordered by `ts` (null last) then `id`.
  * - `resetAcked` keeps rejected rows rejected unless `clearRejected`, and clears `receivedAt` unless `keepReceived`;
- *   `setServer` clears it too. `latestOwnReceipt` looks across every group.
+ *   `setServer` clears it too. `latestOwnReceipt` looks across every group on the given server.
  * - `setServer` refuses, changing nothing, a re-encryption that misses a readable row, names another row, repeats
  *   an id, or holds an envelope that is not v1 or carries another id; stored text is the canonical `{id, v, n, c}`.
  * - `listGroups` orders by `createdAt`, then `localId` (the SQL `ORDER BY created_at, local_id`).
@@ -484,16 +484,17 @@ export class FakeStore implements Store {
     return latest;
   }
 
-  async latestOwnReceipt(): Promise<OwnReceipt | null> {
-    this.enter('latestOwnReceipt', []);
+  async latestOwnReceipt(serverUrl: string): Promise<OwnReceipt | null> {
+    this.enter('latestOwnReceipt', [serverUrl]);
     let best: OwnReceipt | null = null;
-    for (const rows of this.state.events.values()) {
+    for (const [localId, rows] of this.state.events) {
+      if (this.state.groups.get(localId)?.serverUrl !== serverUrl) continue;
       for (const row of rows.values()) {
         if (row.origin !== 'local' || row.receivedAt === null || row.ts === null) continue;
         if (
           best === null ||
           row.receivedAt > best.receivedAt ||
-          (row.receivedAt === best.receivedAt && row.ts > best.ts)
+          (row.receivedAt === best.receivedAt && row.ts < best.ts)
         ) {
           best = { ts: row.ts, receivedAt: row.receivedAt };
         }

@@ -103,6 +103,8 @@ export class FakeServer {
   offline = false;
   /** Answer as a server from before `received_at` (PROTOCOL.md §4): none on push responses or pulled envelopes. */
   legacy = false;
+  /** How far this server's clock runs from the clock it was given (negative: behind); its R follows it. */
+  clockSkewMs = 0;
   /** When set, the `received_at` a storing request assigns, instead of the clock's (a hostile server's choice). */
   arrival: ((groupId: string) => unknown) | null = null;
   private gateOpen: Promise<void> | null = null;
@@ -261,7 +263,7 @@ export class FakeServer {
     // One R per request that stores something: the clock, kept strictly above the epoch's last one.
     let arrival: unknown = group.lastArrival;
     if (fresh.length > 0) {
-      const assigned = Math.max(this.clock(), group.lastArrival + 1);
+      const assigned = Math.max(this.clock() + this.clockSkewMs, group.lastArrival + 1);
       group.lastArrival = assigned;
       arrival = this.arrival === null ? assigned : this.arrival(groupId);
     }

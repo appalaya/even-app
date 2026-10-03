@@ -451,6 +451,46 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect((await state(a, g1)).state.expenses.has(id)).toBe(true);
   });
 
+  it("a server whose clock runs 2 days behind gates only its own groups' writes, not another server's", async () => {
+    const w = await setup(kind);
+    const day = 24 * 60 * 60 * 1000;
+    const behind = 'https://behind.test';
+    w.server(behind).clockSkewMs = -2 * day;
+    const d = await w.device('D');
+    const { localId: gA } = await g(d).createGroup({
+      name: 'Self-hosted',
+      currency: 'CAD',
+      myName: 'Maya',
+      serverUrl: behind,
+    });
+    expectSynced(await sync(d, gA));
+    // That server stamped this phone's writes two days before the time it put on them, so every one is held there
+    // (design.md "Ordering": a wrong server clock), and the gate refuses the next.
+    const row = (await d.store.dump(gA)).find((r) => r.origin === 'local');
+    expect((row?.ts ?? 0) - (row?.receivedAt ?? 0)).toBeGreaterThan(day);
+    let refused: unknown = null;
+    try {
+      await g(d).renameGroup(gA, 'Self-hosted!');
+    } catch (error) {
+      refused = error;
+    }
+    expect(isStateError(refused, 'clock')).toBe(true);
+
+    // A group on the public server, whose clock is right: created and written to as usual.
+    const { localId: gB, memberId: meB } = await g(d).createGroup({
+      name: 'Banff 2026',
+      currency: 'CAD',
+      myName: 'Maya',
+      serverUrl: SERVER,
+    });
+    expectSynced(await sync(d, gB));
+    const gas = await g(d).addExpense(gB, expense(meB, 'Gas', [meB]));
+    await g(d).renameGroup(gB, 'Banff trip');
+    expectSynced(await sync(d, gB));
+    const s = (await state(d, gB)).state;
+    expect([s.expenses.has(gas), s.name]).toEqual([true, 'Banff trip']);
+  });
+
   // ----- Regenerating the invite -----
 
   it('rotation leaves the group-level toggles behind and re-states the name and archive state at its own clock', async () => {

@@ -239,7 +239,7 @@ describe('migrate', () => {
       null,
       null,
     ]);
-    expect(await upgraded.latestOwnReceipt()).toBeNull();
+    expect(await upgraded.latestOwnReceipt(group.serverUrl)).toBeNull();
   });
 
   it('v5 sets every group cursor to 0 so the next sync pulls the whole log again; nothing else moves', async () => {

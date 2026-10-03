@@ -841,14 +841,21 @@ author had seen when it wrote, before its own R arrives and after (core
 
 **The write gate.** The app refuses to write, and shows "Check your phone's
 date.", when the device clock is outside the validator's absolute range, or
-when this phone runs more than W ahead of the server: its last push (its own
-latest event with an R, across every group: `Store.latestOwnReceipt`) arrived
-more than W before the time the phone stamped on it, and the clock now reads
-at least that stamp and at most W past it (core `aheadOfServer`). It is a
-local check. The first write after a clock goes wrong is not caught (nothing
-has measured the clock yet) and is held everywhere, this phone included; a
-clock set back since the last push, or a push more than W old by this clock,
-says nothing, and the next push measures again.
+when this phone runs more than W ahead of the group's server: its last push
+there (its own latest event with an R in any group on that `server_url`; of
+the events one request stamped, the earliest stamp, which has not climbed
+past the clock: `Store.latestOwnReceipt`) arrived more than W before the time
+the phone stamped on it, and the clock now reads at least that stamp and at
+most W past it (core `aheadOfServer`). It is a local check, and per server:
+R is one server's clock, so a self-hosted or hostile server whose clock is a
+day behind gates writes only in its own groups (where they would be held
+anyway), never in another server's. A new group is gated on the server it
+will sync through; a rotation on the new group's server, and the old group's
+closure not at all, so moving away from such a server still works. No push to
+a server yet means no gate. The first write after a clock goes wrong is not
+caught (nothing has measured the clock yet) and is held everywhere, this
+phone included; a clock set back since the last push, or a push more than W
+old by this clock, says nothing, and the next push measures again.
 
 The computed `ts` can also reach the top of the range, and only over an event
 with no R: when an event about the target with no R sits at `tsMax − 1`,
@@ -1111,7 +1118,8 @@ CREATE INDEX events_own_received ON events (received_at, ts)
   (`keepReceived`: same server, same epoch) and may add the file's as a
   provisional one ("Group file"). It is never sent to a server: the outbox
   reads `id`, `ts` and `envelope`. The write gate reads this phone's latest own
-  row with one (`latestOwnReceipt`, served by `events_own_received`).
+  row with one on the group's server (`latestOwnReceipt`, served by
+  `events_own_received`).
 - `ts` cached from the body, `name_cache` and `currency_cache` are the only
   decrypted information kept on disk, as stated under Architecture.
   `received_at` is not decrypted: the server knows it already, and every
@@ -2127,7 +2135,7 @@ Copy no board draws:
 - "Check your phone's date.": the write gate's refusal, where each sheet
   shows its save error (Add expense, Group settings, Create). It means one
   thing, that this phone's clock is wrong: outside 2024 to 2099, or more than
-  a day ahead of the server's by its last push ("Ordering").
+  a day ahead of the group's server by its last push there ("Ordering").
 - Android's notification channel, shown by the system (Settings › Apps ›
   Even › Notifications): name "Group activity", description "New expenses
   and payments in your groups."

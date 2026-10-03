@@ -466,7 +466,8 @@ export class GroupService {
     }
     const serverUrl = this.canonical(input.serverUrl ?? PROTOCOL.defaultServer);
     const now = this.now();
-    const own = await this.store.latestOwnReceipt();
+    // The gate reads the server the group will sync through: another server's clock says nothing about this one's.
+    const own = await this.store.latestOwnReceipt(serverUrl);
     if (!isClockSane(now) || aheadOfServer(now, own)) {
       throw new StateError('clock', "check your phone's date");
     }
@@ -1093,7 +1094,10 @@ export class GroupService {
       const oldSecret = await this.secretOf(localId);
       const oldKey = deriveLocal(oldSecret).encryptionKey;
       const now = this.now();
-      const own = await this.store.latestOwnReceipt();
+      const plannedServer = server ?? derived.row.serverUrl;
+      // Gated on the new group's server, where its events go. The old group's closure is not: a rotation away from a
+      // server whose clock is off must still complete.
+      const own = await this.store.latestOwnReceipt(plannedServer);
       if (!isClockSane(now) || aheadOfServer(now, own)) {
         throw new StateError('clock', "check your phone's date");
       }
@@ -1101,7 +1105,6 @@ export class GroupService {
       // 2. A new secret: new local id, new key.
       const secret = newSecret();
       const { localId: newLocalId, encryptionKey: newKey } = deriveLocal(secret);
-      const plannedServer = server ?? derived.row.serverUrl;
       let newServer = plannedServer;
       let carried: { id: string; text: string; event: Event | null; type: string | null }[] = [];
       let carriedGroupId = '';
@@ -1211,7 +1214,7 @@ export class GroupService {
             oldLog,
             [{ payload: { type: 'group.closed', reason: 'rotated', to: newLocalId } }],
             me,
-            own,
+            null,
           );
           await tx.insertEvents(localId, this.sealRows(closure, oldKey, oldGroupId));
         });
@@ -1967,7 +1970,8 @@ export class GroupService {
         return [];
       }
       const log = await this.groupState.entries(localId);
-      const own = await this.store.latestOwnReceipt();
+      // This group's server's view of this phone's clock (a server whose clock is off gates only its own groups).
+      const own = await this.store.latestOwnReceipt(context.row.serverUrl);
       const entries = this.buildEvents(this.now(), log, drafts, context.me, own);
       const secret = await this.secretOf(localId);
       const key = deriveLocal(secret).encryptionKey;

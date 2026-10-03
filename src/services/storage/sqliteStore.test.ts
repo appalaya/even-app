@@ -681,30 +681,43 @@ describe('received_at (design.md "Local storage")', () => {
     expect(await receivedOf(row.id)).toBeNull();
   });
 
-  it("latestOwnReceipt is this phone's latest own row with an R, across groups, by R then ts", async () => {
-    expect(await store.latestOwnReceipt()).toBeNull();
+  it("latestOwnReceipt is this phone's latest own row with an R on one server, across its groups: largest R, then smallest ts", async () => {
+    const server = group.serverUrl;
+    expect(await store.latestOwnReceipt(server)).toBeNull();
     const other = makeGroup();
+    const elsewhere = makeGroup({ serverUrl: OTHER_SERVER });
     await store.upsertGroup(other);
+    await store.upsertGroup(elsewhere);
     const a = localRow(T0 + 1);
     const b = localRow(T0 + 2);
     const c = localRow(T0 + 3);
+    const d = localRow(T0 + 4);
     await store.insertEvents(g, [a, b, pulledRow(1, T0 + 9, { receivedAt: R + 100 })]);
     await store.insertEvents(other.localId, [c]);
-    expect(await store.latestOwnReceipt()).toBeNull(); // no own row has an R; a remote one does not count
+    await store.insertEvents(elsewhere.localId, [d]);
+    expect(await store.latestOwnReceipt(server)).toBeNull(); // no own row has an R; a remote one does not count
     await store.setReceivedAt(g, [
       [a.id, R],
       [b.id, R],
     ]);
-    expect(await store.latestOwnReceipt()).toEqual({ ts: T0 + 2, receivedAt: R });
+    // One request stamped both: the earlier stamp is the clock's at the push (a later one may have climbed past it).
+    expect(await store.latestOwnReceipt(server)).toEqual({ ts: T0 + 1, receivedAt: R });
     await store.setReceivedAt(other.localId, [[c.id, R + 1]]);
-    expect(await store.latestOwnReceipt()).toEqual({ ts: T0 + 3, receivedAt: R + 1 });
+    expect(await store.latestOwnReceipt(server)).toEqual({ ts: T0 + 3, receivedAt: R + 1 });
+    // Another server's receipt, however late, is that server's alone.
+    await store.setReceivedAt(elsewhere.localId, [[d.id, R + 50]]);
+    expect(await store.latestOwnReceipt(server)).toEqual({ ts: T0 + 3, receivedAt: R + 1 });
+    expect(await store.latestOwnReceipt(OTHER_SERVER)).toEqual({ ts: T0 + 4, receivedAt: R + 50 });
+    await rejectsWith(store.latestOwnReceipt('http://not-canonical'), 'invalid_argument');
   });
 
   it('serves latestOwnReceipt from its partial index', async () => {
     const plan = await db.all<{ detail: string }>(
-      `EXPLAIN QUERY PLAN SELECT ts, received_at FROM events
-       WHERE origin = 'local' AND received_at IS NOT NULL AND ts IS NOT NULL
-       ORDER BY received_at DESC, ts DESC LIMIT 1`,
+      `EXPLAIN QUERY PLAN SELECT e.ts AS ts, e.received_at AS received_at
+       FROM events e JOIN groups g ON g.local_id = e.local_id
+       WHERE g.server_url = ? AND e.origin = 'local' AND e.received_at IS NOT NULL AND e.ts IS NOT NULL
+       ORDER BY e.received_at DESC, e.ts ASC LIMIT 1`,
+      [OTHER_SERVER],
     );
     expect(plan.map((p) => p.detail).join('\n')).toMatch(/events_own_received/);
   });

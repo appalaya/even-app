@@ -156,7 +156,7 @@ export type StoredEnvelopeRow = Pick<
 >;
 
 /**
- * This phone's latest own event a server has given an R: its claimed `ts` and that R (`Store.latestOwnReceipt`), core's
+ * This phone's latest own event one server has given an R: its claimed `ts` and that R (`Store.latestOwnReceipt`), core's
  * `OwnReceipt`. The write gate (core `aheadOfServer`) compares them to tell whether this phone's clock is more than a
  * day ahead of the server's.
  */
@@ -363,11 +363,13 @@ export interface Store {
    */
   latestTs(localId: string): Promise<number | null>;
   /**
-   * Across every group: the `origin = 'local'` row with the largest `received_at` (ties: the largest `ts`), as its
-   * `ts` and `received_at`; null when no row of this phone's has one. That is this phone's last push as the server
-   * saw it (served by the `events_own_received` index).
+   * Across the groups whose `server_url` is `serverUrl`: the `origin = 'local'` row with the largest `received_at`
+   * (ties: the smallest `ts`, the stamp least likely to have climbed past the clock), as its `ts` and `received_at`;
+   * null when no row of this phone's there has one. That is
+   * this phone's last push as that server saw it (served by the `events_own_received` index). Per server, since R is
+   * one server's clock: one whose clock is off says nothing about another's.
    */
-  latestOwnReceipt(): Promise<OwnReceipt | null>;
+  latestOwnReceipt(serverUrl: string): Promise<OwnReceipt | null>;
   countByStatus(localId: string): Promise<EventCounts>;
   /**
    * The usage meter's figures: the group's rows that hold a structurally valid envelope (any status, any `v`; not

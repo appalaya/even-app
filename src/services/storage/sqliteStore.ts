@@ -829,11 +829,14 @@ export class SqliteStore implements Store {
     return row?.latest ?? null;
   }
 
-  async latestOwnReceipt(): Promise<OwnReceipt | null> {
+  async latestOwnReceipt(serverUrl: string): Promise<OwnReceipt | null> {
+    checkServerUrl(serverUrl);
     const row = await this.db.get<{ ts: number; received_at: number }>(
-      `SELECT ts, received_at FROM events
-       WHERE origin = 'local' AND received_at IS NOT NULL AND ts IS NOT NULL
-       ORDER BY received_at DESC, ts DESC LIMIT 1`,
+      `SELECT e.ts AS ts, e.received_at AS received_at
+       FROM events e JOIN groups g ON g.local_id = e.local_id
+       WHERE g.server_url = ? AND e.origin = 'local' AND e.received_at IS NOT NULL AND e.ts IS NOT NULL
+       ORDER BY e.received_at DESC, e.ts ASC LIMIT 1`,
+      [serverUrl],
     );
     return row ? { ts: row.ts, receivedAt: row.received_at } : null;
   }

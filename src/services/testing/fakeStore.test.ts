@@ -270,7 +270,7 @@ describe.each(STORE_KINDS)(
           [c, Number.NaN],
         ]);
         expect(await received()).toEqual([R + 1, R + 2, null]);
-        expect(await store.latestOwnReceipt()).toEqual({ ts: 2, receivedAt: R + 2 });
+        expect(await store.latestOwnReceipt(keys.serverUrl)).toEqual({ ts: 2, receivedAt: R + 2 });
         expect((await store.listEnvelopes(L)).map((r) => r.receivedAt)).toEqual([
           R + 1,
           R + 2,
@@ -280,7 +280,7 @@ describe.each(STORE_KINDS)(
         expect(await received()).toEqual([R + 1, R + 2, null]);
         await store.resetAcked(L);
         expect(await received()).toEqual([null, null, null]);
-        expect(await store.latestOwnReceipt()).toBeNull();
+        expect(await store.latestOwnReceipt(keys.serverUrl)).toBeNull();
         await store.setReceivedAt(L, [[a, R]]);
         const readable = await store.listReadable(L);
         await store.setServer(L, keys.serverUrl, readable);
