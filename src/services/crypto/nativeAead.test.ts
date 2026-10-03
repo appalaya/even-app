@@ -4,11 +4,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   aeadStatus,
+  fingerprint,
   installNativeAead,
   nativeAeadFrom,
+  MAX_PADDED_BYTES,
   resetNativeAeadForTests,
+  SELF_TEST_DIGESTS,
   SELF_TEST_VECTOR,
   selfTestAead,
+  selfTestCases,
   type NativeCrypto,
 } from './nativeAead';
 
@@ -237,19 +241,115 @@ describe('selfTestAead', () => {
     expect(selfTestAead(nativeAeadFrom(goodNative()))).toBeNull();
   });
 
-  it('catches an implementation that only fails the random cross-check (a different construction past 512 bytes)', () => {
-    const odd = nativeAeadFrom(
+  /** A stand-in whose seal is @noble's except when `wrong(plaintext length, key)` says so, then one byte differs. */
+  function sealsWrongFor(wrong: (length: number, key: Uint8Array) => boolean) {
+    return nativeAeadFrom(
       goodNative({
         seal: (k, n, a, p, out) => {
           out.set(nobleAead.seal(k, n, a, p));
-          if (p.length > 512) out[600] = (out[600] ?? 0) ^ 1;
+          if (wrong(p.length, k)) out[out.length - 20] = (out[out.length - 20] ?? 0) ^ 1;
           return true;
         },
       }),
     );
-    expect(selfTestAead(odd)).toBe('cross-check');
+  }
+
+  it('catches a seal that differs at only one of 63, 64, 65, 4095, 4096, 4097 bytes', () => {
+    for (const size of [63, 64, 65, 4095, 4096, 4097]) {
+      expect(selfTestAead(sealsWrongFor((length) => length === size))).toBe('sizes');
+    }
+  });
+
+  it('catches a seal that differs only at the largest padded body (8,176 bytes)', () => {
+    expect(selfTestAead(sealsWrongFor((length) => length === MAX_PADDED_BYTES))).toBe('max-size');
+  });
+
+  it('catches a seal that differs only for a size that only the batch has', () => {
+    expect(selfTestAead(sealsWrongFor((length) => length === 1007))).toBe('large-batch');
+  });
+
+  it('catches a seal that differs only for the random 752-byte case', () => {
+    const batchKey = selfTestCases().batch[0]!.key.join();
+    expect(
+      selfTestAead(sealsWrongFor((length, key) => length === 752 && key.join() !== batchKey)),
+    ).toBe('cross-check');
+  });
+
+  it('catches a batch that accepts a forgery late in a large batch', () => {
+    const late = nativeAeadFrom(
+      goodNative({
+        openMany: (k, input, lengths, out, opened) => {
+          const count = packedOpenMany(k, input, lengths, out, opened);
+          if (opened.length > 40 && count >= 0 && opened[42] === 0) {
+            opened[42] = 1; // claims the forged item 42 opened
+            return count + 1;
+          }
+          return count;
+        },
+      }),
+    );
+    expect(selfTestAead(late)).toBe('large-batch');
+  });
+
+  it('catches an open that a key with one byte changed still opens', () => {
+    const lenient = nativeAeadFrom(
+      goodNative({
+        open: (k, n, a, s, out) => {
+          const plain = nobleAead.open(k, n, a, s) ?? nobleAead.open(flip(k, 13), n, a, s);
+          if (plain === null) return false;
+          out.set(plain);
+          return true;
+        },
+      }),
+    );
+    expect(selfTestAead(lenient)).toBe('wrong-key-opened');
+  });
+
+  it('fingerprints the same bytes the same at any offset, and differs for one changed byte', () => {
+    const bytes = Uint8Array.from({ length: 4099 }, (_, i) => (i * 7) & 0xff);
+    const big = new Uint8Array(4105);
+    big.set(bytes, 3);
+    expect(fingerprint(big.subarray(3, 3 + 4099))).toBe(fingerprint(bytes));
+    expect(fingerprint(bytes)).toBe(fingerprintAgain(bytes));
+    expect(fingerprint(flip(bytes, 4098))).not.toBe(fingerprint(bytes));
+    expect(fingerprint(flip(bytes, 0))).not.toBe(fingerprint(bytes));
+  });
+
+  it('has @noble’s fingerprints of every deterministic case', () => {
+    const { sizes, batch } = selfTestCases();
+    const noble = (c: {
+      key: Uint8Array;
+      nonce: Uint8Array;
+      aad: Uint8Array;
+      plaintext: Uint8Array;
+    }) => fingerprintAgain(nobleAead.seal(c.key, c.nonce, c.aad, c.plaintext));
+    expect(sizes.map(noble)).toEqual(SELF_TEST_DIGESTS.sizes);
+    expect(batch.map(noble)).toEqual(SELF_TEST_DIGESTS.batch);
+    expect(batch).toHaveLength(64);
+    expect(Math.max(...batch.map((c) => c.plaintext.length))).toBe(MAX_PADDED_BYTES);
+    expect(new Set(batch.map((c) => c.key.join())).size).toBe(1);
+    expect([...sizes, ...batch].every((c) => c.aad.length === 75)).toBe(true);
   });
 });
+
+/** The module's fingerprint written out again here (FNV-1a over little-endian words, then bytes), not trusted. */
+function fingerprintAgain(bytes: Uint8Array): number {
+  let h = 0x811c9dc5;
+  const whole = bytes.length - (bytes.length % 4);
+  for (let i = 0; i < whole; i += 4) {
+    const word =
+      (bytes[i]! | (bytes[i + 1]! << 8) | (bytes[i + 2]! << 16) | (bytes[i + 3]! << 24)) >>> 0;
+    h = Math.imul(h ^ word, 0x01000193);
+  }
+  for (let i = whole; i < bytes.length; i++) h = Math.imul(h ^ bytes[i]!, 0x01000193);
+  return h >>> 0;
+}
+
+function flip(bytes: Uint8Array, at: number): Uint8Array {
+  const copy = bytes.slice();
+  copy[at] = (copy[at] ?? 0) ^ 1;
+  return copy;
+}
 
 describe('nativeAeadFrom', () => {
   it('answers null, not a throw, for wrong lengths on open, and refuses them on seal', () => {
