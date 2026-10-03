@@ -14,6 +14,7 @@
  * is replaced, never mutated, so identity comparison tells a hook whether anything changed.
  */
 import {
+  creationOf,
   deriveLocal,
   deriveServer,
   formatMinor,
@@ -529,7 +530,8 @@ export class GroupStateStore {
       this.decodeCache.retain(localId, seen, since);
     }
 
-    const created = firstEntry(entries, (e) => e.event.type === 'group.created');
+    // The creation the reducer applies (the first to arrive; a later one is ignored), so the currency agrees with it.
+    const created = creationOf(entries);
     const createdEvent = created?.event.type === 'group.created' ? created.event : null;
     const currency = createdEvent?.currency ?? row.currencyCache;
     const locale = this.locale;

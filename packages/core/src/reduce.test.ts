@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { AVATAR_COLOR_COUNT, LIMITS } from './constants.js';
-import { emptyState, initialsOf, memberColor, reduce, sortLog } from './reduce.js';
+import { creationOf, emptyState, initialsOf, memberColor, reduce, sortLog } from './reduce.js';
 import type { Event, EventBase, EventPayload, Expense, GroupState, LogEntry, Payment } from './types.js';
 
 // ---------- fixtures ----------
@@ -746,7 +746,56 @@ describe('reduce: flags and totals', () => {
 });
 
 describe('reduce: group events', () => {
-  it('group.created: the first in (ts, id) order wins; later ones are ignored', () => {
+  describe('group.created: a group is created once, by the first creation to arrive', () => {
+    const genuine = (r?: number): LogEntry => {
+      const e = created(1);
+      return r === undefined ? e : { ...e, receivedAt: r };
+    };
+    /** A hostile member's second creation, claiming the floor of the range, in another currency. */
+    const backdated = (r?: number): LogEntry => {
+      const e = entry(pad('backdated'), {
+        type: 'group.created',
+        name: 'Pwned',
+        currency: 'EUR',
+        by: NATHAN,
+        ts: LIMITS.tsMin,
+      });
+      return r === undefined ? e : { ...e, receivedAt: r };
+    };
+    const rest = (): LogEntry[] =>
+      [added(2, MAYA, 'Maya'), added(3, JORDAN, 'Jordan'), added(4, NATHAN, 'Nathan'), entry(7, { type: 'expense.added', expense: expense(DINNER) })].map(
+        (e) => ({ ...e, receivedAt: e.event.ts + 1000 }),
+      );
+
+    it('a later one claiming an earlier ts is a duplicate creation, ignored entirely', () => {
+      const log = [genuine(T0 + 1500), ...rest(), backdated(T0 + 3_600_000)];
+      const s = reduce(log);
+      expect([s.name, s.currency, s.flagged]).toEqual(['Banff 2026', 'CAD', []]);
+      expect(s.activity.map((a) => a.eventId)).not.toContain(pad('backdated'));
+      expect(creationOf(log)?.id).toBe(genuine().id);
+      for (let seed = 1; seed <= 10; seed++) expect(canon(reduce(shuffled(log, seed)))).toStrictEqual(canon(s));
+      // Why not first-writer by the fold's order, with rotation copying the winner: the backdated claim sorts first
+      // in (min(ts, R), ts, id), so that rule would hand it the group, and rotation would carry it into the new one.
+      expect(sortLog(log).find((e) => e.event.type === 'group.created')?.id).toBe(pad('backdated'));
+    });
+
+    it('one that has arrived beats one that has not; a held one is no candidate', () => {
+      expect(reduce([genuine(T0 + 1500), ...rest(), backdated()]).currency).toBe('CAD');
+      const far = entry(pad('far-created'), { type: 'group.created', name: 'Far', currency: 'USD', ts: LIMITS.tsMax - 1 });
+      const s = reduce([{ ...far, receivedAt: T0 }, genuine(T0 + 1500), ...rest()]);
+      expect([s.name, s.currency]).toEqual(['Banff 2026', 'CAD']);
+      expect(creationOf([{ ...far, receivedAt: T0 }])).toBeNull();
+      expect(creationOf([])).toBeNull();
+    });
+
+    it('arrival decides, not the claim: on a copy where the duplicate arrived first, it is the creation', () => {
+      // What a move or a wipe can do: every R re-assigned, the backdated claim re-pushed first (design.md "Reducer").
+      const s = reduce([genuine(T0 + 9_000_000), ...rest(), backdated(T0 + 8_000_000)]);
+      expect(s.currency).toBe('EUR');
+    });
+  });
+
+  it('group.created with no R anywhere (a log no server has stamped): the first in fold order wins', () => {
     const late = entry(1, { type: 'group.created', name: 'Late', currency: 'USD', ts: T0 + 500 });
     const early = entry(2, { type: 'group.created', name: 'Early', currency: 'CAD', ts: T0 + 100 });
     const tieLo = entry('A'.padEnd(22, '0'), { type: 'group.created', name: 'TieLo', currency: 'EUR', ts: T0 + 100 });

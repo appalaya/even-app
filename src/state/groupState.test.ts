@@ -255,16 +255,21 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
   it('a group.created in a currency this build does not know: update required, and its amounts never throw', async () => {
     const w = await setup(kind);
     const { b, localId, maya, nathan } = await trip(w);
-    // A hostile member's (or a newer table's) group.created sorts first, so its shape-valid "ZZZ" becomes the group's
-    // currency; formatMinor throws RangeError for it, and a throw in a render takes the Groups list down.
+    // A group created in a shape-valid currency this build's table lacks ("ZZZ": a newer table's, or a hostile
+    // creator's). Here its group.created is the first to arrive at the server, so it is the group's creation
+    // (design.md "Reducer"); formatMinor throws RangeError for its currency, and a throw in a render takes the Groups
+    // list down.
     const at = LIMITS.tsMin;
     const head = { sv: 1, at, by: maya, dev: newId() };
-    const created = await stored(
-      b,
-      localId,
-      { ...head, ts: at, type: 'group.created', name: 'Banff 2026', currency: 'ZZZ' },
-      'ok',
-    );
+    const created = {
+      ...(await stored(
+        b,
+        localId,
+        { ...head, ts: at, type: 'group.created', name: 'Banff 2026', currency: 'ZZZ' },
+        'ok',
+      )),
+      receivedAt: at,
+    };
     const lunch = await stored(
       b,
       localId,

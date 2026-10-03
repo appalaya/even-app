@@ -7,7 +7,7 @@
  * Inputs are never mutated and never aliased into the output (splits and records are copied).
  *
  * Decisions where the spec leaves room (all tested in reduce.test.ts):
- * - An event is "applied" only if it changes state. Ignored events (a later `group.created`, a
+ * - An event is "applied" only if it changes state. Ignored events (any `group.created` but the creation, a
  *   second `member.added` for a real member, a second `expense.added`/`payment.added`, updates to an
  *   unknown or deleted expense, a `group.closed` naming this group) AND no-op events (a duplicate
  *   `member.claimed` for the same device, a rename to the current name, an update whose every field
@@ -46,6 +46,10 @@
  *   (placeholders included when a device claimed them).
  * - `group.archived`/`group.unarchived` toggle `archived`; the latest in (ts, id) order wins. It is
  *   independent of `closed`: neither event reads or changes the other.
+ * - A group is created once (design.md "Reducer"; the past-dated `group.created` finding): the `group.created` that
+ *   takes effect is the first to arrive (`creationOf`: smallest R, one with an R before one without, then
+ *   `compareLog`), so a later one claiming an earlier `ts` cannot take the group's immutable currency. Every other is
+ *   a duplicate creation, ignored entirely: no state, no activity item.
  * - Hold (pre-launch review H2, design.md "Ordering"): an event with an R whose claimed `ts` is more than a day past
  *   the latest R in the log (`holdBackHorizon`, over the de-duplicated log) is skipped like an event that changes
  *   nothing, whatever its type: no state change, no activity item, no history entry, no placeholder, and it names no
@@ -53,7 +57,7 @@
  *   with no R is never held.
  */
 import { AVATAR_COLOR_COUNT } from './constants.js';
-import { compareLog, effectiveTs, holdBackHorizon, isHeldBack } from './hlc.js';
+import { compareLog, effectiveTs, holdBackHorizon, isHeldBack, receivedAtOf } from './hlc.js';
 import {
   CATEGORIES,
   type ActivityItem,
@@ -256,6 +260,8 @@ class Fold {
     private readonly formatter: (minor: number) => string,
     private readonly selfLocalId: string | undefined,
     private readonly firstAdded: ReadonlyMap<string, FirstAdd>,
+    /** The envelope id of the `group.created` that takes effect (`creationOf`); every other is ignored. */
+    private readonly creationId: string | null,
   ) {}
 
   /** Caller-supplied formatting must not be able to abort the fold. */
@@ -322,7 +328,7 @@ class Fold {
     const s = this.state;
     switch (ev.type) {
       case 'group.created': {
-        if (s.created) return null;
+        if (s.created || entry.id !== this.creationId) return null;
         s.created = true;
         s.name = ev.name;
         s.currency = ev.currency;
@@ -681,6 +687,33 @@ export function liveLog(log: readonly LogEntry[]): LogEntry[] {
   return entries.filter((entry) => !isHeldBack(entry, horizon));
 }
 
+/** True if creation `a` arrived before `b`: one with an R first (the other has not arrived), then the smaller R. */
+function arrivedFirst(a: LogEntry, b: LogEntry): boolean {
+  const ra = receivedAtOf(a);
+  const rb = receivedAtOf(b);
+  if ((ra === undefined) !== (rb === undefined)) return ra !== undefined;
+  if (ra !== undefined && rb !== undefined && ra !== rb) return ra < rb;
+  return compareLog(a, b) < 0;
+}
+
+function firstCreation(live: readonly LogEntry[]): LogEntry | null {
+  let first: LogEntry | null = null;
+  for (const entry of live) {
+    if (entry.event.type === 'group.created' && (first === null || arrivedFirst(entry, first))) first = entry;
+  }
+  return first;
+}
+
+/**
+ * The `group.created` that takes effect (design.md "Reducer"): a group is created once, by the first creation to
+ * arrive at the server. Among the ones the fold applies (held ones are not), the smallest R wins; one with an R beats
+ * one without; ties, and a log no server has stamped, go by `compareLog`. A later `group.created` is a duplicate
+ * creation, ignored entirely, whatever `ts` it claims. Null when the log has none. Rotation copies only this one.
+ */
+export function creationOf(log: readonly LogEntry[]): LogEntry | null {
+  return firstCreation(liveLog(log));
+}
+
 /** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
 export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState {
   const entries = liveLog(log);
@@ -688,6 +721,7 @@ export function reduce(log: readonly LogEntry[], options?: ReduceOptions): Group
     options?.format ?? ((n: number) => String(n)),
     options?.selfLocalId,
     firstAdds(entries),
+    firstCreation(entries)?.id ?? null,
   );
   for (const entry of entries) fold.apply(entry);
   return fold.finish();

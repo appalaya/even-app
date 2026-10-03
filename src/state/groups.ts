@@ -15,7 +15,8 @@
  * 5. the group's derived state is invalidated and a `local_write` sync is requested.
  *
  * Decisions where design.md leaves room (each is tested in groups.test.ts):
- * - Rotation copies neither the group's own toggles nor any event the reducer holds (design.md "Rotate invite").
+ * - Rotation copies neither the group's own toggles, nor any event the reducer holds, nor any `group.created` but the
+ *   one that took effect (design.md "Rotate invite").
  * - Rotation writes the new group, its `group.rotated` (then the re-stated name and archive state, and the optional
  *   `member.archived`) AND the old group's `group.closed` in one local transaction, then pushes the new group, then
  *   syncs the old one. On the network the order is design.md's (new group first, closure after); locally a crash can
@@ -31,6 +32,7 @@
  */
 import {
   canonicalOrigin,
+  creationOf,
   decodeInvite,
   deriveLocal,
   deriveServer,
@@ -101,7 +103,6 @@ import {
 import type { DerivedGroup, GroupStateStore } from './groupState';
 import {
   CONTROL_TYPES,
-  firstEntry,
   GROUP_TOGGLE_TYPES,
   isReadable,
   openType,
@@ -1086,6 +1087,9 @@ export class GroupService {
       // new group's copy it would have no R until pushed, and take effect at its claim meanwhile.
       const horizon = holdBackHorizon(oldLog);
       const held = new Set(oldLog.filter((e) => isHeldBack(e, horizon)).map((e) => e.id));
+      // Only the creation that took effect crosses: a duplicate one (a hostile member's, claiming an earlier ts in
+      // another currency) stays behind, so the new group is created once, in the group's own currency.
+      const creation = creationOf(oldLog);
       const oldSecret = await this.secretOf(localId);
       const oldKey = deriveLocal(oldSecret).encryptionKey;
       const now = this.now();
@@ -1114,7 +1118,8 @@ export class GroupService {
           carriedGroupId = newGroupId;
 
           // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events, the group's
-          // name and archive toggles, and every event the reducer holds stay behind. The thread is handed back every
+          // name and archive toggles, every event the reducer holds, and every group.created but the one that took
+          // effect stay behind. The thread is handed back every
           // few hundred, so the screen still draws while a large group is copied.
           // What the derive already opened is not opened again: the copy only re-encrypts it, and the new group's
           // first derive finds the bodies under the new envelopes (`carried`, put once this commits).
@@ -1144,6 +1149,7 @@ export class GroupService {
             }
             const type = opened.type ?? '';
             if (CONTROL_TYPES.has(type) || GROUP_TOGGLE_TYPES.has(type)) continue;
+            if (type === 'group.created' && stored.id !== creation?.id) continue;
             const resealed = resealEnvelope({
               key: oldKey,
               groupId: oldGroupId,
@@ -1185,7 +1191,7 @@ export class GroupService {
           // clock since their toggles stayed behind (the new group's name is otherwise its `group.created` one); and
           // the removal the user picked.
           const marks: Draft[] = [{ payload: { type: 'group.rotated', from: localId } }];
-          const created = firstEntry(newLog, (e) => e.event.type === 'group.created')?.event;
+          const created = creationOf(newLog)?.event;
           const createdName = created?.type === 'group.created' ? created.name : null;
           if (state.created && state.name !== createdName) {
             marks.push({ payload: { type: 'group.renamed', name: state.name } });
