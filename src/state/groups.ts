@@ -13,6 +13,7 @@
  * 5. the group's derived state is invalidated and a `local_write` sync is requested.
  *
  * Decisions where design.md leaves room (each is tested in groups.test.ts):
+ * - Rotation copies neither the group's own toggles nor any event the reducer holds (design.md "Rotate invite").
  * - Rotation writes the new group, its `group.rotated` (then the re-stated name and archive state, and the optional
  *   `member.archived`) AND the old group's `group.closed` in one local transaction, then pushes the new group, then
  *   syncs the old one. On the network the order is design.md's (new group first, closure after); locally a crash can
@@ -33,11 +34,13 @@ import {
   deriveServer,
   encodeInvite,
   hasBidiControl,
+  holdBackHorizon,
   inviteLink,
   isCategory,
   isClockSane,
   isCurrency,
   isGroupName,
+  isHeldBack,
   isIsoDate,
   LIMITS,
   makeInvite,
@@ -1072,6 +1075,10 @@ export class GroupService {
       if (derived.readOnly === 'closed')
         throw new StateError('read_only', 'someone rotated this group first');
       const oldLog = await this.groupState.entries(localId);
+      // What this phone's reducer holds now (a claimed ts more than a day past the latest R) stays behind too: on the
+      // new group's copy it would have no R until pushed, and take effect at its claim meanwhile.
+      const horizon = holdBackHorizon(oldLog);
+      const held = new Set(oldLog.filter((e) => isHeldBack(e, horizon)).map((e) => e.id));
       const oldSecret = await this.secretOf(localId);
       const oldKey = deriveLocal(oldSecret).encryptionKey;
       const now = this.now();
@@ -1096,16 +1103,16 @@ export class GroupService {
           carried = [];
           carriedGroupId = newGroupId;
 
-          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events and the group's
-          // name and archive toggles stay behind. The thread is handed back every few hundred, so the screen still
-          // draws while a large group is copied.
+          // 3. Every readable envelope, same id and bytes, fresh nonce, same origin; control events, the group's
+          // name and archive toggles, and every event the reducer holds stay behind. The thread is handed back every
+          // few hundred, so the screen still draws while a large group is copied.
           // What the derive already opened is not opened again: the copy only re-encrypts it, and the new group's
           // first derive finds the bodies under the new envelopes (`carried`, put once this commits).
           const copied: NewEventRow[] = [];
           const newLog: LogEntry[] = [];
           const pace = pacer(RESEALS_PER_YIELD);
           for (const stored of await tx.listEnvelopes(localId)) {
-            if (!isReadable(stored.status)) continue;
+            if (!isReadable(stored.status) || held.has(stored.id)) continue;
             if (pace()) await yieldToEventLoop();
             const envelope = parseEnvelopeText(stored.envelope);
             if (envelope === null) continue;

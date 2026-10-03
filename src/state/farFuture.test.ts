@@ -394,6 +394,67 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect((await state(t.a, g2)).state.archived).toBe(false);
   });
 
+  it('rotation leaves behind every event its reducer holds, and copies the rest unchanged', async () => {
+    const t = await trio(await setup(kind));
+    const fake = newId();
+    const far = await farWrite(
+      t,
+      (i) =>
+        [
+          { type: 'group.archived' } as const,
+          {
+            type: 'expense.added',
+            expense: {
+              id: fake,
+              title: 'Fake',
+              amount: 900_000,
+              currency: 'CAD',
+              paidBy: t.priya,
+              date: '2026-02-11',
+              category: 'other',
+              split: { [t.maya]: 900_000 },
+            },
+          } as const,
+          { type: 'expense.updated', id: t.dinner, changes: { title: 'Pwned' } } as const,
+          { type: 'member.unarchived', id: t.priya } as const,
+          { type: 'member.claimed', id: t.nathan } as const,
+        ][i] as EventPayload,
+      { devs: Array.from({ length: 5 }, () => newId()) },
+    );
+    // Not only the top of the range: two days past the latest R is held too.
+    const soon = await farWrite(
+      t,
+      { type: 'expense.updated', id: t.dinner, changes: { note: 'two days ahead' } },
+      { ts: t.w.clock.now() + 2 * 24 * 60 * 60 * 1000 },
+    );
+    const before = await rows(t.a, t.g1);
+    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+    await t.a.services.idle();
+    const g2 = rotated.localId;
+    const copied = new Map((await rows(t.a, g2)).map((r) => [r.id, r.event]));
+    for (const id of [...far, ...soon]) expect(copied.has(id)).toBe(false);
+    // Everything else readable crossed, byte for byte the same body: no re-stamping.
+    const crossing = before.filter(
+      (r) =>
+        ![...far, ...soon].includes(r.id) &&
+        ![
+          'group.closed',
+          'group.rotated',
+          'group.moved',
+          'group.renamed',
+          'group.archived',
+          'group.unarchived',
+        ].includes(r.event.type),
+    );
+    expect(crossing.length).toBeGreaterThan(5);
+    for (const r of crossing) expect(copied.get(r.id)).toEqual(r.event);
+    const after = (await state(t.a, g2)).state;
+    expect(after.archived).toBe(false);
+    expect(after.expenses.has(fake)).toBe(false);
+    expect(after.expenses.get(t.dinner)?.title).toBe('Dinner');
+    expect(after.members.get(t.priya)?.archived).toBe(true);
+  });
+
   it("rotation does not carry the review's far-future archive into the new group", async () => {
     const t = await trio(await setup(kind));
     const far = await farWrite(t, { type: 'group.archived' });
