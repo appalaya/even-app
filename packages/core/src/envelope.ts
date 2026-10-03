@@ -1,4 +1,4 @@
-import { aead, type AeadSealed } from './aead.js';
+import { aead, nobleAead, type AeadSealed } from './aead.js';
 import { LIMITS, PROTOCOL } from './constants.js';
 import { b64urlDecode, b64urlEncode, isB64url, utf8Decode, utf8Encode } from './encoding.js';
 import { isId, newId, randomBytes } from './ids.js';
@@ -106,6 +106,23 @@ function sealBytes(key: Uint8Array, groupId: string, id: string, plain: Uint8Arr
 }
 
 /**
+ * The installed AEAD's open, with @noble's second opinion on a refusal. When the installed implementation is not
+ * @noble and answers null (or throws), the same bytes are opened with @noble, and only @noble's refusal counts. This
+ * can only turn a native "no" into the reference's answer, never accept what @noble rejects: a native false negative
+ * costs speed, never data. With @noble installed there is nothing to ask twice.
+ */
+function aeadOpen(key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, sealed: Uint8Array): Uint8Array | null {
+  const impl = aead();
+  let opened: Uint8Array | null;
+  try {
+    opened = impl.open(key, nonce, aad, sealed);
+  } catch {
+    opened = null; // an implementation that throws instead of answering null is still a failed open, never a crash
+  }
+  return opened !== null || impl === nobleAead ? opened : nobleAead.open(key, nonce, aad, sealed);
+}
+
+/**
  * Checks the structure, decrypts and unpads: the exact plaintext bytes, not decoded or parsed. Throws EnvelopeError
  * `malformed`, `unsupported_envelope` or `undecryptable` (AEAD or padding), in that order.
  */
@@ -115,12 +132,7 @@ function openBytes(key: Uint8Array, groupId: string, envelope: Envelope): Uint8A
   if (shape.v !== PROTOCOL.version) {
     throw new EnvelopeError('unsupported_envelope', `envelope version ${shape.v} is not supported`);
   }
-  let padded: Uint8Array | null;
-  try {
-    padded = aead().open(key, b64urlDecode(envelope.n), aadFor(groupId, shape.v, envelope.id), b64urlDecode(envelope.c));
-  } catch {
-    padded = null; // an implementation that throws instead of answering null is still a failed open, never a crash
-  }
+  const padded = aeadOpen(key, b64urlDecode(envelope.n), aadFor(groupId, shape.v, envelope.id), b64urlDecode(envelope.c));
   if (padded === null) throw new EnvelopeError('undecryptable', 'authentication failed');
   return unpad(padded);
 }
@@ -182,7 +194,8 @@ function bodyOf(padded: Uint8Array | null): OpenOutcome {
  * `open` for many envelopes of one group under one key, in order, with the AEAD work in one `aead().openMany` call
  * (one crossing into a native implementation for the whole batch). Each outcome is exactly what `open` would have
  * returned or thrown for that envelope, never a throw for the batch; only a key that is not 32 bytes throws
- * (RangeError), as `open` does. If the implementation's batch call itself throws, each envelope is opened on its own.
+ * (RangeError), as `open` does. If the implementation's batch call itself throws, each envelope is opened on its own;
+ * and as in `open`, an envelope the installed implementation refuses is opened again with @noble, whose answer counts.
  */
 export function openMany(args: { key: Uint8Array; groupId: string; envelopes: readonly Envelope[] }): OpenOutcome[] {
   checkKey(args.key);
@@ -216,24 +229,26 @@ export function openMany(args: { key: Uint8Array; groupId: string; envelopes: re
       items.push(item);
     }
   }
+  const impl = aead();
   let opened: (Uint8Array | null)[] | null;
   try {
-    opened = items.length === 0 ? [] : aead().openMany(args.key, items);
+    opened = items.length === 0 ? [] : impl.openMany(args.key, items);
     if (opened.length !== items.length) opened = null;
   } catch {
     opened = null;
   }
   if (opened === null) {
-    opened = items.map((item) => {
-      try {
-        return aead().open(args.key, item.nonce, item.aad, item.sealed);
-      } catch {
-        return null;
-      }
+    opened = items.map((item) => aeadOpen(args.key, item.nonce, item.aad, item.sealed));
+  } else if (impl !== nobleAead) {
+    // The reference's second opinion on each refusal, as aeadOpen gives one.
+    opened = opened.map((padded, i) => {
+      const item = items[i];
+      return padded !== null || item === undefined ? padded : nobleAead.open(args.key, item.nonce, item.aad, item.sealed);
     });
   }
+  const answers = opened;
   at.forEach((index, i) => {
-    outcomes[index] = bodyOf(opened[i] ?? null);
+    outcomes[index] = bodyOf(answers[i] ?? null);
   });
   return outcomes as OpenOutcome[];
 }

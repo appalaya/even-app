@@ -198,6 +198,14 @@ way one line of fixed words is logged, with a code on failure:
 It takes 5 to 13 ms. (It caught a real fault on its first Android run: the
 module passed Tink's decrypt arguments in the wrong order.)
 
+**A refusal gets a second opinion.** When the installed implementation is not
+@noble and refuses an envelope (or throws), `envelope.ts` opens the same bytes
+again with @noble, alone or within a batch, and only @noble's refusal counts.
+This can only turn a native "no" into the reference's answer, never accept
+what @noble rejects: a native false negative costs speed (a forgery or a
+foreign envelope is decrypted twice), never data. A native false positive is
+what the self-test and the vectors guard against.
+
 **Batches.** The derive opens up to 200 envelopes not yet in the decode cache
 with one core `openMany`, which is one native call: every nonce, AAD and
 ciphertext packed into one array, their lengths into another, the plaintexts

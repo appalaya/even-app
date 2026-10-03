@@ -36,6 +36,8 @@ describe('createMiniRunner', () => {
     expect(result.failures.some((f) => f.includes('tampering'))).toBe(true);
   });
 
+  // Its opens are masked by the reference's second opinion (envelope.ts asks @noble about every refusal), so it is
+  // what it seals that gives it away; the startup self-test refuses such a module before it is ever installed.
   it('fails the envelope suite for an AEAD that is not the XChaCha construction', () => {
     const result = runSuite({
       ...nobleAead,
@@ -43,7 +45,7 @@ describe('createMiniRunner', () => {
       seal: (k, n, a, p) => nobleAead.seal(k, n.slice().reverse(), a, p),
       open: (k, n, a, s) => nobleAead.open(k, n.slice().reverse(), a, s),
     });
-    expect(result.failures.some((f) => f.includes('known-answer vector'))).toBe(true);
+    expect(result.failures.some((f) => f.includes('serialises the body with JSON.stringify'))).toBe(true);
   });
 
   it('implements its matchers like Vitest’s, both ways', () => {

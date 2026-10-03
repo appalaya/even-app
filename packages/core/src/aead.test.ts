@@ -134,7 +134,7 @@ describe('setAead', () => {
     expect(open({ key, groupId, envelope: back })).toEqual(body);
   });
 
-  it('an implementation that throws on open is a failed open (undecryptable), never another error', () => {
+  it('an implementation that throws on open gets @noble’s answer: the body, or undecryptable, never another error', () => {
     const env = seal({ key, groupId, body });
     setAead({
       ...nobleAead,
@@ -143,14 +143,91 @@ describe('setAead', () => {
         throw new Error('native module went away');
       },
     });
+    expect(open({ key, groupId, envelope: env })).toEqual(body);
     let caught: unknown;
     try {
-      open({ key, groupId, envelope: env });
+      open({ key, groupId, envelope: { ...env, id: 'AAAAAAAAAAAAAAAAAAAAAA' } });
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(EnvelopeError);
     expect((caught as EnvelopeError).code).toBe('undecryptable');
+  });
+
+  describe('a refusal from a non-reference implementation is checked with @noble', () => {
+    const bodies = ['Banff', 'Jasper', 'Canmore', 'Field'].map((name) => ({ ...body, name }));
+    const envelopes = bodies.map((b) => seal({ key, groupId, body: b }));
+    /** Nonce of the one valid envelope the stand-in wrongly refuses. */
+    const refused = envelopes[1]!.n;
+    const nonceOf = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64url');
+    /** @noble's own open, taken before any test counts calls to it. */
+    const referenceOpen = nobleAead.open;
+    let nobleOpens = 0;
+
+    /** A stand-in native AEAD with one false negative: it refuses envelopes[1], alone or in a batch. */
+    function wronglyRefusing(): Aead {
+      return {
+        name: 'false-negative',
+        seal: nobleAead.seal,
+        open: (k, n, a, s) => (nonceOf(n) === refused ? null : referenceOpen(k, n, a, s)),
+        openMany: (k, items) =>
+          items.map((item) => (nonceOf(item.nonce) === refused ? null : referenceOpen(k, item.nonce, item.aad, item.sealed))),
+      };
+    }
+
+    function countingNoble(): void {
+      nobleOpens = 0;
+      const original = nobleAead.open;
+      (nobleAead as { open: Aead['open'] }).open = (k, n, a, s) => {
+        nobleOpens += 1;
+        return original(k, n, a, s);
+      };
+      afterRestore.push(() => {
+        (nobleAead as { open: Aead['open'] }).open = original;
+      });
+    }
+    const afterRestore: (() => void)[] = [];
+    afterEach(() => {
+      for (const restore of afterRestore.splice(0)) restore();
+    });
+
+    it('open gives the reference answer, asking @noble only about the refusal', () => {
+      setAead(wronglyRefusing());
+      countingNoble();
+      expect(envelopes.map((envelope) => open({ key, groupId, envelope }))).toEqual(bodies);
+      expect(nobleOpens).toBe(1);
+    });
+
+    it('openMany gives the reference answer for every envelope, asking @noble only about the refusal', () => {
+      setAead(wronglyRefusing());
+      countingNoble();
+      const outcomes = openMany({ key, groupId, envelopes });
+      expect(outcomes.map((o) => (o.ok ? o.body : o.error.code))).toEqual(bodies);
+      expect(nobleOpens).toBe(1);
+      setAead(null);
+      expect(openMany({ key, groupId, envelopes })).toEqual(outcomes);
+    });
+
+    it('resealEnvelope carries the refused envelope over too', () => {
+      setAead(wronglyRefusing());
+      const resealed = resealEnvelope({ key, groupId, newKey: key, newGroupId: groupId, envelope: envelopes[1]! });
+      setAead(null);
+      expect(open({ key, groupId, envelope: resealed })).toEqual(bodies[1]);
+    });
+
+    it('never accepts what @noble refuses: a forgery stays undecryptable, alone and in a batch', () => {
+      setAead({ ...wronglyRefusing(), open: () => null, openMany: (_k, items) => items.map(() => null) });
+      const forged = { ...envelopes[0]!, id: envelopes[2]!.id };
+      const outcomes = openMany({ key, groupId, envelopes: [forged, envelopes[0]!] });
+      expect(outcomes.map((o) => (o.ok ? 'ok' : o.error.code))).toEqual(['undecryptable', 'ok']);
+      expect(() => open({ key, groupId, envelope: forged })).toThrow(EnvelopeError);
+    });
+
+    it('with @noble installed, a refusal is not asked twice', () => {
+      countingNoble();
+      expect(() => open({ key, groupId, envelope: { ...envelopes[0]!, id: envelopes[2]!.id } })).toThrow(EnvelopeError);
+      expect(nobleOpens).toBe(1);
+    });
   });
 
   it('openMany makes one batch call, and opens one by one if that call throws or miscounts', () => {
