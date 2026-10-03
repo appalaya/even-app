@@ -8,7 +8,10 @@ import { canonicalOrigin, PROTOCOL } from '@even/core';
 import type { ServerInfo } from '../../services/sync/types';
 import { LINKS } from '../settings/about';
 
-/** The contact page. Help and feedback opens it as is; a report adds the group in the fragment. */
+/**
+ * The contact page, `https://even.appalaya.com/contact?from=app` (about.ts, `fromApp`). Help and feedback opens it as
+ * is; a report adds the group in the fragment, after the query.
+ */
 export const CONTACT_PAGE = LINKS.contact;
 
 /** AppError's "Report a problem": the contact page on Get help (`#purpose=help`, as web/contact-lib.js reads it). */
@@ -34,9 +37,10 @@ export function isAppalayaServer(serverUrl: string): boolean {
 
 /**
  * "Continue to report" and "Tell Appalaya anyway": the contact page with the group in the fragment,
- * `https://even.appalaya.com/contact#purpose=report&id=<groupId>&server=<server>`, each value percent-encoded as
- * URLSearchParams reads it (the page does). A browser never sends the fragment, so neither value reaches a server or
- * its log until the person sends the form. Only these two: never the secret, the invite or the group's name.
+ * `https://even.appalaya.com/contact?from=app#purpose=report&id=<groupId>&server=<server>`, each value
+ * percent-encoded as URLSearchParams reads it (the page does). A browser never sends the fragment, so neither value
+ * reaches a server or its log until the person sends the form; the request is the contact page with the flag and
+ * nothing else. Only these two: never the secret, the invite or the group's name.
  *
  * `server` is the group's canonical server URL (PROTOCOL.md §8.1), the one its id is derived for: an origin for
  * every server Appalaya runs, and one with a path for a server that has one, which the page shows but the form

@@ -48,24 +48,49 @@ describe('isAppalayaServer', () => {
   });
 });
 
+describe('CONTACT_PAGE', () => {
+  it('is the contact page with ?from=app and no fragment', () => {
+    expect(CONTACT_PAGE).toBe('https://even.appalaya.com/contact?from=app');
+    expect(new URL(CONTACT_PAGE).searchParams.get('from')).toBe('app');
+    expect(CONTACT_PAGE.includes('#')).toBe(false);
+  });
+});
+
 describe('HELP_PAGE', () => {
   it("is the contact page on Get help, with nothing else in the fragment (AppError's Report a problem)", () => {
+    expect(HELP_PAGE).toBe('https://even.appalaya.com/contact?from=app#purpose=help');
     expect(HELP_PAGE.split('#')[0]).toBe(CONTACT_PAGE);
     const params = new URLSearchParams(HELP_PAGE.slice(HELP_PAGE.indexOf('#') + 1));
     expect([...params.entries()]).toEqual([['purpose', 'help']]);
   });
+
+  it('carries the flag in the query, before the fragment', () => {
+    const url = new URL(HELP_PAGE);
+    expect(url.search).toBe('?from=app');
+    expect(url.hash).toBe('#purpose=help');
+  });
 });
 
 describe('reportUrl', () => {
-  it('puts the purpose, the group id and the server in the fragment', () => {
-    expect(CONTACT_PAGE).toBe('https://even.appalaya.com/contact');
+  it('puts the purpose, the group id and the server in the fragment, after the query', () => {
     const url = reportUrl({ groupId: GROUP_ID, server: 'https://sync.even.appalaya.com' });
     expect(url).toBe(
-      `https://even.appalaya.com/contact#purpose=report&id=${GROUP_ID}&server=https%3A%2F%2Fsync.even.appalaya.com`,
+      `https://even.appalaya.com/contact?from=app#purpose=report&id=${GROUP_ID}&server=https%3A%2F%2Fsync.even.appalaya.com`,
     );
-    // Nothing before the fragment changes, so the request is the plain contact page.
+    // Only the flag precedes the fragment, so the request is the contact page with ?from=app and nothing else.
     expect(url.split('#')[0]).toBe(CONTACT_PAGE);
     expect(url.split('#')).toHaveLength(2);
+    expect(new URL(url).search).toBe('?from=app');
+    expect(url.indexOf('?')).toBeLessThan(url.indexOf('#'));
+  });
+
+  it('writes the same fragment it always has', () => {
+    for (const server of ['https://sync.even.appalaya.com', 'https://home.example.net:8443/even']) {
+      const url = reportUrl({ groupId: GROUP_ID, server });
+      expect(url.slice(url.indexOf('#'))).toBe(
+        `#purpose=report&id=${GROUP_ID}&server=${encodeURIComponent(server)}`,
+      );
+    }
   });
 
   it('reads back exactly with URLSearchParams, as the page parses it', () => {
