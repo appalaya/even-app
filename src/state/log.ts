@@ -2,7 +2,7 @@
  * Small pure helpers over stored envelopes, shared by the derived state, the write path, rotation and recognition.
  * Decrypted bodies only ever live in memory.
  */
-import { isEnvelope, open, type Envelope, type LogEntry } from '@even/core';
+import { compareLog, isEnvelope, open, type Envelope, type LogEntry } from '@even/core';
 
 import type { EventStatus, ReadableStatus } from '../services/storage/types';
 
@@ -71,12 +71,7 @@ export function openType(key: Uint8Array, groupId: string, envelope: Envelope): 
   }
 }
 
-/** Plain UTF-16 code-unit comparison, as the reducer orders ids. */
-function compareIds(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-/** The earliest entry by (ts, id) matching `predicate`, the one the reducer applies first. */
+/** The earliest entry in the reducer's order (core `compareLog`: min(ts, R), ts, id) matching `predicate`. */
 export function firstEntry(
   entries: readonly LogEntry[],
   predicate: (entry: LogEntry) => boolean,
@@ -84,18 +79,12 @@ export function firstEntry(
   let best: LogEntry | null = null;
   for (const entry of entries) {
     if (!predicate(entry)) continue;
-    if (
-      best === null ||
-      entry.event.ts < best.event.ts ||
-      (entry.event.ts === best.event.ts && compareIds(entry.id, best.id) < 0)
-    ) {
-      best = entry;
-    }
+    if (best === null || compareLog(entry, best) < 0) best = entry;
   }
   return best;
 }
 
-/** The latest entry by (ts, id) matching `predicate`. */
+/** The latest entry in the reducer's order (core `compareLog`) matching `predicate`. */
 export function lastEntry(
   entries: readonly LogEntry[],
   predicate: (entry: LogEntry) => boolean,
@@ -103,13 +92,7 @@ export function lastEntry(
   let best: LogEntry | null = null;
   for (const entry of entries) {
     if (!predicate(entry)) continue;
-    if (
-      best === null ||
-      entry.event.ts > best.event.ts ||
-      (entry.event.ts === best.event.ts && compareIds(entry.id, best.id) > 0)
-    ) {
-      best = entry;
-    }
+    if (best === null || compareLog(entry, best) > 0) best = entry;
   }
   return best;
 }

@@ -989,34 +989,41 @@ describe('reduce: group archive', () => {
   });
 });
 
-describe('reduce: hold-back (review H2)', () => {
+describe('reduce: the arrival rule (review H2, design.md "Ordering")', () => {
   /** The latest valid ts, 2099-12-31T23:59:59.999Z: the review's hostile member's pick. */
   const TOP = LIMITS.tsMax - 1;
-  const YEAR = 365 * 24 * 60 * 60 * 1000;
-  const FAR = pad('dev-far'); // the one device whose clock is decades ahead
-  const far = (n: number, draft: Draft): LogEntry => entry(n, { by: NATHAN, dev: FAR, ts: TOP, ...draft });
+  const HOUR = 60 * 60 * 1000;
+  const W = LIMITS.clockAbsorbWindowMs;
+  const FAR = pad('dev-far');
+  /** As a server stamped it: arriving at `r`, or a second after it claims to have been written. */
+  const at = (e: LogEntry, r = e.event.ts + 1000): LogEntry => ({ ...e, receivedAt: r });
+  const stamped = (log: readonly LogEntry[]): LogEntry[] => log.map((e) => at(e));
+  /** A write claiming the top of the range, from `dev`, that a server received at T0 + 100 s. */
+  const far = (n: number, draft: Draft, dev = FAR): LogEntry =>
+    at(entry(n, { by: NATHAN, dev, ts: TOP, ...draft }), T0 + 100_000);
   const add = entry(5, { type: 'expense.added', expense: expense(DINNER) });
 
-  it("the review's 2099 archive does not archive the group, and an unarchive at now stands", () => {
+  it("the review's 2099 archive, once a server stamped it, does not archive the group; an unarchive at now stands", () => {
     const archive = far(10, { type: 'group.archived' });
-    const s = reduce([...base(), archive]);
+    const s = reduce([...stamped(base()), archive]);
     expect(s.archived).toBe(false);
     expect(s.activity.map((a) => a.eventId)).not.toContain(archive.id);
-    const unarchive = entry(11, { type: 'group.unarchived', by: JORDAN });
-    expect(reduce([...base(), archive, unarchive]).archived).toBe(false);
+    const unarchive = at(entry(11, { type: 'group.unarchived', by: JORDAN }));
+    expect(reduce([...stamped(base()), archive, unarchive]).archived).toBe(false);
     // An honest archive and unarchive go on around it.
-    expect(reduce([...base(), archive, entry(12, { type: 'group.archived' })]).archived).toBe(true);
-    expect(reduce([...base(), archive, entry(12, { type: 'group.archived' }), entry(13, { type: 'group.unarchived' })]).archived).toBe(false);
+    const archived = at(entry(12, { type: 'group.archived' }));
+    expect(reduce([...stamped(base()), archive, archived]).archived).toBe(true);
+    expect(reduce([...stamped(base()), archive, archived, at(entry(13, { type: 'group.unarchived' }))]).archived).toBe(false);
   });
 
-  it('no last-writer-wins field takes a far write: the honest values stand, with no activity or history from it', () => {
-    const honest = [
+  it('a held event takes no effect whatever its type: no state, activity, history or placeholder', () => {
+    const honest = stamped([
       ...base(),
       add,
       entry(6, { type: 'member.archived', id: JORDAN }),
       entry(7, { type: 'member.done', id: MAYA }),
       entry(8, { type: 'group.moved', server: 'https://sync.example.org' }),
-    ];
+    ]);
     const farWrites = [
       far(20, { type: 'group.renamed', name: 'Pwned' }),
       far(21, { type: 'group.moved', server: 'https://evil.example.com' }),
@@ -1024,83 +1031,90 @@ describe('reduce: hold-back (review H2)', () => {
       far(23, { type: 'member.unarchived', id: JORDAN }),
       far(24, { type: 'member.archived', id: NATHAN }),
       far(25, { type: 'member.undone', id: MAYA }),
-      far(26, { type: 'member.done', id: NATHAN }),
+      far(26, { type: 'member.done', id: GHOST }),
       far(27, { type: 'expense.updated', id: DINNER, changes: { title: 'Pwned', amount: 3, split: { [NATHAN]: 3 } } }),
+      far(28, { type: 'expense.added', expense: expense(pad('far-add'), { paidBy: GHOST, amount: 900_000, split: { [MAYA]: 900_000 } }) }),
+      far(29, { type: 'expense.deleted', id: DINNER }),
+      far(30, { type: 'member.claimed', id: MAYA }),
+      far(31, { type: 'member.added', member: { id: pad('far-member'), name: 'Far' } }),
+      far(32, { type: 'group.archived' }),
+      far(33, { type: 'group.closed', reason: 'rotated', to: 'elsewhere' }),
+      far(34, { type: 'payment.added', payment: payment(pad('far-pay')) }),
     ];
     const expected = reduce(honest);
     const s = reduce([...honest, ...farWrites]);
     expect(canon(s)).toStrictEqual(canon(expected));
-    expect([s.name, s.movedTo, s.members.get(MAYA)?.name, s.doneMembers]).toEqual([
-      'Banff 2026',
-      'https://sync.example.org',
-      'Maya',
-      [MAYA],
-    ]);
-    expect([s.members.get(JORDAN)?.archived, s.members.get(NATHAN)?.archived]).toEqual([true, false]);
-    expect(s.expenses.get(DINNER)?.title).toBe('Dinner');
-    // ... and honest writes after them win, though they sort before.
+    expect(s.unknownMembers).toEqual([]);
+    // ... and honest writes after them win, as they would anyway.
     const s2 = reduce([
       ...honest,
       ...farWrites,
-      entry(30, { type: 'group.renamed', name: 'Banff!' }),
-      entry(31, { type: 'expense.updated', id: DINNER, by: JORDAN, changes: { title: 'Supper' } }),
+      at(entry(40, { type: 'group.renamed', name: 'Banff!' })),
+      at(entry(41, { type: 'expense.updated', id: DINNER, by: JORDAN, changes: { title: 'Supper' } })),
     ]);
     expect([s2.name, s2.expenses.get(DINNER)?.title]).toEqual(['Banff!', 'Supper']);
   });
 
-  it('a phone hours fast still wins as before', () => {
-    const fast = entry(10, { type: 'group.renamed', name: 'Fast', by: NATHAN, ts: T0 + 3 * 60 * 60 * 1000 });
-    const s = reduce([...base(), fast, entry(11, { type: 'group.renamed', name: 'Later', by: JORDAN })]);
-    expect(s.name).toBe('Fast');
-  });
-
-  it("a writer whose fellow members have not written for years still wins: the window is not the absorb window's day", () => {
-    // Maya's phone is the only one writing; Jordan and Nathan joined and went quiet.
-    const quiet = [created(1), added(2, MAYA, 'Maya'), added(3, JORDAN, 'Jordan', { by: JORDAN }), add];
-    for (const gap of [2 * 24 * 60 * 60 * 1000, 400 * 24 * 60 * 60 * 1000, 9 * YEAR]) {
-      const s = reduce([
-        ...quiet,
-        entry(10, { type: 'group.renamed', name: 'Later', ts: T0 + gap }),
-        entry(11, { type: 'expense.updated', id: DINNER, changes: { title: 'Supper' }, ts: T0 + gap + 1 }),
-        entry(12, { type: 'group.archived', ts: T0 + gap + 2 }),
-      ]);
-      expect([s.name, s.expenses.get(DINNER)?.title, s.archived]).toEqual(['Later', 'Supper', true]);
+  it('far stamps from any number of device ids are held: the rule reads R, not `dev`', () => {
+    for (const k of [1, 2, 3, 5]) {
+      const archives = Array.from({ length: k }, (_, i) => far(10 + i, { type: 'group.archived' }, pad(`dev-far-${i}`)));
+      const renames = Array.from({ length: k }, (_, i) => far(20 + i, { type: 'group.renamed', name: `Pwned ${i}` }, pad(`dev-far-${i}`)));
+      const s = reduce([...stamped(base()), ...archives, ...renames, at(entry(30, { type: 'group.unarchived', by: JORDAN }))]);
+      expect([s.archived, s.name]).toEqual([false, 'Banff 2026']);
     }
   });
 
-  it('once the log catches up, the far write wins in its (ts, id) place', () => {
-    const ahead = far(10, { type: 'group.renamed', name: 'Ahead', ts: T0 + 11 * YEAR });
-    const honest = entry(11, { type: 'group.renamed', name: 'Honest', by: JORDAN, ts: T0 + 20_000 });
-    expect(reduce([...base(), ahead, honest]).name).toBe('Honest');
-    // Another device writes two years on: the rename is now within the window of it.
-    const later = entry(12, { type: 'member.done', id: JORDAN, by: JORDAN, ts: T0 + 2 * YEAR });
-    const s = reduce([...base(), ahead, honest, later]);
-    expect(s.name).toBe('Ahead');
-    expect(s.activity.at(-1)?.eventId).toBe(ahead.id);
+  it('the boundary: a claim W + 1 past the latest R is held, one exactly W past is not', () => {
+    const H = T0 + 50_000; // the latest R
+    const log = [...stamped(base()), at(entry(9, { type: 'member.done', id: JORDAN, by: JORDAN }), H)];
+    const held = at(entry(10, { type: 'group.renamed', name: 'Held', ts: H + W + 1 }), H);
+    const notHeld = at(entry(10, { type: 'group.renamed', name: 'Not held', ts: H + W }), H);
+    expect(reduce([...log, held]).name).toBe('Banff 2026');
+    expect(reduce([...log, notHeld]).name).toBe('Not held');
   });
 
-  it('creations, claims and tombstones far ahead take effect: they are not last-writer-wins fields', () => {
-    const farExpense = expense(pad('far-exp'), { title: 'Far', paidBy: NATHAN });
-    const s = reduce([
-      ...base(),
-      add,
-      far(20, { type: 'expense.added', expense: farExpense }),
-      far(21, { type: 'member.claimed', id: NATHAN }),
-      far(22, { type: 'expense.deleted', id: DINNER }),
-    ]);
-    expect([...s.expenses.keys()]).toEqual([farExpense.id]);
-    expect(s.deletedExpenses.has(DINNER)).toBe(true);
-    expect(s.members.get(NATHAN)?.devices).toEqual([FAR]);
+  it('a later R releases it at its arrival: it beats what came before that, and loses to everything written after', () => {
+    const R1 = T0 + 100_000;
+    const ahead = at(entry(10, { type: 'group.renamed', name: 'Ahead', by: NATHAN, ts: T0 + 400 * 24 * HOUR }), R1);
+    const before = at(entry(9, { type: 'group.renamed', name: 'Before', by: JORDAN, ts: R1 - 5_000 }), R1 - 4_000);
+    const after = at(entry(11, { type: 'group.renamed', name: 'After', by: JORDAN, ts: R1 + 5_000 }), R1 + 6_000);
+    const log = [...stamped(base()), before, ahead];
+    expect(reduce(log).name).toBe('Before'); // held
+    // A year and more later someone writes: the latest R is now within W of the claim, so it takes effect at R1.
+    const release = at(entry(12, { type: 'member.done', id: JORDAN, by: JORDAN, ts: T0 + 400 * 24 * HOUR - W }));
+    const released = reduce([...log, release]);
+    expect(released.name).toBe('Ahead');
+    expect(released.activity.map((a) => a.eventId).indexOf(ahead.id)).toBe(
+      released.activity.map((a) => a.eventId).indexOf(before.id) + 1,
+    );
+    expect(reduce([...log, after, release]).name).toBe('After');
   });
 
-  it('two devices at the top hold nothing back: the rule reads only the log, and `dev` is the writer\'s claim', () => {
-    const s = reduce([
-      ...base(),
-      far(10, { type: 'group.archived' }),
-      far(11, { type: 'group.archived', dev: pad('dev-forged') }),
-      entry(12, { type: 'group.unarchived', by: JORDAN }),
-    ]);
-    expect(s.archived).toBe(true);
+  it('an event with no R is never held: it takes effect at its claim', () => {
+    const archive = entry(10, { type: 'group.archived', by: NATHAN, dev: FAR, ts: TOP });
+    expect(reduce([...stamped(base()), archive, at(entry(11, { type: 'group.unarchived' }))]).archived).toBe(true);
+  });
+
+  it('an honest unsynced write less than W ahead reads the same once its R arrives', () => {
+    // Nathan's phone runs 20 hours fast; his rename and edit are the latest writes, not pushed yet.
+    const log = stamped([...base(), add, entry(6, { type: 'group.renamed', name: 'Banff!' })]);
+    const fast = T0 + 20 * HOUR;
+    const rename = entry(10, { type: 'group.renamed', name: 'Nathan says', by: NATHAN, ts: fast });
+    const edit = entry(11, { type: 'expense.updated', id: DINNER, by: NATHAN, changes: { title: 'Supper' }, ts: fast + 1 });
+    const unsynced = reduce([...log, rename, edit]);
+    // They arrive together, at the server's now: well before what the phone stamped.
+    const pushed = reduce([...log, at(rename, T0 + 10_000), at(edit, T0 + 10_000)]);
+    expect(canon(pushed)).toStrictEqual(canon(unsynced));
+    expect([pushed.name, pushed.expenses.get(DINNER)?.title]).toEqual(['Nathan says', 'Supper']);
+  });
+
+  it('an unusable R is treated as absent', () => {
+    const archive = entry(10, { type: 'group.archived', by: NATHAN, dev: FAR, ts: TOP });
+    for (const bad of [0.5, LIMITS.tsMin - 1, LIMITS.tsMax, Number.NaN]) {
+      const log = [...stamped(base()), { ...archive, receivedAt: bad }];
+      expect(canon(reduce(log))).toStrictEqual(canon(reduce([...stamped(base()), archive])));
+      expect(reduce(log).archived).toBe(true);
+    }
   });
 });
 
@@ -1192,7 +1206,7 @@ describe('reduce: purity and determinism', () => {
       entry(45, { type: 'group.unarchived', by: JORDAN, ts: T0 + 44_000 }), // same ts as 44
       entry(46, { type: 'group.archived', by: NATHAN }),
       entry(47, { type: 'group.archived' }), // already archived: no-op
-      // One device decades ahead (review H2): its field writes are held back, its add is not.
+      // One device decades ahead (review H2): held once a server has stamped them, at their claim until then.
       entry(48, { type: 'group.renamed', name: 'Far', dev: pad('dev-far'), ts: LIMITS.tsMax - 1 }),
       entry(49, { type: 'group.unarchived', dev: pad('dev-far'), ts: LIMITS.tsMax - 1 }),
       entry(50, { type: 'expense.updated', id: GAS, changes: { title: 'Far' }, dev: pad('dev-far'), ts: LIMITS.tsMax - 2 }),
@@ -1201,12 +1215,36 @@ describe('reduce: purity and determinism', () => {
     ];
   }
 
-  it('is deep-equal (including Map order) for any permutation', () => {
-    const log = kitchenSink();
+  type Arrivals = 'absent' | 'present' | 'mixed';
+  const isFar = (e: LogEntry): boolean => e.event.dev === pad('dev-far');
+  /**
+   * The kitchen sink as a server stamped it: every honest entry (`present`), every other one (`mixed`: a phone with
+   * writes not pushed yet, or a log half pulled), or none (`absent`: a server from before R). Honest entries arrive a
+   * few seconds after their claim, or before it for a phone a little fast; the far ones arrive at T0 + 60 s, except
+   * with `absent`.
+   */
+  function stampedSink(arrivals: Arrivals): LogEntry[] {
+    return kitchenSink().map((e, i) => {
+      if (arrivals === 'absent') return e;
+      if (isFar(e)) return { ...e, receivedAt: T0 + 60_000 };
+      if (arrivals === 'mixed' && i % 2 === 1) return e;
+      return { ...e, receivedAt: e.event.ts + (i % 3 === 0 ? -1500 : 2500) };
+    });
+  }
+
+  it.each(['absent', 'present', 'mixed'] as const)('is deep-equal (including Map order) for any permutation, R %s', (arrivals) => {
+    const log = stampedSink(arrivals);
     const s = reduce(log, { format: two });
-    expect([s.doneMembers, s.allDone, s.archived]).toEqual([[GHOST], false, true]); // the new events took effect
-    expect([s.name, s.expenses.get(GAS)?.title, s.members.get(NATHAN)?.archived]).toEqual(['Banff!', 'Petrol', false]);
-    expect(s.expenses.has(pad('far-add'))).toBe(true); // held back: field writes only
+    expect(s.doneMembers).toEqual([GHOST]); // the new events took effect
+    if (arrivals === 'absent') {
+      // No R anywhere: the far writes take effect at their claim, as they did before the rule.
+      expect([s.name, s.archived, s.expenses.get(GAS)?.title, s.members.get(NATHAN)?.archived]).toEqual(['Far', false, 'Far', true]);
+      expect(s.expenses.has(pad('far-add'))).toBe(true);
+    } else {
+      // Stamped: held, whatever their type, so the state is the honest log's.
+      expect(canon(s)).toStrictEqual(canon(reduce(log.filter((e) => !isFar(e)), { format: two })));
+      expect([s.name, s.members.get(NATHAN)?.archived, s.expenses.has(pad('far-add'))]).toEqual(['Banff!', false, false]);
+    }
     const expected = canon(s);
     fc.assert(
       fc.property(fc.shuffledSubarray(log, { minLength: log.length, maxLength: log.length }), (perm) => {
@@ -1219,16 +1257,34 @@ describe('reduce: purity and determinism', () => {
     }
   });
 
-  it('replays a duplicated envelope once', () => {
-    const log = kitchenSink();
+  it.each(['absent', 'present', 'mixed'] as const)('replays a duplicated envelope once, R %s', (arrivals) => {
+    const log = stampedSink(arrivals);
     expect(canon(reduce([...log, ...log]))).toStrictEqual(canon(reduce(log)));
-    // A reused envelope id: only the first in (ts, id) order is replayed.
+    expect(canon(reduce(shuffled([...log, ...log, ...log], 7)))).toStrictEqual(canon(reduce(log)));
+  });
+
+  it('copies of one envelope that differ only in R reduce the same in any order', () => {
+    const present = stampedSink('present');
+    const both = [...present, ...stampedSink('absent'), ...stampedSink('mixed')];
+    const expected = canon(reduce(both));
+    for (let seed = 1; seed <= 20; seed++) expect(canon(reduce(shuffled(both, seed)))).toStrictEqual(expected);
+  });
+
+  it('replays a reused envelope id once: the first in (min(ts, R), ts, id) order', () => {
+    // A reused envelope id: only the first in fold order is replayed.
     const first = entry(5, { type: 'group.renamed', name: 'A' });
     const reused = entry(5, { type: 'group.renamed', name: 'C', ts: T0 + 7000 });
     const between = entry(6, { type: 'group.renamed', name: 'B' });
     const s = reduce([reused, between, first, ...base()]);
     expect(s.name).toBe('B');
     expect(summaries(s).slice(4)).toEqual(['Maya renamed the group to A', 'Maya renamed the group to B']);
+    // An R moves the reused copy first: it arrived before the other was written.
+    const early = { ...reused, receivedAt: T0 + 4500 };
+    expect(reduce([early, between, first, ...base()]).name).toBe('B');
+    expect(summaries(reduce([early, between, first, ...base()])).slice(4)).toEqual([
+      'Maya renamed the group to C',
+      'Maya renamed the group to B',
+    ]);
   });
 
   it('never mutates or aliases its input', () => {

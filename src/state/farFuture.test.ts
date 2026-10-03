@@ -1,9 +1,11 @@
 /**
  * Far-future timestamps (pre-launch review H2; design.md "Ordering", "Reducer" and "Rotation, moving, closing"),
- * through the app's own services and the fake server, on both stores. A member writes an event at the top of the
- * validator's range, as the review's hostile member does (or a phone whose clock reads 2099). It must not pin the
- * group archived, its name, a member or an expense; honest writes must not be refused because of it; and
- * regenerating the invite must neither carry it into the new group nor fail on it.
+ * through the app's own services and the fake server, on both stores. A hostile member writes events stamped at the
+ * top of the validator's range (as the review's does; a phone whose clock reads 2099 does the same), from one device
+ * id or from several. Once a server has stamped them with its arrival time R they are held: they must not archive the
+ * group, rename it, add or edit an expense, or keep a removed member in the new group, and honest writes go on around
+ * them. They must stay held when every R is re-assigned: after a server move, a server wipe, and the hostile member's
+ * own DELETE followed by a re-push that reaches the new copy first.
  */
 import {
   deriveLocal,
@@ -12,19 +14,20 @@ import {
   newId,
   open,
   parseEvent,
+  type Envelope,
   type Event,
   type EventPayload,
 } from '@even/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { STORE_KINDS, type StoreKind } from '../services/testing/testStore';
-import { isStateError, type StateErrorCode } from './errors';
 import type { GroupService } from './groups';
 import {
   body,
   createWorld,
   expectSynced,
   injectEvent,
+  OTHER_SERVER,
   secretOn,
   SERVER,
   sync,
@@ -48,20 +51,6 @@ async function setup(kind: StoreKind): Promise<World> {
 
 function g(d: Device): GroupService {
   return d.services.groups;
-}
-
-async function rejectsWith(promise: Promise<unknown>, code: StateErrorCode): Promise<void> {
-  let thrown: unknown = null;
-  try {
-    await promise;
-  } catch (error) {
-    thrown = error;
-  }
-  if (!isStateError(thrown, code)) {
-    throw new Error(
-      `expected ${code}, got ${thrown instanceof Error ? thrown.message : String(thrown)}`,
-    );
-  }
 }
 
 async function state(d: Device, localId: string) {
@@ -114,9 +103,11 @@ interface Trio {
   nathan: string;
   priya: string;
   dinner: string;
+  /** The group's server now (a move changes it). */
+  server: string;
 }
 
-/** A (Maya) creates Banff 2026; B claims Nathan; H claims Priya, who writes far ahead; Maya adds Dinner. */
+/** A (Maya) creates Banff 2026; B claims Nathan; H claims Priya, who is hostile; Maya adds Dinner. */
 async function trio(w: World): Promise<Trio> {
   const a = await w.device('A');
   const b = await w.device('B');
@@ -139,56 +130,205 @@ async function trio(w: World): Promise<Trio> {
   await g(h).claimMember(g1, priya);
   const dinner = await g(a).addExpense(g1, expense(maya, 'Dinner', [maya, nathan, priya]));
   for (const d of [a, b, h, a, b, h]) expectSynced(await sync(d, g1));
-  return { w, a, b, h, g1, maya, nathan, priya, dinner };
+  return { w, a, b, h, g1, maya, nathan, priya, dinner, server: SERVER };
 }
 
 /**
- * H writes `payload` at `ts` (the top of the range unless given) as Priya from `dev` (H's own device unless a forged
- * one is given), and every device syncs it. Returns the envelope id.
+ * H writes `payload` at `ts` (the top of the range unless given) as Priya from each of `devs` (H's own device id
+ * unless forged ones are given), and every device syncs it. Returns the envelope ids.
  */
 async function farWrite(
   t: Trio,
-  payload: EventPayload,
-  options: { ts?: number; dev?: string } = {},
-): Promise<string> {
-  const id = await injectEvent(
-    t.h,
-    t.g1,
-    body(payload, t.priya, options.dev ?? t.h.services.deviceId, options.ts ?? TOP),
-  );
+  payload: EventPayload | ((i: number) => EventPayload),
+  options: { ts?: number; devs?: readonly string[] } = {},
+): Promise<string[]> {
+  const ids: string[] = [];
+  const devs = options.devs ?? [t.h.services.deviceId];
+  for (const [i, dev] of devs.entries()) {
+    const made = typeof payload === 'function' ? payload(i) : payload;
+    ids.push(await injectEvent(t.h, t.g1, body(made, t.priya, dev, options.ts ?? TOP)));
+  }
   for (const d of [t.h, t.a, t.b]) expectSynced(await sync(d, t.g1));
-  return id;
+  return ids;
+}
+
+/** H's own device id and `k − 1` forged ones. */
+function deviceIds(t: Trio, k: number): string[] {
+  return [t.h.services.deviceId, ...Array.from({ length: k - 1 }, () => newId())];
 }
 
 async function syncAll(t: Trio, localId: string): Promise<void> {
-  for (const d of [t.a, t.b, t.h, t.a]) expectSynced(await sync(d, localId));
+  for (const d of [t.a, t.b, t.h, t.a, t.b]) expectSynced(await sync(d, localId));
+}
+
+type When = 'as is' | 'after a move' | 'after a server wipe' | "after the hostile member's DELETE";
+const WHENS: readonly When[] = [
+  'as is',
+  'after a move',
+  'after a server wipe',
+  "after the hostile member's DELETE",
+];
+
+/**
+ * Re-assigns every R the group has. A move: Maya moves the group to another server and the others follow, each
+ * re-pushing the whole log in claimed-ts order. A wipe: the server loses the copy, and the epoch reset re-pushes it.
+ * The hostile DELETE: H deletes the copy and at once pushes its far writes alone, so they are the first the new copy
+ * stores; then everyone's epoch reset re-pushes the rest.
+ */
+async function reassign(t: Trio, when: When, far: readonly string[]): Promise<void> {
+  if (when === 'as is') return;
+  if (when === 'after a move') {
+    expect(await g(t.a).moveServer(t.g1, OTHER_SERVER)).toMatchObject({ outcome: 'moved' });
+    for (const d of [t.b, t.h]) {
+      await sync(d, t.g1);
+      expect(await g(d).followMove(t.g1)).toMatchObject({ outcome: 'moved' });
+    }
+    t.server = OTHER_SERVER;
+  } else {
+    const secret = await secretOn(t.h, t.g1);
+    const { groupId, authToken } = deriveServer(secret, t.server);
+    const server = t.w.server(t.server);
+    if (when === 'after a server wipe') {
+      server.wipe(groupId);
+    } else {
+      const transport = server.transport();
+      await transport.delete(groupId, authToken);
+      const mine = (await t.h.store.dump(t.g1)).filter((r) => far.includes(r.id));
+      expect(mine).toHaveLength(far.length);
+      await transport.push(
+        groupId,
+        authToken,
+        mine.map((r) => JSON.parse(r.envelope) as Envelope),
+      );
+      const first = server.stored(groupId).map((e) => e.id);
+      expect(new Set(first)).toEqual(new Set(far));
+    }
+  }
+  await t.w.clock.advance(60_000);
+  await syncAll(t, t.g1);
+  // Every R is the new copy's now.
+  const secret = await secretOn(t.a, t.g1);
+  const arrivals = t.w.server(t.server).receivedAt(deriveServer(secret, t.server).groupId);
+  for (const d of [t.a, t.b, t.h]) {
+    for (const row of await d.store.dump(t.g1)) expect(row.receivedAt).toBe(arrivals.get(row.id));
+  }
 }
 
 describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kind) => {
-  it('a group.archived at the top of the range does not make the group read-only; an unarchive at now stands', async () => {
-    const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'group.archived' });
-    // What a member does on seeing the group archived (a no-op when it reads unarchived).
-    await g(t.a).unarchiveGroup(t.g1);
-    await syncAll(t, t.g1);
-    for (const d of [t.a, t.b, t.h]) {
-      const { derived, state: s } = await state(d, t.g1);
-      expect(s.archived).toBe(false);
-      expect(derived.readOnly).toBeNull();
-    }
-    await g(t.b).addExpense(t.g1, expense(t.nathan, 'Gas', [t.maya, t.nathan]));
+  describe.each([1, 2])("from %i device id(s): the review's attacks are held", (k) => {
+    describe.each(WHENS)('%s', (when) => {
+      it('a far group.archived does not make the group read-only; an unarchive at now stands', async () => {
+        const t = await trio(await setup(kind));
+        const far = await farWrite(t, { type: 'group.archived' }, { devs: deviceIds(t, k) });
+        // What a member does on seeing the group archived (a no-op when it reads unarchived).
+        await g(t.a).unarchiveGroup(t.g1);
+        await syncAll(t, t.g1);
+        await reassign(t, when, far);
+        for (const d of [t.a, t.b, t.h]) {
+          const { derived, state: s } = await state(d, t.g1);
+          expect(s.archived).toBe(false);
+          expect(derived.readOnly).toBeNull();
+          expect(s.activity.map((item) => item.eventId)).not.toContain(far[0]);
+        }
+        await g(t.b).addExpense(t.g1, expense(t.nathan, 'Gas', [t.maya, t.nathan]));
+      });
+
+      it('a far group.renamed does not pin the name; a rename at now stands', async () => {
+        const t = await trio(await setup(kind));
+        const far = await farWrite(
+          t,
+          { type: 'group.renamed', name: 'Pwned' },
+          { devs: deviceIds(t, k) },
+        );
+        expect((await state(t.a, t.g1)).state.name).toBe('Banff 2026');
+        await g(t.a).renameGroup(t.g1, 'Banff trip');
+        await syncAll(t, t.g1);
+        await reassign(t, when, far);
+        for (const d of [t.a, t.b, t.h])
+          expect((await state(d, t.g1)).state.name).toBe('Banff trip');
+      });
+
+      it('a far expense.added never reaches the expenses or the balances', async () => {
+        const t = await trio(await setup(kind));
+        const before = (await state(t.a, t.g1)).derived;
+        const fakes = deviceIds(t, k).map(() => newId());
+        const far = await farWrite(
+          t,
+          (i) => ({
+            type: 'expense.added',
+            expense: {
+              id: fakes[i] as string,
+              title: 'Fake',
+              amount: 900_000,
+              currency: 'CAD',
+              paidBy: t.priya,
+              date: '2026-02-11',
+              category: 'other',
+              split: { [t.maya]: 450_000, [t.nathan]: 450_000 },
+            },
+          }),
+          { devs: deviceIds(t, k) },
+        );
+        await reassign(t, when, far);
+        for (const d of [t.a, t.b, t.h]) {
+          const { derived, state: s } = await state(d, t.g1);
+          for (const fake of fakes) expect(s.expenses.has(fake)).toBe(false);
+          expect(s.expenses.has(t.dinner)).toBe(true);
+          expect(derived.nets).toEqual(before.nets);
+        }
+      });
+
+      it('a far expense.updated does not pin the expense; an edit at now stands and it can be deleted', async () => {
+        const t = await trio(await setup(kind));
+        const far = await farWrite(
+          t,
+          {
+            type: 'expense.updated',
+            id: t.dinner,
+            changes: { title: 'Pwned', amount: 3, split: { [t.priya]: 3 } },
+          },
+          { devs: deviceIds(t, k) },
+        );
+        expect((await state(t.a, t.g1)).state.expenses.get(t.dinner)?.title).toBe('Dinner');
+        await g(t.a).updateExpense(t.g1, t.dinner, { title: 'Dinner at the Park' });
+        await syncAll(t, t.g1);
+        await reassign(t, when, far);
+        for (const d of [t.a, t.b, t.h]) {
+          const dinner = (await state(d, t.g1)).state.expenses.get(t.dinner);
+          expect(dinner).toMatchObject({ title: 'Dinner at the Park', amount: 3_000 });
+        }
+        await g(t.b).deleteExpense(t.g1, t.dinner);
+        await syncAll(t, t.g1);
+        expect((await state(t.a, t.g1)).state.expenses.has(t.dinner)).toBe(false);
+      });
+
+      it('removing the hostile member while regenerating the invite: a far unarchive of her never outranks it', async () => {
+        const t = await trio(await setup(kind));
+        const far = await farWrite(
+          t,
+          { type: 'member.unarchived', id: t.priya },
+          { devs: deviceIds(t, k) },
+        );
+        await reassign(t, when, far);
+        const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
+        await t.a.services.idle();
+        expectSynced(rotated.pushed);
+        const g2 = rotated.localId;
+        const mark = (await rows(t.a, g2)).find(
+          (r) => r.event.type === 'member.archived' && r.event.id === t.priya,
+        );
+        expect(mark?.event).toMatchObject({ by: t.maya });
+        expect(mark?.event.ts).toBeLessThan(TOP);
+        expect((await state(t.a, g2)).state.members.get(t.priya)).toMatchObject({
+          name: 'Priya',
+          archived: true,
+        });
+        expect(await t.h.secrets.getSecret(g2)).toBeNull();
+      });
+    });
   });
 
-  it('a group.renamed at the top of the range does not pin the name', async () => {
-    const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'group.renamed', name: 'Pwned' });
-    expect((await state(t.a, t.g1)).state.name).toBe('Banff 2026');
-    await g(t.a).renameGroup(t.g1, 'Banff trip');
-    await syncAll(t, t.g1);
-    for (const d of [t.a, t.b, t.h]) expect((await state(d, t.g1)).state.name).toBe('Banff trip');
-  });
-
-  it('a member.updated at the top of the range does not pin a name, and the member can still rename', async () => {
+  it('a far member.updated does not pin a name, and the member can still rename', async () => {
     const t = await trio(await setup(kind));
     await farWrite(t, { type: 'member.updated', id: t.nathan, changes: { name: 'Pwned' } });
     expect((await state(t.b, t.g1)).state.members.get(t.nathan)?.name).toBe('Nathan');
@@ -199,60 +339,29 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     }
   });
 
-  it('a member.archived at the top of the range does not hide a member', async () => {
+  it('a far member.archived does not hide a member; an honest archive and unarchive go on around it', async () => {
     const t = await trio(await setup(kind));
     await farWrite(t, { type: 'member.archived', id: t.nathan });
     for (const d of [t.a, t.b, t.h]) {
       expect((await state(d, t.g1)).state.members.get(t.nathan)?.archived).toBe(false);
     }
-    // And an honest archive and unarchive still work around it.
     await g(t.a).archiveMember(t.g1, t.nathan);
     expect((await state(t.a, t.g1)).state.members.get(t.nathan)?.archived).toBe(true);
     await g(t.a).unarchiveMember(t.g1, t.nathan);
     expect((await state(t.a, t.g1)).state.members.get(t.nathan)?.archived).toBe(false);
   });
 
-  it('an expense edited at the top of the range can still be edited and deleted (no "check your phone\'s date")', async () => {
+  it('before a server stamps it, a far write takes effect at its claim on the phone that holds it; the stamp holds it', async () => {
     const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'expense.updated', id: t.dinner, changes: { title: 'Pwned' } });
-    expect((await state(t.a, t.g1)).state.expenses.get(t.dinner)?.title).toBe('Dinner');
-    await g(t.a).updateExpense(t.g1, t.dinner, { title: 'Dinner at the Park' });
-    await syncAll(t, t.g1);
-    for (const d of [t.a, t.b, t.h]) {
-      expect((await state(d, t.g1)).state.expenses.get(t.dinner)?.title).toBe('Dinner at the Park');
-    }
-    await g(t.b).deleteExpense(t.g1, t.dinner);
-    await syncAll(t, t.g1);
-    expect((await state(t.a, t.g1)).state.expenses.has(t.dinner)).toBe(false);
-  });
-
-  it('an expense added at the top of the range can be deleted; an edit of it is still refused', async () => {
-    const t = await trio(await setup(kind));
-    const fake = newId();
-    await farWrite(t, {
-      type: 'expense.added',
-      expense: {
-        id: fake,
-        title: 'Fake',
-        amount: 900_000,
-        currency: 'CAD',
-        paidBy: t.priya,
-        date: '2026-02-11',
-        category: 'other',
-        split: { [t.maya]: 450_000, [t.nathan]: 450_000 },
-      },
-    });
-    expect((await state(t.a, t.g1)).state.expenses.has(fake)).toBe(true);
-    // An edit has to sort after the add to take effect, and nothing below the top of the range does.
-    await rejectsWith(g(t.a).updateExpense(t.g1, fake, { title: 'Still fake' }), 'clock');
-    // A delete holds in either order: its tombstone keeps the add out.
-    await g(t.a).deleteExpense(t.g1, fake);
-    await syncAll(t, t.g1);
-    for (const d of [t.a, t.b, t.h]) {
-      const s = (await state(d, t.g1)).state;
-      expect(s.expenses.has(fake)).toBe(false);
-      expect(s.expenses.has(t.dinner)).toBe(true);
-    }
+    // Written on H, not yet pushed: no R, so not held (design.md "Ordering"): H's own phone shows it.
+    await injectEvent(
+      t.h,
+      t.g1,
+      body({ type: 'group.renamed', name: 'Pwned' }, t.priya, t.h.services.deviceId, TOP),
+    );
+    expect((await state(t.h, t.g1)).state.name).toBe('Pwned');
+    expectSynced(await sync(t.h, t.g1));
+    expect((await state(t.h, t.g1)).state.name).toBe('Banff 2026');
   });
 
   // ----- Regenerating the invite -----
@@ -291,32 +400,12 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
     await t.a.services.idle();
     const g2 = rotated.localId;
-    expect((await rows(t.a, g2)).map((r) => r.id)).not.toContain(far);
+    expect((await rows(t.a, g2)).map((r) => r.id)).not.toContain(far[0]);
     const after = await state(t.a, g2);
     expect(after.state.archived).toBe(false);
     expect(after.derived.readOnly).toBeNull();
     expect(after.state.members.get(t.priya)?.archived).toBe(true);
     await g(t.a).addExpense(g2, expense(t.maya, 'Breakfast', [t.maya, t.nathan]));
-  });
-
-  it('a far archive a second (forged) device backs up holds in the old group; rotation is the way out', async () => {
-    const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'group.archived' });
-    await farWrite(t, { type: 'group.archived' }, { dev: newId() });
-    // Two devices at the top of the range: the log has caught up to the archive, so it wins and an unarchive at
-    // now cannot outrank it (design.md "Reducer": the rule depends only on the log, and `dev` is the writer's claim).
-    await g(t.a).unarchiveGroup(t.g1);
-    expect((await state(t.a, t.g1)).state.archived).toBe(true);
-
-    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
-    await t.a.services.idle();
-    const g2 = rotated.localId;
-    for (const r of await rows(t.a, g2)) expect(r.event.ts).toBeLessThan(TOP);
-    expect((await state(t.a, g2)).state.archived).toBe(true); // re-stated at the rotator's clock
-    await g(t.a).unarchiveGroup(g2);
-    const after = await state(t.a, g2);
-    expect(after.state.archived).toBe(false);
-    expect(after.derived.readOnly).toBeNull();
   });
 
   it('removing a member whose own far-future rename is in the log: the rotation completes and archives them', async () => {
@@ -329,9 +418,9 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect(removed).toMatchObject({ name: 'Priya', archived: true });
   });
 
-  it('removing a member with a far-future claim of theirs: the mark is written at the group clock and holds', async () => {
+  it('removing a member with a far-future claim of theirs: the mark is written at the clock and holds', async () => {
     const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'member.claimed', id: t.priya }, { dev: newId() });
+    await farWrite(t, { type: 'member.claimed', id: t.priya }, { devs: [newId()] });
     const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
     await t.a.services.idle();
     const mark = (await rows(t.a, rotated.localId)).find(
@@ -339,22 +428,5 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     );
     expect(mark?.event.ts).toBeLessThan(TOP);
     expect((await state(t.a, rotated.localId)).state.members.get(t.priya)?.archived).toBe(true);
-  });
-
-  it('a removal a far-future unarchive outranks is still written; the member stays listed', async () => {
-    const t = await trio(await setup(kind));
-    await farWrite(t, { type: 'member.unarchived', id: t.priya });
-    await farWrite(t, { type: 'member.unarchived', id: t.priya }, { dev: newId() });
-    const rotated = await g(t.a).rotateInvite(t.g1, { removeMemberId: t.priya });
-    await t.a.services.idle();
-    expectSynced(rotated.pushed);
-    const g2 = rotated.localId;
-    const mark = (await rows(t.a, g2)).find(
-      (r) => r.event.type === 'member.archived' && r.event.id === t.priya,
-    );
-    expect(mark?.event).toMatchObject({ by: t.maya });
-    // What the user sees: Priya still listed in the new group, though she holds no invite to it.
-    expect((await state(t.a, g2)).state.members.get(t.priya)?.archived).toBe(false);
-    expect(await t.h.secrets.getSecret(g2)).toBeNull();
   });
 });

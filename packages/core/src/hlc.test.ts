@@ -2,7 +2,10 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from './constants.js';
 import {
+  aheadOfServer,
   canWrite,
+  compareLog,
+  effectiveTs,
   entityIdOf,
   holdBackHorizon,
   isClockSane,
@@ -10,7 +13,7 @@ import {
   isReceivedAt,
   mustFollowTarget,
   nextTs,
-  writesLastWriterField,
+  receivedAtOf,
   writeTs,
 } from './hlc.js';
 import type { Event, EventPayload, LogEntry } from './types.js';
@@ -40,6 +43,10 @@ function fromDevice(dev: string, ts: number, payload: EventPayload): LogEntry {
 }
 
 const TOP = LIMITS.tsMax - 1;
+const W = LIMITS.clockAbsorbWindowMs;
+
+/** The entry as a server reported it, arriving at `receivedAt`. */
+const arrived = (made: LogEntry, receivedAt: number): LogEntry => ({ ...made, receivedAt });
 
 const expenseAdded = (ts: number, expenseId = EXPENSE): LogEntry =>
   entry(ts, {
@@ -158,134 +165,179 @@ describe('nextTs', () => {
   });
 });
 
-describe('nextTs: held-back writes (review H2)', () => {
+describe('effectiveTs and compareLog: (min(ts, R), ts, id)', () => {
   const rename = { type: 'group.renamed', name: 'A' } as const;
-  const titleEdit = { type: 'expense.updated', id: EXPENSE, changes: { title: 'Pwned' } } as const;
 
-  it("does not climb over another device's edit of the target that the reducer holds back", () => {
-    const far = fromDevice('far', TOP, titleEdit);
-    const log = [expenseAdded(NOW - DAY), fromDevice('honest', NOW - HOUR, rename), far];
-    expect(isHeldBack(far.event, holdBackHorizon(log))).toBe(true);
-    expect(nextTs(NOW, log, EXPENSE)).toBe(NOW);
-    expect(canWrite(NOW, log, EXPENSE)).toBe(true);
+  it('an entry is effective at min(ts, R), or at its claimed ts with no usable R', () => {
+    const e = entry(NOW + HOUR, rename);
+    expect(effectiveTs(e)).toBe(NOW + HOUR);
+    expect(effectiveTs(arrived(e, NOW))).toBe(NOW);
+    expect(effectiveTs(arrived(e, NOW + 2 * HOUR))).toBe(NOW + HOUR);
+    for (const bad of [0.5, LIMITS.tsMin - 1, LIMITS.tsMax, Number.NaN]) {
+      expect(effectiveTs(arrived(e, bad))).toBe(NOW + HOUR);
+      expect(receivedAtOf(arrived(e, bad))).toBeUndefined();
+    }
+    expect(receivedAtOf(arrived(e, NOW))).toBe(NOW);
   });
 
-  it('still climbs over an edit from a phone hours fast, as before', () => {
-    const fast = fromDevice('fast', NOW + 3 * HOUR, titleEdit);
-    const log = [expenseAdded(NOW - DAY), fromDevice('honest', NOW - HOUR, rename), fast];
-    expect(nextTs(NOW, log, EXPENSE)).toBe(NOW + 3 * HOUR + 1);
+  it('the sort key is exactly (min(ts, R), ts, id), for any entries', () => {
+    const arb = fc.record({
+      ts: fc.integer({ min: NOW - DAY, max: NOW + DAY }),
+      r: fc.option(fc.integer({ min: NOW - DAY, max: NOW + DAY }), { nil: undefined }),
+      id: fc.constantFrom('a', 'b', 'c').map((c) => id(c)),
+    });
+    const key = (x: { ts: number; r: number | undefined; id: string }) =>
+      [x.r === undefined ? x.ts : Math.min(x.ts, x.r), x.ts, x.id] as const;
+    const lex = (a: readonly [number, number, string], b: readonly [number, number, string]): number =>
+      a[0] !== b[0] ? Math.sign(a[0] - b[0]) : a[1] !== b[1] ? Math.sign(a[1] - b[1]) : a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0;
+    const make = (x: { ts: number; r: number | undefined; id: string }): LogEntry => {
+      const e = { id: x.id, event: entry(x.ts, rename).event };
+      return x.r === undefined ? e : arrived(e, x.r);
+    };
+    fc.assert(
+      fc.property(arb, arb, (a, b) => {
+        const k = lex(key(a), key(b));
+        if (k !== 0) expect(Math.sign(compareLog(make(a), make(b)))).toBe(k);
+      }),
+      { numRuns: 500 },
+    );
   });
 
-  it('still climbs over an add however far ahead: an add takes effect, so an edit must follow it', () => {
-    const add = expenseAdded(TOP);
-    const log = [{ id: add.id, event: { ...add.event, dev: id('far') } }, fromDevice('honest', NOW - HOUR, rename)];
-    expect(nextTs(NOW, log, EXPENSE)).toBe(LIMITS.tsMax);
-    expect(canWrite(NOW, log, EXPENSE)).toBe(false);
+  it('an add then an edit from a phone 3 h ahead, pushed in one request, keep their order', () => {
+    // Both arrive in one request, so they share an R three hours before what the phone stamped.
+    const R = NOW;
+    const add = arrived(expenseAdded(NOW + 3 * HOUR), R);
+    const edit = arrived(entry(NOW + 3 * HOUR + 1, { type: 'expense.updated', id: EXPENSE, changes: { title: 'B' } }), R);
+    expect(effectiveTs(add)).toBe(effectiveTs(edit));
+    // Whatever the envelope ids: the claimed ts breaks the tie, not the id.
+    for (const [ia, ie] of [[id('zzz'), id('aaa')], [id('aaa'), id('zzz')]] as const) {
+      expect(compareLog({ ...add, id: ia }, { ...edit, id: ie })).toBeLessThan(0);
+    }
   });
 
-  it('climbs over a far edit once a second device sits next to it (the rule reads only the log)', () => {
-    const log = [
-      expenseAdded(NOW - DAY),
-      fromDevice('far', TOP, titleEdit),
-      fromDevice('second', TOP, { type: 'member.done', id: MAYA }),
-    ];
-    expect(holdBackHorizon(log)).toBeGreaterThanOrEqual(TOP);
-    expect(nextTs(NOW, log, EXPENSE)).toBe(LIMITS.tsMax);
-    expect(canWrite(NOW, log, EXPENSE)).toBe(false);
-  });
-
-  it('leaves the group clock alone: an untargeted write never looked past the absorb window', () => {
-    const log = [fromDevice('honest', NOW - HOUR, rename), fromDevice('far', TOP, rename)];
-    expect(nextTs(NOW, log)).toBe(NOW);
+  it('copies of one envelope id order by R, then the copy with none, so de-duplication keeps the same one', () => {
+    const e = entry(NOW, rename);
+    expect(compareLog(arrived(e, NOW + 5), arrived(e, NOW + 9))).toBeLessThan(0);
+    expect(compareLog(arrived(e, NOW + 5), e)).toBeLessThan(0);
+    expect(compareLog(e, { ...e })).toBe(0);
   });
 });
 
-describe('holdBackHorizon', () => {
+describe('holdBackHorizon and isHeldBack: the latest R plus W', () => {
   const rename = { type: 'group.renamed', name: 'A' } as const;
 
-  it('holds nothing back in an empty log or one written by a single device, however far apart', () => {
+  it('is +Infinity with no usable R: nothing is held', () => {
     expect(holdBackHorizon([])).toBe(Number.POSITIVE_INFINITY);
-    expect(holdBackHorizon([entry(NOW, rename), entry(TOP, rename)])).toBe(Number.POSITIVE_INFINITY);
-  });
-
-  it("is the latest ts by any device but the one with the log's latest ts, plus the window", () => {
-    const log = [
-      fromDevice('a', NOW - DAY, rename),
-      fromDevice('b', NOW, rename),
-      fromDevice('a', NOW + HOUR, rename),
-      fromDevice('c', TOP, rename),
-      fromDevice('c', NOW - 2 * DAY, rename),
-    ];
-    expect(holdBackHorizon(log)).toBe(NOW + HOUR + LIMITS.holdBackMs);
-  });
-
-  it('holds nothing at the latest ts when two devices share it', () => {
-    const log = [fromDevice('a', NOW, rename), fromDevice('b', TOP, rename), fromDevice('c', TOP, rename)];
-    expect(holdBackHorizon(log)).toBe(TOP + LIMITS.holdBackMs);
-  });
-
-  it('matches its definition for any log: past it are exactly the events more than the window ahead of every other device', () => {
-    const devices = ['a', 'b', 'c'];
-    const arb = fc.array(
-      fc.record({
-        dev: fc.constantFrom(...devices),
-        ts: fc.oneof(
-          fc.integer({ min: LIMITS.tsMin, max: LIMITS.tsMin + 3 * LIMITS.holdBackMs }),
-          fc.integer({ min: LIMITS.tsMin, max: LIMITS.tsMax - 1 }),
-        ),
-      }),
-      { maxLength: 12 },
+    const far = entry(TOP, rename);
+    expect(holdBackHorizon([entry(NOW, rename), far, arrived(entry(NOW, rename), 0.5)])).toBe(
+      Number.POSITIVE_INFINITY,
     );
+    expect(isHeldBack(far, holdBackHorizon([far]))).toBe(false);
+  });
+
+  it('is the latest R in the log plus W, whoever wrote what', () => {
+    const log = [
+      arrived(fromDevice('a', NOW - DAY, rename), NOW - DAY),
+      arrived(fromDevice('b', TOP, rename), NOW - HOUR),
+      arrived(fromDevice('a', NOW, rename), NOW),
+      fromDevice('c', NOW + 5 * DAY, rename),
+    ];
+    expect(holdBackHorizon(log)).toBe(NOW + W);
+  });
+
+  it('holds an entry with an R exactly when its claimed ts is past the horizon: H + W + 1 held, H + W not', () => {
+    const H = NOW; // the latest R
+    const horizon = holdBackHorizon([arrived(entry(NOW, rename), H)]);
+    expect(isHeldBack(arrived(entry(H + W + 1, rename), H), horizon)).toBe(true);
+    expect(isHeldBack(arrived(entry(H + W, rename), H), horizon)).toBe(false);
+    // An entry with no R is never held, however far ahead; an unusable R is no R.
+    expect(isHeldBack(entry(TOP, rename), horizon)).toBe(false);
+    expect(isHeldBack(arrived(entry(TOP, rename), LIMITS.tsMax), horizon)).toBe(false);
+  });
+
+  it('is permutation-invariant and reads only the R values', () => {
     fc.assert(
-      fc.property(arb, fc.nat(), (rows, turn) => {
-        const log = rows.map((r) => fromDevice(r.dev, r.ts, rename));
-        const horizon = holdBackHorizon(log);
-        for (const { event } of log) {
-          const others = log.filter((e) => e.event.dev !== event.dev).map((e) => e.event.ts);
-          const ahead = others.length > 0 && event.ts > Math.max(...others) + LIMITS.holdBackMs;
-          expect(event.ts > horizon).toBe(ahead);
-        }
-        // Permutation-invariant: reversed, then rotated.
-        const reversed = [...log].reverse();
-        const k = log.length === 0 ? 0 : turn % log.length;
-        expect(holdBackHorizon([...reversed.slice(k), ...reversed.slice(0, k)])).toBe(horizon);
-      }),
+      fc.property(
+        fc.array(fc.option(fc.integer({ min: LIMITS.tsMin, max: LIMITS.tsMax + 10 }), { nil: undefined }), {
+          maxLength: 10,
+        }),
+        fc.nat(),
+        (rs, turn) => {
+          const log = rs.map((r, i) => {
+            const e = entry(NOW + i, rename);
+            return r === undefined ? e : arrived(e, r);
+          });
+          const usable = rs.filter((r): r is number => r !== undefined && isReceivedAt(r));
+          expect(holdBackHorizon(log)).toBe(usable.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...usable) + W);
+          const k = log.length === 0 ? 0 : turn % log.length;
+          expect(holdBackHorizon([...log.slice(k), ...log.slice(0, k)].reverse())).toBe(holdBackHorizon(log));
+        },
+      ),
       { numRuns: 300 },
     );
   });
 });
 
-describe('writesLastWriterField', () => {
-  it('names the field writes and nothing else', () => {
-    const fields: EventPayload[] = [
-      { type: 'group.renamed', name: 'A' },
-      { type: 'group.archived' },
-      { type: 'group.unarchived' },
-      { type: 'group.moved', server: 'https://example.com' },
-      { type: 'member.updated', id: NATHAN, changes: { name: 'Nate' } },
-      { type: 'member.archived', id: NATHAN },
-      { type: 'member.unarchived', id: NATHAN },
-      { type: 'member.done', id: NATHAN },
-      { type: 'member.undone', id: NATHAN },
-      { type: 'expense.updated', id: EXPENSE, changes: { title: 'Lunch' } },
-    ];
-    const others: EventPayload[] = [
-      { type: 'group.created', name: 'Banff', currency: 'CAD' },
-      { type: 'group.closed', reason: 'rotated' },
-      { type: 'group.rotated', from: 'x'.repeat(43) },
-      { type: 'member.added', member: { id: NATHAN, name: 'Nathan' } },
-      { type: 'member.claimed', id: NATHAN },
-      expenseAdded(NOW).event,
-      { type: 'expense.deleted', id: EXPENSE },
-      {
-        type: 'payment.added',
-        payment: { id: PAYMENT, from: NATHAN, to: MAYA, amount: 5, currency: 'CAD', date: '2026-02-14' },
-      },
-      { type: 'payment.deleted', id: PAYMENT },
-    ];
-    expect(new Set([...fields, ...others].map((p) => p.type)).size).toBe(19);
-    for (const p of fields) expect(writesLastWriterField(entry(NOW, p).event)).toBe(true);
-    for (const p of others) expect(writesLastWriterField(entry(NOW, p).event)).toBe(false);
+describe('nextTs over effective times', () => {
+  const rename = { type: 'group.renamed', name: 'A' } as const;
+  const titleEdit = { type: 'expense.updated', id: EXPENSE, changes: { title: 'Pwned' } } as const;
+
+  it('the group clock absorbs effective times: an event stamped ahead counts from its arrival', () => {
+    const fast = arrived(entry(NOW + 20 * HOUR, rename), NOW - HOUR);
+    expect(nextTs(NOW, [fast])).toBe(NOW); // effective at NOW - HOUR
+    expect(nextTs(NOW, [entry(NOW + 20 * HOUR, rename)])).toBe(NOW + 20 * HOUR + 1); // no R: as claimed
+    // A phone behind the server climbs over what arrived.
+    expect(nextTs(NOW - 2 * HOUR, [arrived(entry(NOW - HOUR, rename), NOW - HOUR)])).toBe(NOW - HOUR + 1);
+  });
+
+  it('climbs over the effective time of the target, not its claim', () => {
+    const add = arrived(expenseAdded(NOW + 20 * HOUR), NOW - HOUR);
+    const edit = arrived(entry(NOW + 22 * HOUR, titleEdit), NOW - 30 * 60 * 1000);
+    expect(nextTs(NOW, [add, edit], EXPENSE)).toBe(NOW);
+    expect(nextTs(NOW - 2 * HOUR, [add, edit], EXPENSE)).toBe(NOW - 30 * 60 * 1000 + 1);
+  });
+
+  it("does not climb over a held edit, and a far event with an R never reaches the top", () => {
+    const add = arrived(expenseAdded(NOW - DAY), NOW - DAY);
+    const far = arrived(fromDevice('far', TOP, titleEdit), NOW - HOUR);
+    const log = [add, far];
+    expect(isHeldBack(far, holdBackHorizon(log))).toBe(true);
+    expect(nextTs(NOW, log, EXPENSE)).toBe(NOW);
+    // A far add with an R takes effect once a later R releases it, at its arrival, so an edit need only follow that.
+    const farAdd = arrived(expenseAdded(TOP, OTHER_EXPENSE), NOW - HOUR);
+    const released = [farAdd, arrived(entry(TOP - W, rename), TOP - W)];
+    expect(isHeldBack(farAdd, holdBackHorizon(released))).toBe(false);
+    expect(nextTs(NOW - 2 * HOUR, released, OTHER_EXPENSE)).toBe(NOW - HOUR + 1);
+  });
+
+  it('climbs over a target with no R however far ahead (this phone\'s own unsynced write, or an unstamped log)', () => {
+    const top = expenseAdded(TOP);
+    expect(nextTs(NOW, [top], EXPENSE)).toBe(LIMITS.tsMax);
+    expect(nextTs(NOW, [arrived(top, NOW - HOUR)], EXPENSE)).toBe(NOW);
+  });
+});
+
+describe('aheadOfServer: this phone more than W ahead of the server, from its last push', () => {
+  const own = (ts: number, receivedAt: number) => ({ ts, receivedAt });
+
+  it('is true when the last push arrived more than W before what the phone stamped, and the clock still says so', () => {
+    const stamped = NOW + 3 * DAY;
+    expect(aheadOfServer(stamped + 1_000, own(stamped, NOW))).toBe(true);
+    expect(aheadOfServer(stamped + W, own(stamped, NOW))).toBe(true);
+  });
+
+  it('is false for a lead of W or less, no push yet, or an unusable R', () => {
+    expect(aheadOfServer(NOW + W, own(NOW + W, NOW))).toBe(false);
+    expect(aheadOfServer(NOW + W + 2, own(NOW + W + 1, NOW))).toBe(true);
+    expect(aheadOfServer(NOW, null)).toBe(false);
+    expect(aheadOfServer(NOW, undefined)).toBe(false);
+    expect(aheadOfServer(NOW + 3 * DAY, own(NOW + 3 * DAY, 0.5))).toBe(false);
+  });
+
+  it('says nothing once the clock is set back below that stamp, or the push is more than W old by this clock', () => {
+    const stamped = NOW + 3 * DAY;
+    expect(aheadOfServer(NOW + 5_000, own(stamped, NOW))).toBe(false); // the date was fixed
+    expect(aheadOfServer(stamped + W + 1, own(stamped, NOW))).toBe(false); // the next push measures again
   });
 });
 
@@ -369,10 +421,19 @@ describe('canWrite', () => {
     expect(canWrite(NOW + 0.5, [])).toBe(false);
   });
 
-  it('refuses to edit an entity whose latest event sits at tsMax − 1 (nextTs would be tsMax)', () => {
+  it('refuses while this phone is more than W ahead of the server', () => {
+    const stamped = NOW + 3 * DAY;
+    expect(canWrite(stamped + 1_000, [], undefined, { ts: stamped, receivedAt: NOW })).toBe(false);
+    expect(canWrite(stamped + 1_000, [], undefined, { ts: stamped, receivedAt: stamped - HOUR })).toBe(true);
+    expect(canWrite(stamped + 1_000, [], undefined, null)).toBe(true);
+  });
+
+  it('refuses to edit an entity whose latest event, with no R, sits at tsMax − 1 (nextTs would be tsMax)', () => {
     const top = expenseAdded(LIMITS.tsMax - 1);
     expect(nextTs(NOW, [top], EXPENSE)).toBe(LIMITS.tsMax);
     expect(canWrite(NOW, [top], EXPENSE)).toBe(false);
+    // With an R it is effective at its arrival: the edit fits.
+    expect(canWrite(NOW, [arrived(top, NOW - HOUR)], EXPENSE)).toBe(true);
     // Group-level writes are unaffected: an event that far ahead is not absorbed into the group clock.
     expect(canWrite(NOW, [top])).toBe(true);
     // An entity at tsMax − 2 can still take exactly one more edit.
@@ -390,7 +451,7 @@ describe('canWrite', () => {
 describe('writeTs', () => {
   const rename = { type: 'group.renamed', name: 'A' } as const;
   const write = (payload: EventPayload): Event => entry(NOW, payload).event;
-  /** An expense another device added at the top of the range, and an honest device's event at now. */
+  /** An expense another device added at the top of the range, not stamped by a server, and an honest event at now. */
   const farAdd = (): LogEntry[] => {
     const add = expenseAdded(TOP);
     return [{ id: add.id, event: { ...add.event, dev: id('far') } }, fromDevice('honest', NOW - HOUR, rename)];
@@ -406,7 +467,15 @@ describe('writeTs', () => {
     expect(writeTs(LIMITS.tsMin - 1, log, write(rename))).toBeNull();
   });
 
-  it('gives a write that holds in either order the group clock when its target sits at the top (review H2)', () => {
+  it('is null while this phone is more than W ahead of the server, whatever the event', () => {
+    const stamped = NOW + 3 * DAY;
+    const own = { ts: stamped, receivedAt: NOW };
+    expect(writeTs(stamped + 1, [], write(rename), own)).toBeNull();
+    expect(writeTs(stamped + 1, farAdd(), write({ type: 'expense.deleted', id: EXPENSE }), own)).toBeNull();
+    expect(writeTs(NOW + 1, [], write(rename), own)).toBe(NOW + 1); // the date was fixed since
+  });
+
+  it('gives a write that holds in either order the group clock when its target, with no R, sits at the top', () => {
     const log = farAdd();
     expect(nextTs(NOW, log, EXPENSE)).toBe(LIMITS.tsMax);
     expect(writeTs(NOW, log, write({ type: 'expense.deleted', id: EXPENSE }))).toBe(NOW);
@@ -432,6 +501,12 @@ describe('writeTs', () => {
       fromDevice('honest', NOW - HOUR, rename),
     ];
     expect(writeTs(NOW, member, write({ type: 'member.updated', id: NATHAN, changes: { name: 'Nate' } }))).toBeNull();
+  });
+
+  it('once the far add has an R, the edit is an ordinary one after its arrival', () => {
+    const [add, honest] = farAdd() as [LogEntry, LogEntry];
+    const log = [arrived(add, NOW - 2 * HOUR), arrived(honest, NOW - HOUR)];
+    expect(writeTs(NOW, log, write({ type: 'expense.updated', id: EXPENSE, changes: { title: 'B' } }))).toBe(NOW);
   });
 
   it('names the two edits that must follow their target', () => {

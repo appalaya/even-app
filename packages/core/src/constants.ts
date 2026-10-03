@@ -10,16 +10,13 @@ export const LIMITS = {
   /** Absolute validity range for `ts` and `at`: 2024-01-01T00:00Z ≤ t < 2100-01-01T00:00Z. Never relative to "now". */
   tsMin: 1_704_067_200_000,
   tsMax: 4_102_444_800_000,
-  /** Received events more than this far ahead of the local clock are applied but not absorbed into the group clock. */
-  clockAbsorbWindowMs: 24 * 60 * 60 * 1000,
   /**
-   * The hold-back window (design.md "Reducer"): an event more than this far ahead of every event written by another
-   * device does not win a last-writer-wins field until another device's event reaches within this of it. Ten years
-   * (of 365 days), not the absorb window's day: the rule reads only the log, so its "now" is the other members'
-   * latest event, which lags by however long they have been quiet. A lone writer's edits win for this long after
-   * the others' last event, and only a clock decades off (the review's 2099) writes further ahead.
+   * W, a day (design.md "Ordering"). The group clock does not absorb an event more than this far ahead of the local
+   * clock; the reducer holds an event whose claimed `ts` is more than this past the latest server arrival time (R) in
+   * the log; and the write gate refuses while this phone's last push arrived more than this before the time it
+   * stamped on it.
    */
-  holdBackMs: 10 * 365 * 24 * 60 * 60 * 1000,
+  clockAbsorbWindowMs: 24 * 60 * 60 * 1000,
   idLength: 22, // base64url of 16 random bytes
   secretLength: 32,
   nonceLength: 24, // XChaCha20-Poly1305

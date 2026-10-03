@@ -1,8 +1,9 @@
 /**
  * The reducer: replays a group's log into `GroupState`. See design.md "Reducer" and "Ordering".
  *
- * Pure and deterministic: the log is sorted by (ts, id) and folded in that order, so any input
- * permutation of the same entries yields a deep-equal state (including Map insertion order).
+ * Pure and deterministic: the log is sorted by (min(ts, R), ts, id) (`compareLog`, R the server's arrival time) and
+ * folded in that order, so any input permutation of the same entries yields a deep-equal state (including Map
+ * insertion order).
  * Inputs are never mutated and never aliased into the output (splits and records are copied).
  *
  * Decisions where the spec leaves room (all tested in reduce.test.ts):
@@ -16,7 +17,7 @@
  * - One applied event produces no activity item: a `member.claimed` that merely confirms a self-join
  *   (the claim's `by` is the member, and its `dev` is the device whose self-add `member.added` created
  *   the member). The device set is still updated; the self-add already reads "X joined".
- * - Entries sharing an envelope id are replayed once (first in (ts, id) order).
+ * - Entries sharing an envelope id are replayed once (the first in `compareLog` order).
  * - `by` never creates a placeholder member. An actor not (yet) a real member at that point in the fold
  *   is named from a pre-scan of the whole log (the name in its first `member.added`), so the creator's
  *   `group.created` reads "Maya created the group" even if her `member.added` sorts after it. Only an
@@ -45,13 +46,14 @@
  *   (placeholders included when a device claimed them).
  * - `group.archived`/`group.unarchived` toggle `archived`; the latest in (ts, id) order wins. It is
  *   independent of `closed`: neither event reads or changes the other.
- * - Hold-back (pre-launch review H2): a last-writer-wins write (`writesLastWriterField`) past the log's
- *   `holdBackHorizon`, more than `LIMITS.holdBackMs` ahead of every event by another device, is ignored like any
- *   event that changes nothing: no state change, no activity item, no history entry, no placeholder. It applies in
- *   its (ts, id) place once the log catches up. The horizon is taken over the de-duplicated log.
+ * - Hold (pre-launch review H2, design.md "Ordering"): an event with an R whose claimed `ts` is more than a day past
+ *   the latest R in the log (`holdBackHorizon`, over the de-duplicated log) is skipped like an event that changes
+ *   nothing, whatever its type: no state change, no activity item, no history entry, no placeholder, and it names no
+ *   actor. It applies at its effective time, its arrival, once a later R brings the horizon past its `ts`. An event
+ *   with no R is never held.
  */
 import { AVATAR_COLOR_COUNT } from './constants.js';
-import { holdBackHorizon, isHeldBack } from './hlc.js';
+import { compareLog, effectiveTs, holdBackHorizon, isHeldBack } from './hlc.js';
 import {
   CATEGORIES,
   type ActivityItem,
@@ -108,14 +110,9 @@ function compareCodeUnits(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function compareEntries(a: LogEntry, b: LogEntry): number {
-  if (a.event.ts !== b.event.ts) return a.event.ts < b.event.ts ? -1 : 1;
-  return compareCodeUnits(a.id, b.id);
-}
-
-/** Stable sort by (ts, id) ascending. Does not mutate. */
+/** Sorted by `compareLog`, (min(ts, R), ts, id) ascending. Does not mutate. */
 export function sortLog(log: readonly LogEntry[]): LogEntry[] {
-  return [...log].sort(compareEntries);
+  return [...log].sort(compareLog);
 }
 
 /** Deterministic avatar colour index 0..AVATAR_COLOR_COUNT-1 from a member id. FNV-1a 32-bit over UTF-16 code units. */
@@ -140,14 +137,21 @@ export function initialsOf(name: string): string {
 
 // ---------- internals ----------
 
+/** An event's place in the fold: its effective time, claimed `ts` and envelope id (`compareLog`'s key). */
 interface Stamp {
+  effective: number;
   ts: number;
   id: string;
 }
 
-/** True if `a` sorts strictly after `b` in (ts, id) order. */
+function stampOf(entry: LogEntry): Stamp {
+  return { effective: effectiveTs(entry), ts: entry.event.ts, id: entry.id };
+}
+
+/** True if `a` sorts strictly after `b` in (min(ts, R), ts, id) order, the fold's own. */
 function newer(a: Stamp, b: Stamp | undefined): boolean {
   if (b === undefined) return true;
+  if (a.effective !== b.effective) return a.effective > b.effective;
   if (a.ts !== b.ts) return a.ts > b.ts;
   return a.id > b.id;
 }
@@ -252,8 +256,6 @@ class Fold {
     private readonly formatter: (minor: number) => string,
     private readonly selfLocalId: string | undefined,
     private readonly firstAdded: ReadonlyMap<string, FirstAdd>,
-    /** The log's `holdBackHorizon`: a last-writer-wins write past it does not win yet. */
-    private readonly horizon: number,
   ) {}
 
   /** Caller-supplied formatting must not be able to abort the fold. */
@@ -307,10 +309,9 @@ class Fold {
     this.state.activity.push(item);
   }
 
-  /** Applies one entry and records an activity item unless the event was ignored, held back or changed nothing. */
+  /** Applies one entry and records an activity item unless the event was ignored or changed nothing. */
   apply(entry: LogEntry): void {
     const ev = entry.event;
-    if (isHeldBack(ev, this.horizon)) return;
     const actor = this.actorName(ev.by);
     const summary = this.dispatch(entry, ev, actor);
     if (summary !== null) this.emit(entry, summary);
@@ -497,7 +498,7 @@ class Fold {
       history: [this.history(entry, 'added', expense)],
     };
     s.expenses.set(rec.id, state);
-    const stamp: Stamp = { ts: ev.ts, id: entry.id };
+    const stamp = stampOf(entry);
     this.lastWrite.set(rec.id, new Map(EXPENSE_FIELDS.map((f) => [f, stamp] as const)));
     // Auto-clear: adding an expense shows the adder is not done. No separate activity item.
     this.done.delete(ev.by);
@@ -510,7 +511,7 @@ class Fold {
     const e = s.expenses.get(ev.id);
     if (e === undefined) return null;
     const writes = this.lastWrite.get(ev.id) ?? new Map<ExpenseField, Stamp>();
-    const stamp: Stamp = { ts: ev.ts, id: entry.id };
+    const stamp = stampOf(entry);
     const c = ev.changes;
     const wins = (field: ExpenseField): boolean => newer(stamp, writes.get(field));
 
@@ -665,19 +666,28 @@ class Fold {
   }
 }
 
-/** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
-export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState {
+/**
+ * The entries the fold applies, in its order: sorted by `compareLog`, each envelope id once (the first), and held
+ * entries left out (design.md "Ordering": a claimed `ts` more than a day past the latest R waits).
+ */
+export function liveLog(log: readonly LogEntry[]): LogEntry[] {
   const seen = new Set<string>();
   const entries = sortLog(log).filter((entry) => {
     if (seen.has(entry.id)) return false;
     seen.add(entry.id);
     return true;
   });
+  const horizon = holdBackHorizon(entries);
+  return entries.filter((entry) => !isHeldBack(entry, horizon));
+}
+
+/** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
+export function reduce(log: readonly LogEntry[], options?: ReduceOptions): GroupState {
+  const entries = liveLog(log);
   const fold = new Fold(
     options?.format ?? ((n: number) => String(n)),
     options?.selfLocalId,
     firstAdds(entries),
-    holdBackHorizon(entries),
   );
   for (const entry of entries) fold.apply(entry);
   return fold.finish();

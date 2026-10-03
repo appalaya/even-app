@@ -2,27 +2,97 @@ import { LIMITS } from './constants.js';
 import type { Event, LogEntry } from './types.js';
 
 /**
- * Hybrid logical timestamp for a new event (design.md "Ordering").
- * ts = max(nowMs, lastSeenTs + 1) where lastSeenTs is the largest ts in `log` that is ≤ nowMs + clockAbsorbWindowMs.
- * If `targetId` is given (the entity this event edits/deletes), ts is also ≥ maxTs(events targeting that entity) + 1,
- * however far ahead those are, counting only events that take effect: a last-writer-wins write the reducer holds back
- * (`isHeldBack`) is left out, so an edit never has to climb over an event that cannot win anyway (pre-launch review
- * H2). "Targeting" includes the `*.added` event that created the entity.
+ * The arrival-time rule (design.md "Ordering", pre-launch review H2). A server stamps every envelope it stores with R,
+ * its own arrival time (PROTOCOL.md §4; `LogEntry.receivedAt`). A claimed `ts` is believed only as far as R:
  *
- * Stateless, two passes over `log`. Not clamped to the validator range: callers gate every write on `canWrite`, which
- * refuses when the clock is insane or when the result would be ≥ LIMITS.tsMax (an entity whose latest event that takes
- * effect sits at tsMax − 1 can no longer be edited). A fractional `nowMs` is floored so the result is an integer.
+ * - **Order.** Every event sorts by `(min(ts, R), ts, id)` (`compareLog`), its effective time first (`effectiveTs`). An
+ *   event with no R (not yet pushed, pulled, or imported with one) uses its claimed `ts`.
+ * - **Hold.** An event whose claimed `ts` is more than W (`LIMITS.clockAbsorbWindowMs`, a day) past the latest R in the
+ *   log (`holdBackHorizon`) changes nothing yet (`isHeldBack`): the reducer skips it like a no-op until a later R
+ *   raises the horizon, and it then takes effect at its effective time, its arrival. An event with no R is never held.
+ *
+ * Everything here reads only the log (and, for the write gate, the clock and this phone's last push), so it is
+ * deterministic and permutation-invariant like the fold that uses it.
+ */
+
+/** W: how far a claimed `ts` may run ahead of the server's latest arrival time before it waits for one (a day). */
+const W = LIMITS.clockAbsorbWindowMs;
+
+/** The entry's R when it is a usable one (`isReceivedAt`), else undefined: an unusable R counts as absent. */
+export function receivedAtOf(entry: LogEntry): number | undefined {
+  const r = entry.receivedAt;
+  return isReceivedAt(r) ? r : undefined;
+}
+
+/** The entry's effective time: `min(ts, R)`, or the claimed `ts` while it has no R. Never later than its arrival. */
+export function effectiveTs(entry: LogEntry): number {
+  const r = receivedAtOf(entry);
+  return r === undefined ? entry.event.ts : Math.min(entry.event.ts, r);
+}
+
+/**
+ * The log's one total order, the fold's and `newer`'s: `(min(ts, R), ts, id)`, ids by UTF-16 code units. Entries that
+ * share all three (the same envelope id twice, with different R) go R first, the smaller first, then no R, so which
+ * copy a duplicate keeps does not depend on input order.
+ */
+export function compareLog(a: LogEntry, b: LogEntry): number {
+  const ea = effectiveTs(a);
+  const eb = effectiveTs(b);
+  if (ea !== eb) return ea < eb ? -1 : 1;
+  if (a.event.ts !== b.event.ts) return a.event.ts < b.event.ts ? -1 : 1;
+  if (a.id !== b.id) return a.id < b.id ? -1 : 1;
+  const ra = receivedAtOf(a);
+  const rb = receivedAtOf(b);
+  if (ra === rb) return 0;
+  if (ra === undefined) return 1;
+  if (rb === undefined) return -1;
+  return ra < rb ? -1 : 1;
+}
+
+/**
+ * The hold horizon of a log: the latest R in it plus W. An event with an R whose claimed `ts` is past it is held
+ * (`isHeldBack`). `+Infinity`, nothing held, when no entry has an R. One pass; depends only on the R values.
+ */
+export function holdBackHorizon(log: readonly LogEntry[]): number {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const entry of log) {
+    const r = receivedAtOf(entry);
+    if (r !== undefined && r > latest) latest = r;
+  }
+  return latest === Number.NEGATIVE_INFINITY ? Number.POSITIVE_INFINITY : latest + W;
+}
+
+/**
+ * True if the reducer holds `entry` in a log whose `holdBackHorizon` is `horizon`: it has an R and claims a `ts` past
+ * the horizon, so it changes nothing yet, whatever its type. An entry with no R is never held.
+ */
+export function isHeldBack(entry: LogEntry, horizon: number): boolean {
+  return receivedAtOf(entry) !== undefined && entry.event.ts > horizon;
+}
+
+/**
+ * Hybrid logical timestamp for a new event (design.md "Ordering"), over effective times:
+ * ts = max(nowMs, lastSeen + 1), where lastSeen is the largest effective time in `log` not more than W past nowMs.
+ * If `targetId` is given (the entity this event edits or deletes, its `*.added` included), ts is also ≥ the largest
+ * effective time among the events about it that take effect (held ones do not) + 1, however far ahead. An event with
+ * an R is effective at its arrival at the latest, so only one with no R (this phone's own unsynced write, or a log a
+ * server has not stamped) can push the result to the top of the range.
+ *
+ * Stateless, one pass over `log` plus the horizon's. Not clamped to the validator range: the write path asks
+ * `writeTs`, which refuses or falls back when the result would be ≥ LIMITS.tsMax. A fractional `nowMs` is floored.
  */
 export function nextTs(nowMs: number, log: readonly LogEntry[], targetId?: string): number {
   const now = Math.floor(nowMs);
-  const absorbLimit = now + LIMITS.clockAbsorbWindowMs;
+  const absorbLimit = now + W;
   const horizon = targetId === undefined ? Number.POSITIVE_INFINITY : holdBackHorizon(log);
   let lastSeen = 0;
   let maxTarget: number | null = null;
-  for (const { event } of log) {
-    if (event.ts <= absorbLimit && event.ts > lastSeen) lastSeen = event.ts;
-    if (targetId !== undefined && (maxTarget === null || event.ts > maxTarget) && !isHeldBack(event, horizon)) {
-      if (entityIdOf(event) === targetId || createdIdOf(event) === targetId) maxTarget = event.ts;
+  for (const entry of log) {
+    const effective = effectiveTs(entry);
+    if (effective <= absorbLimit && effective > lastSeen) lastSeen = effective;
+    if (targetId !== undefined && (maxTarget === null || effective > maxTarget) && !isHeldBack(entry, horizon)) {
+      const { event } = entry;
+      if (entityIdOf(event) === targetId || createdIdOf(event) === targetId) maxTarget = effective;
     }
   }
   const ts = Math.max(now, lastSeen + 1);
@@ -30,79 +100,24 @@ export function nextTs(nowMs: number, log: readonly LogEntry[], targetId?: strin
 }
 
 /**
- * The hold-back horizon of a log (design.md "Reducer", pre-launch review H2): the latest `ts` at which an event can
- * still win a last-writer-wins field. An event more than `LIMITS.holdBackMs` ahead of every event written by another
- * device does not win until the log catches up, that is until some other device's event reaches within
- * `LIMITS.holdBackMs` of it.
- *
- * Only one device can be that far ahead of all the others (two such devices would each be ahead of the other), so
- * the rule is one number: the latest `ts` written by any device other than the one holding the log's latest `ts`,
- * plus the window. Every event past it is that one device's. `+Infinity`, nothing held, when one device wrote the
- * whole log or two devices share its latest `ts`.
- *
- * Depends only on the (`dev`, `ts`) pairs in `log`, not on their order or on any clock: pure, deterministic and
- * permutation-invariant like the reducer that uses it. One pass.
+ * This phone's last push as the server saw it: the claimed `ts` of its own latest event that has an R, and that R
+ * (the app reads it from its store across every group). `ts` is what this phone's clock said when it wrote the event.
  */
-export function holdBackHorizon(log: readonly LogEntry[]): number {
-  let top = Number.NEGATIVE_INFINITY; // the latest ts in the log
-  let topDev: string | null = null; // a device that wrote it
-  let others = Number.NEGATIVE_INFINITY; // the latest ts by any device but topDev
-  for (const { event } of log) {
-    const { ts, dev } = event;
-    if (dev === topDev) {
-      if (ts > top) top = ts;
-    } else if (ts > top) {
-      others = top; // everything so far is ≤ the old top, which another device wrote
-      top = ts;
-      topDev = dev;
-    } else if (ts > others) {
-      others = ts;
-    }
-  }
-  return others === Number.NEGATIVE_INFINITY ? Number.POSITIVE_INFINITY : others + LIMITS.holdBackMs;
+export interface OwnReceipt {
+  ts: number;
+  receivedAt: number;
 }
 
 /**
- * True for the events that write a last-writer-wins field, the only ones the hold-back rule applies to: the group's
- * name, archive state and move (`group.renamed`, `group.archived`, `group.unarchived`, `group.moved`), a member's
- * name and avatar, archive state and done mark (`member.updated`, `member.archived`, `member.unarchived`,
- * `member.done`, `member.undone`), and an expense's fields (`expense.updated`). Creations, claims, tombstones and the
- * other control events are not fields: they take effect whatever their `ts`.
+ * True when this phone's clock is more than W ahead of the server's (design.md "Ordering"): its last push arrived
+ * more than W before the time the phone stamped on it, and the clock still reads what it read then, give or take W.
+ * A clock set back since (`nowMs` below that stamp) or a push more than W old by this clock says nothing about the
+ * clock now, and the next push measures again. A local check; nothing here asks the server.
  */
-export function writesLastWriterField(event: Event): boolean {
-  switch (event.type) {
-    case 'group.renamed':
-    case 'group.archived':
-    case 'group.unarchived':
-    case 'group.moved':
-    case 'member.updated':
-    case 'member.archived':
-    case 'member.unarchived':
-    case 'member.done':
-    case 'member.undone':
-    case 'expense.updated':
-      return true;
-    case 'group.created':
-    case 'group.closed':
-    case 'group.rotated':
-    case 'member.added':
-    case 'member.claimed':
-    case 'expense.added':
-    case 'expense.deleted':
-    case 'payment.added':
-    case 'payment.deleted':
-      return false;
-    default: {
-      const unreachable: never = event;
-      void unreachable;
-      return false;
-    }
-  }
-}
-
-/** True if the reducer holds `event` back in a log whose `holdBackHorizon` is `horizon`: it changes nothing yet. */
-export function isHeldBack(event: Event, horizon: number): boolean {
-  return event.ts > horizon && writesLastWriterField(event);
+export function aheadOfServer(nowMs: number, own: OwnReceipt | null | undefined): boolean {
+  if (own === null || own === undefined || !isReceivedAt(own.receivedAt) || !Number.isFinite(own.ts)) return false;
+  const now = Math.floor(nowMs);
+  return own.ts - own.receivedAt > W && now >= own.ts && now - own.ts <= W;
 }
 
 /** The entity id an event targets (expense/payment/member id), or null for group-level and *.added events. */
@@ -165,13 +180,18 @@ export function isClockSane(nowMs: number): boolean {
 }
 
 /**
- * The write gate (design.md "Ordering"): true iff the device clock is sane AND the timestamp the new event would get,
- * `nextTs(nowMs, log, targetId)`, is inside the validator's range. The app refuses to write otherwise, so it never
- * produces an event that fails validation on every phone. Pass the same `targetId` the write will use. The app's
- * write path asks `writeTs`, which also lets a write that holds in either order through.
+ * The strict write gate (design.md "Ordering"): false only when the device clock is outside the validator's range,
+ * when this phone is more than W ahead of the server (`aheadOfServer`, from `own`, this phone's last push), or when
+ * the event would need `ts ≥ tsMax` (`nextTs` with the same `targetId`: an event about the target with no R sits at
+ * `tsMax − 1`). The app's write path asks `writeTs`, which lets a write that holds in either order through then.
  */
-export function canWrite(nowMs: number, log: readonly LogEntry[], targetId?: string): boolean {
-  return isClockSane(nowMs) && nextTs(nowMs, log, targetId) < LIMITS.tsMax;
+export function canWrite(
+  nowMs: number,
+  log: readonly LogEntry[],
+  targetId?: string,
+  own?: OwnReceipt | null,
+): boolean {
+  return isClockSane(nowMs) && !aheadOfServer(nowMs, own) && nextTs(nowMs, log, targetId) < LIMITS.tsMax;
 }
 
 /**
@@ -187,14 +207,19 @@ export function mustFollowTarget(event: Event): boolean {
 /**
  * The write gate and the timestamp together, for the app's write path (design.md "Ordering"): the `ts` for `event`
  * (whose own `ts` is ignored), or null when the app must refuse it ("check your phone's date"). Null when the device
- * clock is outside the validator's range. Otherwise `nextTs(nowMs, log, target)`; when that would reach `tsMax`,
- * because an event about the target that takes effect sits at `tsMax − 1`, a write that holds in either order
- * (`mustFollowTarget` false) takes the group clock's `ts` instead, so it is never refused merely because another
- * device wrote a far-future event (pre-launch review H2: rotation's removal, a delete). An edit that must follow its
- * target is refused then: below the top of the range it would change nothing.
+ * clock is outside the validator's range or this phone is more than W ahead of the server (`own`, its last push).
+ * Otherwise `nextTs(nowMs, log, target)`; when that would reach `tsMax`, because an event about the target with no R
+ * sits at `tsMax − 1`, a write that holds in either order (`mustFollowTarget` false) takes the group clock's `ts`
+ * instead, so it is never refused merely because another device wrote a far-future event (rotation's removal, a
+ * delete). An edit that must follow its target is refused then: below the top of the range it would change nothing.
  */
-export function writeTs(nowMs: number, log: readonly LogEntry[], event: Event): number | null {
-  if (!isClockSane(nowMs)) return null;
+export function writeTs(
+  nowMs: number,
+  log: readonly LogEntry[],
+  event: Event,
+  own?: OwnReceipt | null,
+): number | null {
+  if (!isClockSane(nowMs) || aheadOfServer(nowMs, own)) return null;
   const target = entityIdOf(event) ?? undefined;
   const ts = nextTs(nowMs, log, target);
   if (ts < LIMITS.tsMax) return ts;
