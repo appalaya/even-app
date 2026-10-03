@@ -850,9 +850,14 @@ ts = max(Date.now(), lastSeen + 1)
 ```
 
 where `lastSeen` is the largest effective time among the group's events that
-is not more than W ahead of this device's clock at write time. An event
-further ahead does not drag the group clock forward. The rule is stateless: it
-reads the log and the clock each time an event is written.
+have an R, wherever this device's clock stands (an effective time is never
+later than a server's clock, so a phone running a day or more slow still
+writes after everything it has seen, and its toggles are not lost), and among
+those without an R the largest not more than W ahead of this device's clock
+at write time: an unstamped claim further ahead does not drag the group clock
+forward. The rule is stateless: it reads the log and the clock each time an
+event is written. (A server whose clock runs far ahead drags it along, as it
+lets far stamps through, even-server `THREAT-MODEL.md`.)
 
 An event that **targets an existing entity** (`expense.updated`,
 `expense.deleted`, `payment.deleted`, `member.*` with an `id`) additionally

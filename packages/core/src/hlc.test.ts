@@ -290,6 +290,19 @@ describe('nextTs over effective times', () => {
     expect(nextTs(NOW - 2 * HOUR, [arrived(entry(NOW - HOUR, rename), NOW - HOUR)])).toBe(NOW - HOUR + 1);
   });
 
+  it('absorbs every event with an R, however far past this clock: a phone running slow still writes after them', () => {
+    // This phone runs two days slow; what it has seen arrived at the server's now.
+    const slow = NOW - 2 * DAY;
+    const seen = arrived(entry(NOW - HOUR, rename), NOW);
+    expect(nextTs(slow, [seen])).toBe(NOW - HOUR + 1);
+    // Without an R, a claim more than W past the clock is still not absorbed.
+    expect(nextTs(slow, [entry(NOW - HOUR, rename)])).toBe(slow);
+    // So the slow phone's untargeted toggle sorts after the rename it saw, and wins.
+    const mine = { id: id('mine'), event: { ...entry(nextTs(slow, [seen]), { type: 'group.renamed', name: 'B' }).event } };
+    expect(compareLog(mine, seen)).toBeGreaterThan(0);
+    expect(compareLog(arrived(mine, NOW + 5_000), seen)).toBeGreaterThan(0);
+  });
+
   it('climbs over the effective time of the target, not its claim', () => {
     const add = arrived(expenseAdded(NOW + 20 * HOUR), NOW - HOUR);
     const edit = arrived(entry(NOW + 22 * HOUR, titleEdit), NOW - 30 * 60 * 1000);
@@ -305,7 +318,8 @@ describe('nextTs over effective times', () => {
     expect(nextTs(NOW, log, EXPENSE)).toBe(NOW);
     // A far add with an R takes effect once a later R releases it, at its arrival, so an edit need only follow that.
     const farAdd = arrived(expenseAdded(TOP, OTHER_EXPENSE), NOW - HOUR);
-    const released = [farAdd, arrived(entry(TOP - W, rename), TOP - W)];
+    // (An old write that reached the server only now raises the horizon; its own claim stays early.)
+    const released = [farAdd, arrived(entry(NOW - 3 * HOUR, rename), TOP - W)];
     expect(isHeldBack(farAdd, holdBackHorizon(released))).toBe(false);
     expect(nextTs(NOW - 2 * HOUR, released, OTHER_EXPENSE)).toBe(NOW - HOUR + 1);
   });

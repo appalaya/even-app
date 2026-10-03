@@ -72,7 +72,9 @@ export function isHeldBack(entry: LogEntry, horizon: number): boolean {
 
 /**
  * Hybrid logical timestamp for a new event (design.md "Ordering"), over effective times:
- * ts = max(nowMs, lastSeen + 1), where lastSeen is the largest effective time in `log` not more than W past nowMs.
+ * ts = max(nowMs, lastSeen + 1), where lastSeen is the largest effective time in `log` of an event that has an R
+ * (bounded by the server's clock already, so a phone running slow still writes after what it has seen), or of one
+ * without an R not more than W past nowMs (an unstamped claim far ahead must not drag the group clock).
  * If `targetId` is given (the entity this event edits or deletes, its `*.added` included), ts is also ≥ the largest
  * effective time among the events about it that take effect (held ones do not) + 1, however far ahead. An event with
  * an R is effective at its arrival at the latest, so only one with no R (this phone's own unsynced write, or a log a
@@ -89,7 +91,8 @@ export function nextTs(nowMs: number, log: readonly LogEntry[], targetId?: strin
   let maxTarget: number | null = null;
   for (const entry of log) {
     const effective = effectiveTs(entry);
-    if (effective <= absorbLimit && effective > lastSeen) lastSeen = effective;
+    const absorbed = receivedAtOf(entry) !== undefined || effective <= absorbLimit;
+    if (absorbed && effective > lastSeen) lastSeen = effective;
     if (targetId !== undefined && (maxTarget === null || effective > maxTarget) && !isHeldBack(entry, horizon)) {
       const { event } = entry;
       if (entityIdOf(event) === targetId || createdIdOf(event) === targetId) maxTarget = effective;
