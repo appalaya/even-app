@@ -56,6 +56,12 @@ env:
   FASTLANE_SKIP_UPDATE_CHECK: '1'
   FASTLANE_HIDE_CHANGELOG: '1'
   EXPO_NO_TELEMETRY: '1'
+  # libsodium for the native XChaCha20-Poly1305 (modules/even-crypto): swift-sodium 0.11.0's prebuilt xcframework,
+  # a Swift package. The commit Package.resolved must pin, and the sha256 of the two iOS slices at that commit
+  # (RELEASE.md, "The native project"). Change all three together, never one.
+  SWIFT_SODIUM_REVISION: cfd195c76882aa9b997560ca7cb95d72fbf5db00
+  LIBSODIUM_IOS_SHA256: d678dc76dbc6e34d30954f3644622aae8cbbacf3da03226416e7684196e65393
+  LIBSODIUM_SIMULATOR_SHA256: b59ff5ecd5d00674d1dd52c8155b613ebbcaf630cf6a7b29e0710dff7dd38e17
 
 jobs:
   build:
@@ -165,6 +171,41 @@ jobs:
         working-directory: ios
         run: pod install
 
+      - name: Check the swift-sodium pin
+        run: |
+          resolved=ios/Even.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          pinned=$(jq -r '.pins[] | select(.identity == "swift-sodium") | .state.revision' "$resolved")
+          if [ "$pinned" != "$SWIFT_SODIUM_REVISION" ]; then
+            echo "::error file=$resolved::swift-sodium is pinned to '$pinned', not $SWIFT_SODIUM_REVISION (RELEASE.md)."
+            exit 1
+          fi
+
+      # Fetches the Swift packages at exactly the versions Package.resolved records, into a folder this job knows,
+      # so the next step can check the bytes the archive will link.
+      - name: Resolve Swift packages
+        run: |
+          set -o pipefail
+          xcodebuild -resolvePackageDependencies \
+            -workspace ios/Even.xcworkspace \
+            -scheme Even \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            2>&1 | tee "$LOGS/resolve.log"
+
+      - name: Check libsodium
+        run: |
+          checkout="$RUNNER_TEMP/SourcePackages/checkouts/swift-sodium"
+          revision=$(git -C "$checkout" rev-parse HEAD)
+          if [ "$revision" != "$SWIFT_SODIUM_REVISION" ]; then
+            echo "::error::swift-sodium was checked out at $revision, not $SWIFT_SODIUM_REVISION."
+            exit 1
+          fi
+          framework="$checkout/Clibsodium.xcframework"
+          printf '%s  %s\n' \
+            "$LIBSODIUM_IOS_SHA256" "$framework/ios-arm64_arm64e/libsodium.a" \
+            "$LIBSODIUM_SIMULATOR_SHA256" "$framework/ios-arm64_arm64e_x86_64-simulator/libsodium.a" \
+            | shasum -a 256 --check
+
       - name: Archive
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -179,6 +220,8 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Even.xcarchive" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             archive \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \

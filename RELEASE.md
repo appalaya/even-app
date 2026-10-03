@@ -228,16 +228,37 @@ native settings in `app.json` or a config plugin.
 One native dependency is a Swift package rather than a pod: libsodium, for the
 native XChaCha20-Poly1305 (`modules/even-crypto`, design.md "Crypto").
 `modules/even-crypto/ios/EvenCrypto.podspec` adds swift-sodium's `Clibsodium`
-product to the Pods project with React Native's `spm_dependency`, so
-`xcodebuild` fetches it from GitHub before it builds (about 76 MB; the Pods
-cache in `ios.yml` does not hold it), at the commit that
-`ios/Even.xcworkspace/xcshareddata/swiftpm/Package.resolved` pins. Commit that
-file whenever it changes. To move to another release: change `version` in the
-podspec, `pod install`, build once (Xcode rewrites `Package.resolved`), check
-that the tag is signed and that a development build logs the new libsodium
-(`[even] crypto: native libsodium <version>, self-test passed`), and commit
-both files. The link prints `libtool: warning: ... has no symbols` for
-libsodium's objects built for other CPUs; that is expected.
+product to the Pods project with React Native's `spm_dependency`. The library
+is a prebuilt binary committed inside the swift-sodium repository; GitHub
+publishes no separate checksum for it, so `ios.yml` checks it itself, after
+`pod install` and before the archive:
+
+1. **Check the swift-sodium pin**: the revision
+   `ios/Even.xcworkspace/xcshareddata/swiftpm/Package.resolved` records must
+   be `SWIFT_SODIUM_REVISION` (the workflow's env,
+   `cfd195c76882aa9b997560ca7cb95d72fbf5db00`, the signed 0.11.0 tag).
+2. **Resolve Swift packages**: `xcodebuild -resolvePackageDependencies
+   -onlyUsePackageVersionsFromResolvedFile`, into
+   `$RUNNER_TEMP/SourcePackages` (about 76 MB from GitHub; the Pods cache does
+   not hold it).
+3. **Check libsodium**: the checkout is at that revision, and the sha256 of
+   `Clibsodium.xcframework/ios-arm64_arm64e/libsodium.a` is
+   `LIBSODIUM_IOS_SHA256` (`d678dc76dbc6e34d30954f3644622aae8cbbacf3da03226416e7684196e65393`)
+   and of the simulator slice `ios-arm64_arm64e_x86_64-simulator/libsodium.a`
+   is `LIBSODIUM_SIMULATOR_SHA256`
+   (`b59ff5ecd5d00674d1dd52c8155b613ebbcaf630cf6a7b29e0710dff7dd38e17`).
+4. **Archive** with `-onlyUsePackageVersionsFromResolvedFile` and the same
+   `-clonedSourcePackagesDirPath`, so it links exactly the checked bytes.
+
+Commit `Package.resolved` whenever it changes. To move to another release:
+change `version` in the podspec, `pod install`, build once (Xcode rewrites
+`Package.resolved`), check that the new tag is signed and points at the
+revision `Package.resolved` now records, hash both slices from the checkout
+(`shasum -a 256`), put the revision and both hashes in `ios.yml`'s env, check
+that a development build logs the new libsodium (`[even] crypto: native
+libsodium <version>, self-test passed`), and commit all of it together. The
+link prints `libtool: warning: ... has no symbols` for libsodium's objects
+built for other CPUs; that is expected.
 
 The workflow sets `CFBundleShortVersionString` and `CFBundleVersion` in its own
 checkout just before archiving (prebuild writes literal values into
