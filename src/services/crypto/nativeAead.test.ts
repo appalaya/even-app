@@ -17,6 +17,7 @@ import {
   installNativeAead,
   nativeAeadFrom,
   MAX_PADDED_BYTES,
+  NATIVE_BATCH_ITEMS,
   resetNativeAeadForTests,
   SELF_TEST_DIGESTS,
   SELF_TEST_VECTOR,
@@ -419,6 +420,34 @@ function flip(bytes: Uint8Array, at: number): Uint8Array {
 }
 
 describe('nativeAeadFrom', () => {
+  it('opens a large batch in native calls of at most 200 items, in order', () => {
+    const calls: number[] = [];
+    const native = nativeAeadFrom(
+      goodNative({
+        openMany: (k, input, lengths, out, opened) => {
+          calls.push(opened.length);
+          return packedOpenMany(k, input, lengths, out, opened);
+        },
+      }),
+    );
+    const key = new Uint8Array(32).fill(9);
+    const items = Array.from({ length: 450 }, (_, i) => {
+      const nonce = new Uint8Array(24).fill(i % 251);
+      const aad = Uint8Array.of(i & 0xff, i >> 8);
+      const plain = new Uint8Array(i % 40).fill(i % 7);
+      return { nonce, aad, sealed: nobleAead.seal(key, nonce, aad, plain), plain };
+    });
+    items[201]!.sealed[0] = (items[201]!.sealed[0] ?? 0) ^ 1;
+    const answers = native.openMany(key, items);
+    expect(NATIVE_BATCH_ITEMS).toBe(200);
+    expect(calls).toEqual([200, 200, 50]);
+    expect(answers).toHaveLength(450);
+    answers.forEach((answer, i) => {
+      if (i === 201) expect(answer).toBeNull();
+      else expect(answer).toEqual(items[i]!.plain);
+    });
+  });
+
   it('answers null, not a throw, for wrong lengths on open, and refuses them on seal', () => {
     const native = nativeAeadFrom(goodNative());
     const key = new Uint8Array(32);

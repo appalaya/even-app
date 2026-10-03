@@ -49,6 +49,9 @@ function lengthsOk(key: Uint8Array, nonce: Uint8Array): boolean {
   return key.length === AEAD_KEY_BYTES && nonce.length === AEAD_NONCE_BYTES;
 }
 
+/** Items per native openMany call: the derive's slice (OPENS_PER_YIELD), and a cap for any other caller. */
+export const NATIVE_BATCH_ITEMS = 200;
+
 /** The module behind core's interface: JavaScript allocates every output, the module fills it in place. */
 export function nativeAeadFrom(native: NativeCrypto): Aead {
   const info = native.info();
@@ -68,7 +71,12 @@ export function nativeAeadFrom(native: NativeCrypto): Aead {
       return native.open(key, nonce, aad, sealed, out) ? out : null;
     },
     openMany(key, items: readonly AeadSealed[]) {
-      return openBatch(native, key, items);
+      // At most NATIVE_BATCH_ITEMS a call, whoever asks: one call never carries more than about 1.6 MB.
+      const results: (Uint8Array | null)[] = [];
+      for (let from = 0; from < items.length; from += NATIVE_BATCH_ITEMS) {
+        results.push(...openBatch(native, key, items.slice(from, from + NATIVE_BATCH_ITEMS)));
+      }
+      return results;
     },
   };
   return aead;
