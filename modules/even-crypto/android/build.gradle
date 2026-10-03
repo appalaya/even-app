@@ -19,6 +19,12 @@ android {
 
 dependencies {
   // XChaCha20-Poly1305 (IETF): Google Tink's pure-Java implementation, the class Tink's own public
-  // subtle.XChaCha20Poly1305 delegates to. Pinned exactly; no native library, so nothing to align for 16 KB pages.
-  implementation 'com.google.crypto.tink:tink-android:1.23.0'
+  // subtle.XChaCha20Poly1305 delegates to. No native library, so nothing to align for 16 KB pages.
+  // `strictly`: a plain '1.23.0' is only a minimum to Gradle, and another library asking for a later Tink would
+  // win; this fails the build instead. The jar's sha256 is checked by android/gradle/verification-metadata.xml.
+  implementation('com.google.crypto.tink:tink-android') {
+    version {
+      strictly '1.23.0'
+    }
+  }
 }

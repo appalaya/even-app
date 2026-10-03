@@ -1,5 +1,6 @@
 package com.appalaya.even.crypto
 
+import com.google.crypto.tink.Version
 import com.google.crypto.tink.aead.internal.InsecureNonceXChaCha20Poly1305
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -27,7 +28,8 @@ class EvenCryptoModule : Module() {
     Name("EvenCrypto")
 
     Function("info") {
-      mapOf("library" to "tink", "version" to TINK_VERSION)
+      // Tink's own constant, compiled in from the jar the build resolved (pinned with `strictly` in build.gradle).
+      mapOf("library" to "tink", "version" to Version.TINK_VERSION)
     }
 
     Function("seal") { key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, plaintext: Uint8Array, out: Uint8Array ->
@@ -146,8 +148,6 @@ class EvenCryptoModule : Module() {
     const val KEY_BYTES = 32
     const val NONCE_BYTES = 24
     const val TAG_BYTES = 16
-    /** Kept equal to the dependency in build.gradle. */
-    const val TINK_VERSION = "1.23.0"
 
     /** A copy of the typed array's bytes (its byteOffset applied). */
     fun bytesOf(array: Uint8Array): ByteArray {

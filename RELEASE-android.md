@@ -195,12 +195,21 @@ Play Console → Even → Policy and programs → App content. This is a proposa
   `--no-clean` keeps items it does not set in `styles.xml` and never touches the `even_*` files; run on a copy of
   the repository, it left `android/` unchanged.
 - `modules/even-crypto` (the native XChaCha20-Poly1305, design.md "Crypto") depends on Google Tink,
-  `com.google.crypto.tink:tink-android:1.23.0` from Maven Central, pinned in its `android/build.gradle`. It is pure
-  Java: no native library, so nothing per ABI and nothing to align for 16 KB pages. R8 keeps the few Tink classes the
-  module uses and drops the rest (gson included) with no keep rules. It uses an internal Tink class,
-  `InsecureNonceXChaCha20Poly1305`, so on any upgrade check its constructor and its (nonce, data, aad) argument
-  order; if they change, the startup self-test fails and the app keeps @noble (`[even] crypto: @noble, the native
-  module failed its self-test (...)` in logcat), slower but correct.
+  `com.google.crypto.tink:tink-android` from Maven Central, pinned with `version { strictly '1.23.0' }` in its
+  `android/build.gradle` (a plain `'1.23.0'` is only a minimum to Gradle; with `strictly`, any other library asking
+  for another Tink fails the build). `android/gradle/verification-metadata.xml` makes Gradle check the jar's sha256
+  (`c656918451b01c45ce5b20c7b6d4c388f956f61b3a3528e769048c8944c42f9e`, Maven Central's published
+  `tink-android-1.23.0.jar.sha256`) on every build, CI included, and fail on any other bytes; every other artifact is
+  trusted as before. It is pure Java: no native library, so nothing per ABI and nothing to align for 16 KB pages. R8
+  keeps the few Tink classes the module uses and drops the rest (gson included) with no keep rules. The module zeroes
+  its own copies of the key and the plaintexts; Tink's internal copies are left to the garbage collector. `info()`
+  reports Tink's own `Version.TINK_VERSION`, compiled in from the jar the build resolved.
+- To move Tink: change `strictly` in the module's `build.gradle`, download the new jar and its `.sha256` from Maven
+  Central and check they agree, put the new version and sha256 in `verification-metadata.xml`, build, and check the
+  startup line in logcat (`[even] crypto: native tink <version>, self-test passed`). The module uses an internal Tink
+  class, `InsecureNonceXChaCha20Poly1305`, so also check its constructor and its (nonce, data, aad) argument order;
+  if they change, the self-test fails and the app keeps @noble (`[even] crypto: @noble, the native module failed its
+  self-test (...)`), slower but correct.
 - R8 is on (`android.enableMinifyInReleaseBuilds=true` in `android/gradle.properties`, the Expo SDK 58 default).
   If a release build misbehaves where a debug build does not, add keep rules to `android/app/proguard-rules.pro`.
   Every native change (anything under `android/`, a native dependency, `app.json`'s native config) gets a
