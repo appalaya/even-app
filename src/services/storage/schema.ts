@@ -157,12 +157,20 @@ const V5 = statements(
   'UPDATE groups SET cursor = 0',
 );
 
+/**
+ * v6: `groups.creation_id`, the envelope id of the `group.created` this phone pinned as the group's creation (design.md
+ * "Reducer", pre-launch review H5). Null for every group: the first creation that takes effect with a server's R pins
+ * it. An envelope id, not content.
+ */
+const V6 = statements('ALTER TABLE groups ADD COLUMN creation_id TEXT');
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, description: 'initial schema', up: V1 },
   { version: 2, description: 'pending_deletes.auth_token', up: V2 },
   { version: 3, description: 'pending_deletes.created_at and attempts', up: V3 },
   { version: 4, description: 'events.size', up: V4 },
   { version: 5, description: 'events.received_at', up: V5 },
+  { version: 6, description: 'groups.creation_id', up: V6 },
 ];
 
 /** The schema version this build writes. */

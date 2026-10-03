@@ -73,6 +73,12 @@ export interface GroupRow {
   state: GroupLifecycle;
   /** `epoch_resets_this_cycle`: 0 or 1; see the epoch rule. */
   epochResetsThisCycle: number;
+  /**
+   * `creation_id`: the envelope id of the `group.created` this phone pinned as the group's creation (design.md
+   * "Reducer", "A group is created once"), or null until one took effect with a server's R. Never cleared: an upsert
+   * with null keeps it, and a move or an epoch reset leaves it, which is the point.
+   */
+  creationId: string | null;
 }
 
 /** One row of `events`. */
@@ -257,7 +263,10 @@ export interface Store {
   /** All groups, any state, ordered by `createdAt` ascending. */
   listGroups(): Promise<GroupRow[]>;
   getGroup(localId: string): Promise<GroupRow | null>;
-  /** Inserts the row, or replaces every column of an existing row with the same `localId`. */
+  /**
+   * Inserts the row, or replaces every column of an existing row with the same `localId`, except a pinned
+   * `creationId`, which stays.
+   */
   upsertGroup(row: GroupRow): Promise<void>;
   setGroupState(localId: string, state: GroupLifecycle): Promise<void>;
   /**
@@ -282,6 +291,11 @@ export interface Store {
   /** Sync bookkeeping: epoch, last success, last error, epoch reset counter. */
   setSyncState(localId: string, patch: SyncStatePatch): Promise<void>;
   setMyMember(localId: string, memberId: string | null): Promise<void>;
+  /**
+   * Pins the group's creation to `envelopeId` when none is pinned yet; returns whether it did. A pin is never moved
+   * or cleared. Throws `group_not_found` for a missing row.
+   */
+  pinCreation(localId: string, envelopeId: string): Promise<boolean>;
   /** Updates the cached group name and/or currency; an omitted field is left unchanged. */
   setNameCache(
     localId: string,
@@ -321,6 +335,11 @@ export interface Store {
    * then `id`. The push batch.
    */
   outbox(localId: string, limit: number): Promise<OutboxRow[]>;
+  /**
+   * The row `id` when it is in the outbox (`acked = 0 AND push_state = 'pending'`), else null: the engine pushes the
+   * pinned creation alone, ahead of the rest, when it is to be sent again.
+   */
+  outboxEntry(localId: string, id: string): Promise<OutboxRow | null>;
   /** Sets `acked = 1` on these ids (a push answered `200`: every envelope in the batch). Unknown ids are ignored. */
   ack(localId: string, ids: readonly string[]): Promise<void>;
   /**

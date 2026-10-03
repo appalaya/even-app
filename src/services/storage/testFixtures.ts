@@ -26,6 +26,7 @@ export function makeGroup(overrides: Partial<GroupRow> = {}): GroupRow {
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
     ...overrides,
   };
 }

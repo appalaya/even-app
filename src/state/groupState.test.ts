@@ -254,11 +254,20 @@ describe.each(STORE_KINDS)('derived group state on the %s store', (kind) => {
 
   it('a group.created in a currency this build does not know: update required, and its amounts never throw', async () => {
     const w = await setup(kind);
-    const { b, localId, maya, nathan } = await trip(w);
     // A group created in a shape-valid currency this build's table lacks ("ZZZ": a newer table's, or a hostile
-    // creator's). Here its group.created is the first to arrive at the server, so it is the group's creation
-    // (design.md "Reducer"); formatMinor throws RangeError for its currency, and a throw in a render takes the Groups
-    // list down.
+    // creator's). Here its group.created is the first to reach a server (this phone's own CAD one has not been pushed,
+    // and nothing is pinned yet), so it is the group's creation (design.md "Reducer"); formatMinor throws RangeError
+    // for its currency, and a throw in a render takes the Groups list down.
+    const b = await w.device('B');
+    const { localId, memberId: nathan } = await b.services.groups.createGroup({
+      name: 'Banff 2026',
+      currency: 'CAD',
+      myName: 'Nathan',
+      people: ['Maya'],
+      serverUrl: SERVER,
+    });
+    const members = (await b.services.groupState.get(localId))?.state?.members;
+    const maya = [...(members?.values() ?? [])].find((m) => m.name === 'Maya')?.id ?? '';
     const at = LIMITS.tsMin;
     const head = { sv: 1, at, by: maya, dev: newId() };
     const created = {

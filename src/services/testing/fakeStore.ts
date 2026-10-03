@@ -264,7 +264,17 @@ export class FakeStore implements Store {
 
   async upsertGroup(row: GroupRow): Promise<void> {
     this.enter('upsertGroup', [row]);
-    this.state.groups.set(row.localId, { ...row });
+    const pinned = this.state.groups.get(row.localId)?.creationId ?? null;
+    this.state.groups.set(row.localId, { ...row, creationId: pinned ?? row.creationId });
+  }
+
+  async pinCreation(localId: string, envelopeId: string): Promise<boolean> {
+    this.enter('pinCreation', [localId, envelopeId]);
+    if (!isId(envelopeId)) throw new Error('FakeStore.pinCreation: not a 22-char id');
+    const group = this.group(localId);
+    if (group.creationId !== null) return false;
+    group.creationId = envelopeId;
+    return true;
   }
 
   async setGroupState(localId: string, state: GroupLifecycle): Promise<void> {
@@ -406,6 +416,13 @@ export class FakeStore implements Store {
       .sort(byTsThenId)
       .slice(0, limit)
       .map((row) => ({ id: row.id, ts: row.ts, envelope: row.envelope }));
+  }
+
+  async outboxEntry(localId: string, id: string): Promise<OutboxRow | null> {
+    this.enter('outboxEntry', [localId, id]);
+    const row = this.rows(localId).get(id);
+    if (row === undefined || row.acked || row.pushState !== 'pending') return null;
+    return { id: row.id, ts: row.ts, envelope: row.envelope };
   }
 
   async ack(localId: string, ids: readonly string[]): Promise<void> {

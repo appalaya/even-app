@@ -187,16 +187,34 @@ logs nothing, and both libraries verify the tag in constant time.
 
 **Installed only after a self-test.** `openAppServices` (the background task
 included) calls `installNativeAead` (`services/crypto/nativeAead.ts`) once per
-process, before the store opens. The native implementation must seal the
-draft-irtf-cfrg-xchacha-03 A.3.1 vector to its published bytes and open it,
-refuse a changed tag, ciphertext byte, AAD byte and nonce byte, and agree
-with @noble on empty inputs, offset views, a batch with a forgery in it and
-one random case in both directions; otherwise the app keeps @noble. Either
-way one line of fixed words is logged, with a code on failure:
-`[even] crypto: native libsodium 1.0.22, self-test passed in 9.2 ms`, or
+process, before the store opens. The native implementation must:
+
+- seal the draft-irtf-cfrg-xchacha-03 A.3.1 vector to its published bytes and
+  open it;
+- refuse a changed tag, ciphertext byte, AAD byte and nonce byte, and a key
+  with one byte changed (alone and in a batch);
+- agree with @noble on empty inputs and on inputs that are offset views;
+- seal plaintexts of 63, 64, 65, 4,095, 4,096 and 4,097 bytes, each with a
+  75-byte AAD like the app's, to @noble's bytes, and open them back;
+- seal 8,176 bytes (the largest padded body) with a 75-byte AAD to exactly
+  @noble's bytes, and open @noble's seal of it;
+- open a 64-item batch under one key, plaintexts from 0 to 8,176 bytes (about
+  49 KB), with five items forged at known positions (tag, ciphertext, AAD,
+  nonce), each answer checked item by item;
+- and agree with @noble on one random 752-byte case in both directions.
+
+The deterministic cases are compared with @noble's seals through fingerprints
+(FNV-1a over words) of @noble's output, kept in the source and recomputed with
+@noble by `nativeAead.test.ts`, so @noble itself runs only for the empty, the
+8,176-byte and the random case. Otherwise the app keeps @noble. Either way one
+line of fixed words is logged, with a code on failure:
+`[even] crypto: native libsodium 1.0.22, self-test passed in 13.7 ms`, or
 `[even] crypto: @noble, the native module failed its self-test (vector-open)`.
-It takes 5 to 13 ms. (It caught a real fault on its first Android run: the
-module passed Tink's decrypt arguments in the wrong order.)
+On the iPhone 17 simulator in a debug build it takes 13.7 to 16.7 ms at
+startup and 6.2 ms when run again (Hermes compiles each function on first use
+in a debug build); 4.6 ms of the run is @noble's own 8,176-byte seal. (It
+caught a real fault on its first Android run: the module passed Tink's decrypt
+arguments in the wrong order.)
 
 **A refusal gets a second opinion.** When the installed implementation is not
 @noble and refuses an envelope (or throws), `envelope.ts` opens the same bytes
@@ -974,25 +992,39 @@ every held event (`liveLog`), and folds:
   ten-year, device-anchored hold-back (`5539948`), which a second forged
   device id defeated and which let a far `expense.added` through.
 - **A group is created once** (pre-launch review H5, a past-dated
-  `group.created`). The `group.created` that takes effect is the first to arrive (core
-  `creationOf`): among the creations the fold applies, the smallest R, one
-  with an R before one without, then the fold's order (a log no server has
-  stamped falls back to that order alone). Every other `group.created` is a
-  duplicate creation and is ignored entirely: no state, no activity item,
-  never the group's name or currency, whatever `ts` it claims. This is the
-  rule chosen over keeping first-writer by the fold's order and relying on
-  rotation's copy: a duplicate claiming 2024-01-01 sorts first in
-  `(min(ts, R), ts, id)`, so that rule would hand it the group's immutable
-  currency (every expense `currency_mismatch`, empty balances) and rotation
-  would copy it. Rotation copies only the creation that took effect.
-  - *What it does not stop.* Arrival is re-formed whenever every R is: after
-    a move or an epoch reset the re-push runs in claimed-ts order, so a
-    backdated duplicate is the first to arrive on the new copy and becomes the
-    creation there, and the hostile member can force that with a DELETE and a
-    re-push of their own. Regenerating the invite before that carries only the
-    honest creation, and the removed member cannot write to the new group. A
-    phone that kept the creation it first applied (a per-phone pin) would close
-    this; it is not built.
+  `group.created`). Every phone pins the creation it applies: `groups.creation_id`
+  is set the first time a `group.created` takes effect with an R a server
+  reported (never one a group file supplied: an import gives a creation no
+  provisional R), and from then on that envelope is the creation whenever it
+  is in the live log (core `reduce`'s `creationId`, `creationOf`). Until a
+  phone has pinned one, the creation is the first to arrive: among the
+  creations the fold applies, the smallest R, one with an R before one
+  without, then the fold's order (a log no server has stamped falls back to
+  that order alone). Every other `group.created` is a duplicate creation and
+  is ignored entirely: no state, no activity item, never the group's name or
+  currency, whatever `ts` it claims. This is the rule chosen over keeping
+  first-writer by the fold's order and relying on rotation's copy: a duplicate
+  claiming 2024-01-01 sorts first in `(min(ts, R), ts, id)`, so that rule would
+  hand it the group's immutable currency (every expense `currency_mismatch`,
+  empty balances) and rotation would copy it.
+  - *Why a pin.* Arrival alone is re-formed whenever every R is: after any
+    epoch reset (idle expiry, an honest Leave with "Also delete the copy", a
+    DELETE) or a server move, every phone re-pushes in claimed-ts order, so a
+    dormant backdated duplicate would be the first to arrive on the new copy,
+    and every phone would flip to its currency for good. With the pin, a phone
+    keeps its creation through every one of those. And whenever the pinned
+    creation is to be sent again, the engine pushes it alone, as the first
+    request, so on the new copy it arrives before any duplicate (in one
+    request with the backdated one they would share an R, and the claimed `ts`
+    would decide): a phone that joins afterwards, with no pin yet, takes the
+    same creation by arrival.
+  - Rotation copies the pinned creation (or, with no pin, the first to arrive)
+    and no other, and the new group pins it at once.
+  - *What it does not stop.* A member who sends DELETE and at once pushes a
+    backdated creation wins arrival on the new copy, before any honest phone
+    re-pushes. Members who join after that take the hostile currency;
+    existing members keep theirs, by the pin, and a rotation by an existing
+    member restores it for everyone it invites.
 
 `GroupState` contains the group meta (including `archived`), members (with
 device sets and avatars), `doneMembers` (who has said "I'm done adding") and
@@ -1070,7 +1102,8 @@ CREATE TABLE groups (
   last_synced_at  INTEGER,
   last_sync_error TEXT,               -- protocol error code, 'epoch_unstable', or null
   state           TEXT NOT NULL DEFAULT 'active',  -- 'active' | 'closed' | 'hidden' | 'blocked'
-  epoch_resets_this_cycle INTEGER NOT NULL DEFAULT 0
+  epoch_resets_this_cycle INTEGER NOT NULL DEFAULT 0,
+  creation_id     TEXT                -- the pinned group.created's envelope id (Reducer); null until one is pinned
 );
 
 CREATE TABLE prefs (                  -- local, never synced: default name/emoji for joins, toggles
@@ -1189,6 +1222,10 @@ version bump; shipped migrations are never edited.
   phone with several large groups takes a few minutes through the server's
   read allowance, pausing on its 429s ("Error handling"). No envelope is
   rewritten in the migration itself.
+- v6: adds `groups.creation_id` (pre-launch review H5), null for every group:
+  the first creation that takes effect with a server's R is pinned by the
+  lifecycle check after the next sync ("A group is created once" under
+  Reducer). An upsert never clears a pin, and nothing else does.
 
 When the store cannot open (a database written by a newer build, a failed
 migration), the app shows the StartupError board instead of Groups: "Even
@@ -1247,7 +1284,10 @@ under Rotation.
    `syncAll` retries every debt once before its first group instead, and its
    group cycles skip this step.
 1. **Push**: select outbox events in `ts` order, send in batches of
-   `min(max_batch, 100, current batch size)`. On `200`, mark **every**
+   `min(max_batch, 100, current batch size)`; the group's pinned creation,
+   whenever it is in the outbox (after an epoch reset, a move or an import),
+   goes first, alone, in a request of its own ("A group is created once"
+   under Reducer). On `200`, mark **every**
    envelope in the batch `acked = 1` (accepted or duplicate) and, in the same
    transaction, store the response's `received_at` on each, when the list has
    exactly one value per envelope sent (a server without it gives none, and
@@ -1457,7 +1497,10 @@ Not a transport; two functions.
   stores the secret if new, insert-or-ignores every envelope with
   `origin = 'remote'` (re-encrypting readable ones for the current server's
   group id if the file's server differs, dropping the unreadable), with the
-  file's `received` value as a provisional R on each row it inserts (an
+  file's `received` value as a provisional R on each row it inserts but a
+  `group.created`, which waits for a server's R, since a phone pins its
+  creation only from one (Reducer; so on an importer that has not synced yet
+  the creation's activity item counts at its claim) (an
   unusable value, or one more than a day past this phone's clock, is
   dropped: no server stored anything in the future, and a late R would release
   held writes), and sets `acked = 0` on **all** of the group's events so the
@@ -1491,9 +1534,11 @@ the old invite.
    rotator's reducer holds ("Ordering"): on the new copy it would have no R
    until the push and would count at its claim meanwhile. That also leaves
    behind a held write of a phone a few days fast, which the old group would
-   have released later. Of the `group.created` events only the one that took
-   effect crosses ("A group is created once" under Reducer), so a duplicate
-   creation never reaches the new group. Bodies cross unchanged, `ts`
+   have released later. Of the `group.created` events only the one in effect
+   crosses, the pinned one when there is a pin ("A group is created once"
+   under Reducer), and the new group pins it, so a duplicate creation never
+   reaches the new group and none that arrives on its server later can take
+   it. Bodies cross unchanged, `ts`
    included: re-stamping an event would be writing a different one.
 4. Append `group.rotated { from: oldLocalId }` to the new group, then, at
    the rotator's own clock (`nextTs`), `group.renamed { name }` with the

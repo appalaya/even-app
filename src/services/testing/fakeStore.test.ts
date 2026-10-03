@@ -184,6 +184,32 @@ describe('FakeStore honours the Store contract', () => {
   });
 });
 
+describe.each(STORE_KINDS)(
+  'the creation pin and outboxEntry on the %s store (the fake matches the real one)',
+  (kind) => {
+    it('pins once, keeps the pin through an upsert, and finds a row only while it waits to be sent', async () => {
+      const store = await openTestStore(kind);
+      try {
+        const keys = groupKeys();
+        const L = keys.localId;
+        await store.upsertGroup(groupRow(keys));
+        const [a, b] = ['a', 'b'].map(idOf) as [string, string];
+        expect(await store.pinCreation(L, a)).toBe(true);
+        expect(await store.pinCreation(L, b)).toBe(false);
+        await store.upsertGroup(groupRow(keys, { creationId: null }));
+        expect((await store.getGroup(L))?.creationId).toBe(a);
+        await store.insertEvents(L, [row(keys, a), row(keys, b, { acked: true, seq: 1 })]);
+        expect((await store.outboxEntry(L, a))?.id).toBe(a);
+        expect(await store.outboxEntry(L, b)).toBeNull();
+        await store.markRejected(L, [a]);
+        expect(await store.outboxEntry(L, a)).toBeNull();
+      } finally {
+        await store.close();
+      }
+    });
+  },
+);
+
 describe('FakeStore at an older schema version', () => {
   it('migrate() applies v5 to its data: every cursor back to 0, once', async () => {
     const store = createFakeStore({ schemaVersion: 4 });

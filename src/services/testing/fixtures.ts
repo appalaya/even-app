@@ -45,6 +45,7 @@ export function groupRow(keys: GroupKeys, overrides: Partial<GroupRow> = {}): Gr
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
     ...overrides,
   };
 }

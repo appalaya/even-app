@@ -125,6 +125,11 @@ export interface DerivedGroup {
   /** Newest `at` in the activity feed (wall clock), or null for an empty log. */
   lastActivityAt: number | null;
   noSecret: boolean;
+  /**
+   * The `group.created` in effect (the pinned one, else the first to arrive), and whether a server has reported its R:
+   * the lifecycle check pins it then (`groups.creation_id`, design.md "Reducer").
+   */
+  creation: { id: string; arrived: boolean } | null;
 }
 
 export interface SyncStatus {
@@ -569,7 +574,7 @@ export class GroupStateStore {
     }
 
     // The creation the reducer applies (the first to arrive; a later one is ignored), so the currency agrees with it.
-    const created = creationOf(entries);
+    const created = creationOf(entries, row.creationId);
     const createdEvent = created?.event.type === 'group.created' ? created.event : null;
     const currency = createdEvent?.currency ?? row.currencyCache;
     const locale = this.locale;
@@ -577,6 +582,7 @@ export class GroupStateStore {
       ? null
       : reduce(entries, {
           selfLocalId: localId,
+          creationId: row.creationId,
           ...(currency === null
             ? {}
             : { format: (minor: number) => formatMinor(minor, currency, locale) }),
@@ -669,6 +675,8 @@ export class GroupStateStore {
       localClosure,
       lastActivityAt,
       noSecret,
+      creation:
+        created === null ? null : { id: created.id, arrived: created.receivedAt !== undefined },
     };
     return { derived, entries };
   }

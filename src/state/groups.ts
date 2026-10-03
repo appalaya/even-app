@@ -515,6 +515,7 @@ export class GroupService {
           lastSyncError: null,
           state: 'active',
           epochResetsThisCycle: 0,
+          creationId: null,
         });
         await tx.insertEvents(localId, rows);
       });
@@ -623,6 +624,7 @@ export class GroupService {
       lastSyncError: null,
       state: 'active',
       epochResetsThisCycle: 0,
+      creationId: null,
     });
     this.groupState.invalidate(localId);
     this.groupState.groupsChanged();
@@ -1088,9 +1090,10 @@ export class GroupService {
       // new group's copy it would have no R until pushed, and take effect at its claim meanwhile.
       const horizon = holdBackHorizon(oldLog);
       const held = new Set(oldLog.filter((e) => isHeldBack(e, horizon)).map((e) => e.id));
-      // Only the creation that took effect crosses: a duplicate one (a hostile member's, claiming an earlier ts in
-      // another currency) stays behind, so the new group is created once, in the group's own currency.
-      const creation = creationOf(oldLog);
+      // Only the creation in effect crosses (the pinned one, else the first to arrive): a duplicate one (a hostile
+      // member's, claiming an earlier ts in another currency) stays behind, and the new group pins the copy, so it is
+      // created once, in the group's own currency, whatever arrives on its server later.
+      const creation = creationOf(oldLog, derived.row.creationId);
       const oldSecret = await this.secretOf(localId);
       const oldKey = deriveLocal(oldSecret).encryptionKey;
       const now = this.now();
@@ -1187,6 +1190,8 @@ export class GroupService {
             lastSyncError: null,
             state: 'active',
             epochResetsThisCycle: 0,
+            creationId:
+              creation !== null && carried.some((c) => c.id === creation.id) ? creation.id : null,
           });
           if (copied.length > 0) await tx.insertEvents(newLocalId, copied);
 
@@ -1262,6 +1267,7 @@ export class GroupService {
       if (derived === null || derived.state === null) return;
       await this.restoreSeat(localId, derived);
       await this.refreshNameCache(derived);
+      await this.pinCreation(derived);
       await this.handleClosure(localId, derived);
       if (derived.state.rotatedFrom.length > 0) await this.recognizeRotation(localId, derived);
       if (derived.state.closed !== null) await this.recognizeRotationInto(localId);
@@ -1360,6 +1366,7 @@ export class GroupService {
           lastSyncError: null,
           state: 'active',
           epochResetsThisCycle: 0,
+          creationId: null,
         });
         return true;
       });
@@ -1826,6 +1833,19 @@ export class GroupService {
       await this.prefs.seedMe(name, emoji);
     } catch (error) {
       this.log('state: could not remember the default name', describeForLog(error));
+    }
+  }
+
+  /**
+   * Pins the group's creation (`groups.creation_id`, design.md "Reducer") the first time one is in effect with an R a
+   * server reported (a group file never gives a `group.created` its provisional R). From then on a move or an epoch
+   * reset, which re-forms arrival on the new copy, cannot change which creation this phone applies.
+   */
+  private async pinCreation(derived: DerivedGroup): Promise<void> {
+    const { row, creation } = derived;
+    if (row.creationId !== null || creation === null || !creation.arrived) return;
+    if (await this.store.pinCreation(row.localId, creation.id)) {
+      this.groupState.invalidate(row.localId);
     }
   }
 

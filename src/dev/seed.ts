@@ -1078,6 +1078,7 @@ export async function seedGroup(
       lastSyncError: spec.lastSyncError,
       state: 'active',
       epochResetsThisCycle: 0,
+      creationId: null,
     });
     await tx.insertEvents(localId, rows);
   });
@@ -1489,6 +1490,7 @@ export async function seedBanff(services: AppServices, devServer: string): Promi
       lastSyncError: null,
       state: 'active',
       epochResetsThisCycle: 0,
+      creationId: null,
     });
     await tx.insertEvents(localId, rows);
   });
@@ -1906,6 +1908,7 @@ export async function seedGroupSettings(
       lastSyncError: null,
       state: 'active',
       epochResetsThisCycle: 0,
+      creationId: null,
     });
     await tx.insertEvents(localId, rows);
   });
@@ -2106,6 +2109,7 @@ async function seedLarge(s: AppServices, server: string): Promise<string> {
       lastSyncError: null,
       state: 'active',
       epochResetsThisCycle: 0,
+      creationId: null,
     });
     await tx.insertEvents(localId, rows);
   });

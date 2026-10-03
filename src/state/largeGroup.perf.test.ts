@@ -150,6 +150,7 @@ async function storeGroup(
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
   });
   await store.insertEvents(sealed.localId, sealed.rows);
 }

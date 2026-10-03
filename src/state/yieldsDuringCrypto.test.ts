@@ -42,6 +42,7 @@ async function bigGroupOn(d: Device): Promise<{ localId: string; secret: Uint8Ar
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
   });
   await d.store.insertEvents(
     localId,

@@ -380,9 +380,13 @@ describe.each(STORE_KINDS)('far-future events on the %s store (review H2)', (kin
     expect(await g(c).importGroupFile(text)).toMatchObject({ outcome: 'imported', created: true });
     const onC = (await state(c, t.g1)).state;
     expect([onC.archived, onC.name]).toEqual([false, 'Banff 2026']);
-    expect(onC.activity).toEqual(expected.activity);
+    // The same items; the creation's place among them waits for the server's R (it takes none from a file).
+    const ids = (s: typeof onC) => s.activity.map((item) => item.eventId).sort();
+    expect(ids(onC)).toEqual(ids(expected));
     expectSynced(await sync(c, t.g1));
-    expect((await state(c, t.g1)).state).toMatchObject({ archived: false, name: 'Banff 2026' });
+    const synced = (await state(c, t.g1)).state;
+    expect(synced).toMatchObject({ archived: false, name: 'Banff 2026' });
+    expect(synced.activity).toEqual(expected.activity);
 
     // The same file without its R map (an exporter from before R): until it syncs, the importer sees them at their
     // claim, as every phone did before the rule.

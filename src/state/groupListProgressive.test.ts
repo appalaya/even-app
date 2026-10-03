@@ -46,6 +46,7 @@ async function groupOn(
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
   });
   await d.store.insertEvents(
     localId,

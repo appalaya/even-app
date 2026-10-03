@@ -55,6 +55,7 @@ export async function runStorageSmokeTest(): Promise<StorageSmokeResult> {
         lastSyncError: null,
         state: 'active',
         epochResetsThisCycle: 0,
+        creationId: null,
       });
       // Structurally valid v1 envelope; the store checks shape, not ciphertext.
       const envelope: Envelope = {

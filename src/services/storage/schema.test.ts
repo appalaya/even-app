@@ -20,7 +20,7 @@ import { envelopeStoredSize, newId } from '@even/core';
 import { storedSizeOfText } from './envelopeSize';
 import { envelopeText, openSqliteStore } from './sqliteStore';
 import { localRow, makeEnvelope, makeGroup, pulledRow } from './testFixtures';
-import type { NewEventRow } from './types';
+import type { GroupRow, NewEventRow } from './types';
 
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -46,6 +46,28 @@ async function columns(
   return db.all(`SELECT name, "notnull", pk FROM pragma_table_info(?) ORDER BY cid`, [table]);
 }
 
+/** Inserts a `groups` row as a build before v6 wrote it (no `creation_id`; the store writes the current schema). */
+async function insertGroupBefore6(db: SqlDriver, group: GroupRow): Promise<void> {
+  await db.run(
+    `INSERT INTO groups (local_id, server_url, epoch, cursor, my_member_id, name_cache, currency_cache, created_at,
+       last_synced_at, last_sync_error, state, epoch_resets_this_cycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      group.localId,
+      group.serverUrl,
+      group.epoch,
+      group.cursor,
+      group.myMemberId,
+      group.nameCache,
+      group.currencyCache,
+      group.createdAt,
+      group.lastSyncedAt,
+      group.lastSyncError,
+      group.state,
+      group.epochResetsThisCycle,
+    ],
+  );
+}
+
 /** Inserts rows with the v1 columns only, as a build before v4 wrote them (the store writes the current schema). */
 async function insertBefore4(db: SqlDriver, localId: string, rows: NewEventRow[]): Promise<void> {
   for (const r of rows) {
@@ -63,7 +85,7 @@ describe('migrate', () => {
     expect(await readSchemaVersion(db)).toBe(0);
     await migrate(db);
     expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(5);
+    expect(SCHEMA_VERSION).toBe(6);
 
     const objects = await db.all<{ type: string; name: string }>(
       `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
@@ -90,6 +112,7 @@ describe('migrate', () => {
       'last_sync_error',
       'state',
       'epoch_resets_this_cycle',
+      'creation_id',
     ]);
     expect((await columns(db, 'events')).map((c) => [c.name, c.pk])).toEqual([
       ['local_id', 1],
@@ -118,9 +141,8 @@ describe('migrate', () => {
     const db = driverFor();
     await migrate(db, MIGRATIONS.slice(0, 1));
     expect(await readSchemaVersion(db)).toBe(1);
-    const store = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 1) });
     const group = makeGroup();
-    await store.upsertGroup(group);
+    await insertGroupBefore6(db, group);
     await insertBefore4(db, group.localId, [localRow(1_760_000_000_001)]);
     await db.run('INSERT INTO pending_deletes (local_id, server_url) VALUES (?, ?)', [
       group.localId,
@@ -137,7 +159,7 @@ describe('migrate', () => {
     ]);
     expect(await db.all('SELECT * FROM pending_deletes')).toEqual([]);
     // Nothing else is touched.
-    const upgraded = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 2) });
+    const upgraded = await openSqliteStore(db);
     expect(await upgraded.getGroup(group.localId)).toEqual(group);
     expect((await upgraded.countByStatus(group.localId)).byStatus.ok).toBe(1);
   });
@@ -172,9 +194,8 @@ describe('migrate', () => {
   it('v4 upgrades a v3 database: every row gets its stored size, a page at a time; junk gets none', async () => {
     const db = driverFor();
     await migrate(db, MIGRATIONS.slice(0, 3));
-    const store = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 3) });
     const group = makeGroup();
-    await store.upsertGroup(group);
+    await insertGroupBefore6(db, group);
     // More than one page of v4's 300, and every kind of row: readable, another v, junk, an unopened envelope.
     const rows = Array.from({ length: 650 }, (_, i) => localRow(1_760_000_000_000 + i));
     const other = makeEnvelope(newId(), 2);
@@ -208,9 +229,8 @@ describe('migrate', () => {
   it('v5 upgrades a v4 database: events gain received_at, null on every stored row, nothing rewritten', async () => {
     const db = driverFor();
     await migrate(db, MIGRATIONS.slice(0, 4));
-    const before = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 4) });
     const group = makeGroup();
-    await before.upsertGroup(group);
+    await insertGroupBefore6(db, group);
     const rows = [localRow(1_760_000_000_001), pulledRow(1, 1_760_000_000_002)];
     await db.run(
       `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
@@ -231,7 +251,7 @@ describe('migrate', () => {
 
     await migrate(db);
 
-    expect(await readSchemaVersion(db)).toBe(5);
+    expect(await readSchemaVersion(db)).toBe(SCHEMA_VERSION);
     const after = await db.all<Record<string, unknown>>('SELECT * FROM events ORDER BY rowid');
     expect(after).toEqual(stored.map((row) => ({ ...(row as object), received_at: null })));
     const upgraded = await openSqliteStore(db);
@@ -245,13 +265,12 @@ describe('migrate', () => {
   it('v5 sets every group cursor to 0 so the next sync pulls the whole log again; nothing else moves', async () => {
     const db = driverFor();
     await migrate(db, MIGRATIONS.slice(0, 4));
-    const before = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 4) });
     const groups = [
       makeGroup({ cursor: 120, epoch: 'k3JdAAAAAAAAAAAAAAAAAA', lastSyncedAt: 1 }),
       makeGroup({ cursor: 7, state: 'closed' }),
       makeGroup({ cursor: 0 }),
     ];
-    for (const group of groups) await before.upsertGroup(group);
+    for (const group of groups) await insertGroupBefore6(db, group);
     const unsent = localRow(1_760_000_000_001);
     await db.run(
       `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
@@ -276,6 +295,17 @@ describe('migrate', () => {
     await upgraded.setCursor(groups[0]!.localId, 50);
     await migrate(db);
     expect((await upgraded.getGroup(groups[0]!.localId))?.cursor).toBe(50);
+  });
+
+  it('v6 upgrades a v5 database: groups gain creation_id, null for every group, nothing else moves', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 5));
+    const group = makeGroup({ cursor: 9, epoch: 'k3JdAAAAAAAAAAAAAAAAAA' });
+    await insertGroupBefore6(db, group);
+    await migrate(db);
+    expect(await readSchemaVersion(db)).toBe(6);
+    const upgraded = await openSqliteStore(db);
+    expect(await upgraded.getGroup(group.localId)).toEqual({ ...group, creationId: null });
   });
 
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {

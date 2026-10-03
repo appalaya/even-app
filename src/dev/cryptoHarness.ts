@@ -253,6 +253,7 @@ async function scratchGroup(events: number): Promise<ScratchGroup> {
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
   });
   for (let i = 0; i < rows.length; i += 1000)
     await store.insertEvents(localId, rows.slice(i, i + 1000));

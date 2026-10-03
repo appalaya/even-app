@@ -67,6 +67,7 @@ async function joined(kind: StoreKind) {
     lastSyncError: null,
     state: 'active',
     epochResetsThisCycle: 0,
+    creationId: null,
   });
   await a.store.insertEvents(
     localId,

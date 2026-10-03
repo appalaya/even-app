@@ -84,6 +84,12 @@ export interface ReduceOptions {
   format?: (minor: number) => string;
   /** This group's own localId; a group.closed whose `to` equals it is ignored. */
   selfLocalId?: string;
+  /**
+   * The envelope id of the `group.created` this phone pinned (the app's `groups.creation_id`): while it is in the live
+   * log it is the creation, whatever arrived first. Without one, or while it is not there, `creationOf`'s arrival rule
+   * decides.
+   */
+  creationId?: string | null;
 }
 
 export function emptyState(): GroupState {
@@ -696,22 +702,25 @@ function arrivedFirst(a: LogEntry, b: LogEntry): boolean {
   return compareLog(a, b) < 0;
 }
 
-function firstCreation(live: readonly LogEntry[]): LogEntry | null {
+function firstCreation(live: readonly LogEntry[], pin?: string | null): LogEntry | null {
   let first: LogEntry | null = null;
   for (const entry of live) {
-    if (entry.event.type === 'group.created' && (first === null || arrivedFirst(entry, first))) first = entry;
+    if (entry.event.type !== 'group.created') continue;
+    if (pin != null && entry.id === pin) return entry;
+    if (first === null || arrivedFirst(entry, first)) first = entry;
   }
   return first;
 }
 
 /**
- * The `group.created` that takes effect (design.md "Reducer"): a group is created once, by the first creation to
- * arrive at the server. Among the ones the fold applies (held ones are not), the smallest R wins; one with an R beats
- * one without; ties, and a log no server has stamped, go by `compareLog`. A later `group.created` is a duplicate
- * creation, ignored entirely, whatever `ts` it claims. Null when the log has none. Rotation copies only this one.
+ * The `group.created` that takes effect (design.md "Reducer"): a group is created once. A pinned creation (`pin`, the
+ * app's `groups.creation_id`) is it whenever it is in the live log. Otherwise it is the first creation to arrive at the
+ * server: among the ones the fold applies (held ones are not), the smallest R wins; one with an R beats one without;
+ * ties, and a log no server has stamped, go by `compareLog`. Every other `group.created` is a duplicate creation,
+ * ignored entirely, whatever `ts` it claims. Null when the log has none. Rotation copies only this one.
  */
-export function creationOf(log: readonly LogEntry[]): LogEntry | null {
-  return firstCreation(liveLog(log));
+export function creationOf(log: readonly LogEntry[], pin?: string | null): LogEntry | null {
+  return firstCreation(liveLog(log), pin);
 }
 
 /** Replays the log per design.md "Reducer". Pure. Every event in `log` has already passed parseEvent. */
@@ -721,7 +730,7 @@ export function reduce(log: readonly LogEntry[], options?: ReduceOptions): Group
     options?.format ?? ((n: number) => String(n)),
     options?.selfLocalId,
     firstAdds(entries),
-    firstCreation(entries)?.id ?? null,
+    firstCreation(entries, options?.creationId)?.id ?? null,
   );
   for (const entry of entries) fold.apply(entry);
   return fold.finish();

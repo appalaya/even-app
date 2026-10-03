@@ -136,11 +136,12 @@ interface GroupRecord {
   last_sync_error: string | null;
   state: string;
   epoch_resets_this_cycle: number;
+  creation_id: string | null;
 }
 
 const GROUP_COLUMNS =
   'local_id, server_url, epoch, cursor, my_member_id, name_cache, currency_cache, created_at, ' +
-  'last_synced_at, last_sync_error, state, epoch_resets_this_cycle';
+  'last_synced_at, last_sync_error, state, epoch_resets_this_cycle, creation_id';
 
 function toGroupRow(r: GroupRecord): GroupRow {
   return {
@@ -156,6 +157,7 @@ function toGroupRow(r: GroupRecord): GroupRow {
     lastSyncError: r.last_sync_error,
     state: r.state as GroupLifecycle,
     epochResetsThisCycle: r.epoch_resets_this_cycle,
+    creationId: r.creation_id,
   };
 }
 
@@ -179,6 +181,7 @@ function checkGroupRow(row: GroupRow): SqlValue[] {
     checkNullableString(row.lastSyncError, 'lastSyncError'),
     checkEnum(row.state, GROUP_STATES, 'state'),
     checkZeroOrOne(row.epochResetsThisCycle, 'epochResetsThisCycle'),
+    checkNullableId(row.creationId, 'creationId'),
   ];
 }
 
@@ -392,7 +395,8 @@ export class SqliteStore implements Store {
          last_synced_at = excluded.last_synced_at,
          last_sync_error = excluded.last_sync_error,
          state = excluded.state,
-         epoch_resets_this_cycle = excluded.epoch_resets_this_cycle`,
+         epoch_resets_this_cycle = excluded.epoch_resets_this_cycle,
+         creation_id = COALESCE(groups.creation_id, excluded.creation_id)`,
       values,
     );
   }
@@ -508,6 +512,17 @@ export class SqliteStore implements Store {
       }
     }
     await this.updateGroup(localId, sets, values);
+  }
+
+  async pinCreation(localId: string, envelopeId: string): Promise<boolean> {
+    checkLocalId(localId);
+    checkId(envelopeId, 'envelopeId');
+    const { changes } = await this.db.run(
+      'UPDATE groups SET creation_id = ? WHERE local_id = ? AND creation_id IS NULL',
+      [envelopeId, localId],
+    );
+    if (changes === 0) await requireGroup(this.db, localId);
+    return changes > 0;
   }
 
   async setMyMember(localId: string, memberId: string | null): Promise<void> {
@@ -730,6 +745,18 @@ export class SqliteStore implements Store {
        WHERE local_id = ? AND acked = 0 AND push_state = 'pending'
        ORDER BY ${LOG_ORDER} LIMIT ?`,
       [localId, limit],
+    );
+  }
+
+  async outboxEntry(localId: string, id: string): Promise<OutboxRow | null> {
+    checkLocalId(localId);
+    checkId(id, 'id');
+    return (
+      (await this.db.get<OutboxRow>(
+        `SELECT id, ts, envelope FROM events
+         WHERE local_id = ? AND id = ? AND acked = 0 AND push_state = 'pending'`,
+        [localId, id],
+      )) ?? null
     );
   }
 

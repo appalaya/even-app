@@ -393,7 +393,9 @@ export async function importGroupFile(
         })
       : envelope;
     seen.add(id);
-    const receivedAt = received.get(id);
+    // A creation never takes a file's R: a phone pins its creation only from a server's (design.md "Reducer"), and a
+    // file could otherwise give a duplicate one an early R.
+    const receivedAt = event?.type === 'group.created' ? undefined : received.get(id);
     rows.push({
       id,
       origin: 'remote',
@@ -413,7 +415,7 @@ export async function importGroupFile(
   let name = invite.g ?? null;
   let currency = invite.cur ?? null;
   if (naming.length > 0) {
-    const named = reduce(naming);
+    const named = reduce(naming, { creationId: existing?.creationId ?? null });
     if (named.name !== '') name = named.name;
     if (named.created) currency = named.currency;
   }
@@ -445,6 +447,7 @@ export async function importGroupFile(
         lastSyncError: null,
         state: finalState,
         epochResetsThisCycle: 0,
+        creationId: null,
       });
     } else if (locallyGone) {
       await tx.setGroupState(localId, finalState);

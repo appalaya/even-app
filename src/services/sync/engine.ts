@@ -427,6 +427,8 @@ interface Cycle {
   epoch: string | null;
   resets: number;
   cursor: number;
+  /** The group's pinned creation (`groups.creation_id`): pushed alone, before the rest, whenever it is to be sent. */
+  creationId: string | null;
   pushed: number;
   pulled: number;
   newOkIds: string[];
@@ -602,7 +604,14 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     let refreshed = false;
     let lastAcked: ReadonlySet<string> = new Set();
     for (;;) {
-      const rows = await store.outbox(cycle.localId, batchSize(cycle));
+      // The pinned creation first, in a request of its own, whenever it is in the outbox (after an epoch reset, a
+      // move or an import): it then arrives on the new copy before any duplicate creation, which the claimed-ts
+      // order would otherwise send first (a backdated one), or with it in one request, sharing its R
+      // (design.md "Reducer", "A group is created once").
+      const creation =
+        cycle.creationId === null ? null : await store.outboxEntry(cycle.localId, cycle.creationId);
+      const rows =
+        creation !== null ? [creation] : await store.outbox(cycle.localId, batchSize(cycle));
       if (rows.length === 0) return { kind: 'done' };
       const paused = serverPaused(cycle.serverUrl);
       if (paused !== null) return { kind: 'stop', error: paused };
@@ -841,6 +850,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
       epoch: group.epoch,
       resets: group.epochResetsThisCycle,
       cursor: group.cursor,
+      creationId: group.creationId,
       pushed: 0,
       pulled: 0,
       newOkIds: [],

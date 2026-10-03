@@ -325,8 +325,13 @@ describe.each(STORE_KINDS)('group file on the %s store', (kind) => {
     const c = await w.device('C');
     await c.services.groups.importGroupFile(text);
     const imported = await c.store.dump(localId);
+    // Every row takes the file's R but the group's creation: a phone pins its creation only from a server's R.
+    const creation = (await a.services.groupState.entries(localId)).find(
+      (e) => e.event.type === 'group.created',
+    )?.id;
+    expect(creation).toBeDefined();
     expect(imported.map((r) => [r.acked, r.receivedAt])).toEqual(
-      imported.map((r) => [false, onA.get(r.id)]),
+      imported.map((r) => [false, r.id === creation ? null : onA.get(r.id)]),
     );
     // C's server reports its own R on the next push (a duplicate reports the stored value) and replaces them.
     const secret = await secretOn(a, localId);

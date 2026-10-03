@@ -788,6 +788,27 @@ describe('reduce: group events', () => {
       expect(creationOf([])).toBeNull();
     });
 
+    it('a pinned creation is the creation whenever it is in the live log, whatever arrived first', () => {
+      // The re-formed copy where the backdated one arrived first: the pin decides, not arrival.
+      const log = [genuine(T0 + 9_000_000), ...rest(), backdated(T0 + 8_000_000)];
+      const pin = genuine().id;
+      expect(reduce(log).currency).toBe('EUR');
+      const s = reduce(log, { creationId: pin });
+      expect([s.name, s.currency, s.flagged]).toEqual(['Banff 2026', 'CAD', []]);
+      expect(s.activity.map((a) => a.eventId)).not.toContain(pad('backdated'));
+      expect(creationOf(log, pin)?.id).toBe(pin);
+      for (let seed = 1; seed <= 5; seed++) {
+        expect(canon(reduce(shuffled(log, seed), { creationId: pin }))).toStrictEqual(canon(s));
+      }
+      // A pin that is not a creation in the live log leaves the arrival rule to decide.
+      for (const other of [pad('nowhere'), eid(7), null]) {
+        expect(reduce(log, { creationId: other }).currency).toBe('EUR');
+        expect(creationOf(log, other)?.id).toBe(pad('backdated'));
+      }
+      const far = { ...entry(pad('far-created'), { type: 'group.created', name: 'Far', currency: 'USD', ts: LIMITS.tsMax - 1 }), receivedAt: T0 };
+      expect(reduce([...log, far], { creationId: far.id }).currency).toBe('EUR'); // held: not in the live log
+    });
+
     it('arrival decides, not the claim: on a copy where the duplicate arrived first, it is the creation', () => {
       // What a move or a wipe can do: every R re-assigned, the backdated claim re-pushed first (design.md "Reducer").
       const s = reduce([genuine(T0 + 9_000_000), ...rest(), backdated(T0 + 8_000_000)]);

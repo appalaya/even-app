@@ -394,6 +394,34 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
       );
     });
 
+    it('after a reset, pushes the pinned creation alone, before a backdated duplicate the ts order puts first', async () => {
+      const h = await setup();
+      const backdated = await writeLocal(h.store, h.keys, {
+        ...h.ev.created('Pwned', 'EUR'),
+        ts: LIMITS.tsMin,
+        at: LIMITS.tsMin,
+      });
+      const creation = await writeLocal(h.store, h.keys, h.ev.created('Banff 2026', 'CAD'));
+      await writeMany(h, 3);
+      expectSynced(await h.engine.syncGroup(h.keys.localId, foreground));
+      expect(await h.store.pinCreation(h.keys.localId, creation)).toBe(true);
+
+      h.server.wipe(h.keys.groupId); // idle expiry, a Leave that deleted the copy, a DELETE
+      h.server.requests.length = 0;
+      await h.clock.sleep(1_000);
+      expect(await h.engine.syncGroup(h.keys.localId, foreground)).toMatchObject({
+        outcome: 'synced',
+        epochResets: 1,
+      });
+
+      const pushes = h.server.requests.filter((r) => r.op === 'push').map((r) => r.ids);
+      expect(pushes[0]).toEqual([creation]);
+      expect(pushes[1]?.[0]).toBe(backdated);
+      const arrivals = h.server.receivedAt(h.keys.groupId);
+      expect(arrivals.get(creation) as number).toBeLessThan(arrivals.get(backdated) as number);
+      expect((await h.store.countByStatus(h.keys.localId)).outbox).toBe(0);
+    });
+
     it('treats a null epoch where one is stored as a change: resets via unknown, then adopts', async () => {
       const h = await setup();
       const ids = await writeMany(h, 3);

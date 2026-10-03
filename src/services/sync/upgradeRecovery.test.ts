@@ -66,10 +66,9 @@ async function storeAtV4(
   }
   const driver: SqlDriver = openNodeDriver();
   await migrate(driver, MIGRATIONS.slice(0, 4));
-  const columns = Object.keys(group).length;
   await driver.run(
     `INSERT INTO groups (local_id, server_url, epoch, cursor, my_member_id, name_cache, currency_cache, created_at,
-       last_synced_at, last_sync_error, state, epoch_resets_this_cycle) VALUES (${new Array(columns).fill('?').join(', ')})`,
+       last_synced_at, last_sync_error, state, epoch_resets_this_cycle) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       group.localId,
       group.serverUrl,

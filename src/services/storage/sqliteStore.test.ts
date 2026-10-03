@@ -186,6 +186,22 @@ describe('groups', () => {
     await rejectsWith(store.setNameCache(g, { currency: 'euro' }), 'invalid_argument');
   });
 
+  it('pins the creation once: never moved, never cleared, not even by an upsert', async () => {
+    const [first, second] = [newId(), newId()];
+    expect((await store.getGroup(g))?.creationId).toBeNull();
+    expect(await store.pinCreation(g, first)).toBe(true);
+    expect(await store.pinCreation(g, second)).toBe(false);
+    expect((await store.getGroup(g))?.creationId).toBe(first);
+    await store.upsertGroup({ ...group, creationId: null });
+    await store.upsertGroup({ ...group, creationId: second });
+    expect((await store.getGroup(g))?.creationId).toBe(first);
+    const fresh = makeGroup({ creationId: second });
+    await store.upsertGroup(fresh);
+    expect((await store.getGroup(fresh.localId))?.creationId).toBe(second);
+    await rejectsWith(store.pinCreation(newLocalId(), first), 'group_not_found');
+    await rejectsWith(store.pinCreation(g, 'nope'), 'invalid_argument');
+  });
+
   it('throws group_not_found from every updater when the group is missing', async () => {
     const missing = newLocalId();
     await rejectsWith(store.setGroupState(missing, 'closed'), 'group_not_found');
@@ -497,6 +513,23 @@ describe('outbox', () => {
     await store.upsertGroup(other);
     await store.insertEvents(other.localId, [localRow(T0)]);
     expect(await store.outbox(g, 10)).toEqual([]);
+  });
+});
+
+describe('outboxEntry', () => {
+  it('is the row while it waits in the outbox, and null once acked, rejected or unknown', async () => {
+    const [waiting, acked, rejected] = [localRow(T0), localRow(T0 + 1), localRow(T0 + 2)];
+    await store.insertEvents(g, [waiting, acked, rejected]);
+    await store.ack(g, [acked.id]);
+    await store.markRejected(g, [rejected.id]);
+    expect(await store.outboxEntry(g, waiting.id)).toEqual({
+      id: waiting.id,
+      ts: waiting.ts,
+      envelope: waiting.envelope,
+    });
+    for (const id of [acked.id, rejected.id, newId()]) {
+      expect(await store.outboxEntry(g, id)).toBeNull();
+    }
   });
 });
 
