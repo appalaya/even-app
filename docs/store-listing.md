@@ -32,6 +32,12 @@ All nine were settled with the owner on 1 October 2026; everything below follows
 9. **Where the iPhone app is offered (App Store):** Apple silicon Macs and Apple Vision Pro unticked until they are
    tested; China mainland off. See [Pricing and Availability](#pricing-and-availability).
 
+**Submitted.** Version 1.0 with build 141 went to App Review on 3 October 2026: manual release, 147 storefronts
+(the 27 EU countries and China mainland off, per [Before production: the address](#before-production-the-address)).
+Beta App Review had approved builds 135, 137, 139 and 141 for the Family & Friends group first. On approval the
+version waits as "Pending Developer Release" until the owner releases it; `CHANGELOG.md` is rolled into a 1.0.0
+section then.
+
 ---
 
 ## App Store Connect (iOS)
