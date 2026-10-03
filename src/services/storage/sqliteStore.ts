@@ -569,7 +569,13 @@ export class SqliteStore implements Store {
       // Current acked/seq/received_at of every id this call touches, as if the rows were applied one by one.
       const known = new Map<
         string,
-        { acked: boolean; seq: number | null; receivedAt: number | null; pending?: CheckedEvent }
+        {
+          acked: boolean;
+          seq: number | null;
+          receivedAt: number | null;
+          status: EventStatus;
+          pending?: CheckedEvent;
+        }
       >();
       const ids = [...new Set(incoming.map((r) => r.id))];
       for (const chunk of chunked(ids, MAX_PARAMS - 1)) {
@@ -578,18 +584,26 @@ export class SqliteStore implements Store {
           acked: number;
           seq: number | null;
           received_at: number | null;
+          status: EventStatus;
         }>(
-          `SELECT id, acked, seq, received_at FROM events
+          `SELECT id, acked, seq, received_at, status FROM events
            WHERE local_id = ? AND id IN (${placeholders(chunk.length)})`,
           [localId, ...chunk],
         );
         for (const r of found) {
-          known.set(r.id, { acked: r.acked === 1, seq: r.seq, receivedAt: r.received_at });
+          known.set(r.id, {
+            acked: r.acked === 1,
+            seq: r.seq,
+            receivedAt: r.received_at,
+            status: r.status,
+          });
         }
       }
 
       const inserted: CheckedEvent[] = [];
       const updated = new Map<string, { seq: number | null; receivedAt: number | null }>();
+      /** Stored `undecryptable` rows a pulled envelope of the same id replaces (see the type's doc). */
+      const replaced = new Map<string, CheckedEvent>();
       let acked = 0;
       for (const row of incoming) {
         const current = known.get(row.id);
@@ -600,6 +614,7 @@ export class SqliteStore implements Store {
             acked: row.acked,
             seq: row.seq,
             receivedAt: row.receivedAt,
+            status: row.status,
             pending,
           });
           continue;
@@ -607,6 +622,35 @@ export class SqliteStore implements Store {
         // Insert-or-ignore; only an acked duplicate (a pulled page) touches the existing row, and only its
         // acked flag, seq and received_at. A seq is never lowered; the server's received_at overwrites.
         if (!row.acked) continue;
+        if (current.status === 'undecryptable' && row.status !== 'undecryptable') {
+          // What a build before received_at stored as junk (or any unreadable row) gives way to the envelope a
+          // server now serves under that id: its content, ts and size, with this row's acked, seq and R.
+          const seq =
+            row.seq === null
+              ? current.seq
+              : current.seq === null
+                ? row.seq
+                : Math.max(current.seq, row.seq);
+          const receivedAt = row.receivedAt ?? current.receivedAt;
+          if (!current.acked || seq !== current.seq) acked += 1;
+          current.acked = true;
+          current.seq = seq;
+          current.receivedAt = receivedAt;
+          current.status = row.status;
+          if (current.pending) {
+            Object.assign(current.pending, {
+              ...row,
+              origin: current.pending.origin,
+              pushState: current.pending.pushState,
+              seq,
+              receivedAt,
+            });
+          } else {
+            updated.delete(row.id);
+            replaced.set(row.id, { ...row, seq, receivedAt });
+          }
+          continue;
+        }
         const seq =
           row.seq === null
             ? current.seq
@@ -624,6 +668,8 @@ export class SqliteStore implements Store {
           current.pending.acked = true;
           current.pending.seq = seq;
           current.pending.receivedAt = receivedAt;
+        } else if (replaced.has(row.id)) {
+          Object.assign(replaced.get(row.id) as CheckedEvent, { seq, receivedAt });
         } else {
           updated.set(row.id, { seq, receivedAt });
         }
@@ -663,6 +709,13 @@ export class SqliteStore implements Store {
             localId,
             ...chunk.map(([id]) => id),
           ],
+        );
+      }
+      for (const [id, r] of replaced) {
+        await tx.run(
+          `UPDATE events SET envelope = ?, status = ?, ts = ?, size = ?, acked = 1, seq = ?, received_at = ?
+           WHERE local_id = ? AND id = ?`,
+          [r.envelope, r.status, r.ts, r.size, r.seq, r.receivedAt, localId, id],
         );
       }
       return { inserted: inserted.map((r) => r.id), acked };

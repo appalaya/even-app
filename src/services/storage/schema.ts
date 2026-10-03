@@ -143,11 +143,18 @@ async function V4(tx: SqlDriver): Promise<void> {
  * which the reducer orders and holds events by. Null for every row already stored: the next push or pull of that row
  * supplies it, and until then the event keeps its claimed `ts`, as before. The partial index serves
  * `latestOwnReceipt`, the write gate's look at this phone's last push. A server's own timestamp, not content.
+ *
+ * Every group's cursor goes back to 0, in the same transaction, so the next sync pulls the whole log again. Builds
+ * before this one took a pulled envelope carrying `received_at` for junk: they stored it as `undecryptable` and moved
+ * the cursor past it, once the server half went live. The re-pull brings every envelope back; a readable one replaces
+ * the junk row of its id (`insertEvents`), and every row gets its R. Nothing else changes: the epoch stays, and acked
+ * and unsent rows stay as they are, so nothing is pushed again that was already stored.
  */
 const V5 = statements(
   'ALTER TABLE events ADD COLUMN received_at INTEGER',
   `CREATE INDEX events_own_received ON events (received_at, ts)
      WHERE origin = 'local' AND received_at IS NOT NULL`,
+  'UPDATE groups SET cursor = 0',
 );
 
 export const MIGRATIONS: readonly Migration[] = [

@@ -242,6 +242,42 @@ describe('migrate', () => {
     expect(await upgraded.latestOwnReceipt()).toBeNull();
   });
 
+  it('v5 sets every group cursor to 0 so the next sync pulls the whole log again; nothing else moves', async () => {
+    const db = driverFor();
+    await migrate(db, MIGRATIONS.slice(0, 4));
+    const before = await openSqliteStore(db, { migrations: MIGRATIONS.slice(0, 4) });
+    const groups = [
+      makeGroup({ cursor: 120, epoch: 'k3JdAAAAAAAAAAAAAAAAAA', lastSyncedAt: 1 }),
+      makeGroup({ cursor: 7, state: 'closed' }),
+      makeGroup({ cursor: 0 }),
+    ];
+    for (const group of groups) await before.upsertGroup(group);
+    const unsent = localRow(1_760_000_000_001);
+    await db.run(
+      `INSERT INTO events (local_id, id, origin, acked, seq, ts, envelope, status, push_state, size)
+       VALUES (?, ?, 'local', 0, NULL, ?, ?, 'ok', 'pending', ?)`,
+      [
+        groups[0]!.localId,
+        unsent.id,
+        unsent.ts,
+        unsent.envelope,
+        storedSizeOfText(unsent.envelope),
+      ],
+    );
+
+    await migrate(db);
+
+    const upgraded = await openSqliteStore(db);
+    for (const group of groups) {
+      expect(await upgraded.getGroup(group.localId)).toEqual({ ...group, cursor: 0 });
+    }
+    expect((await upgraded.outbox(groups[0]!.localId, 10)).map((r) => r.id)).toEqual([unsent.id]);
+    // Once only: a later cursor is not reset by opening the store again.
+    await upgraded.setCursor(groups[0]!.localId, 50);
+    await migrate(db);
+    expect((await upgraded.getGroup(groups[0]!.localId))?.cursor).toBe(50);
+  });
+
   it('keeps decrypted content out of the schema: no column beyond ts and the name/currency caches', async () => {
     const db = driverFor();
     await migrate(db);

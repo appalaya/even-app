@@ -338,6 +338,52 @@ describe('insertEvents', () => {
     expect(await rawOne(first.id)).toMatchObject({ origin: 'local', acked: 1, seq: 4 });
   });
 
+  it('a pulled readable row replaces an undecryptable row of its id; nothing else replaces content', async () => {
+    const junk = pulledRow(3, null, { envelope: '{"junk":true,"received_at":1}' });
+    const local = localRow(T0, { pushState: 'rejected' });
+    await store.insertEvents(g, [junk, local]);
+    const real = pulledRow(5, T0 + 7, { id: junk.id, receivedAt: T0 + 9 });
+    // An unacked copy (an import) changes nothing; nor does a pulled copy that is junk too.
+    await store.insertEvents(g, [{ ...real, acked: false, seq: null }]);
+    await store.insertEvents(g, [pulledRow(4, null, { id: junk.id, envelope: '{"other":1}' })]);
+    expect(await rawOne(junk.id)).toMatchObject({
+      status: 'undecryptable',
+      envelope: junk.envelope,
+    });
+    expect(await store.insertEvents(g, [real])).toEqual({ inserted: [], acked: 1 });
+    expect(await rawOne(junk.id)).toEqual({
+      id: junk.id,
+      origin: 'remote',
+      acked: 1,
+      seq: 5,
+      ts: T0 + 7,
+      envelope: real.envelope,
+      status: 'ok',
+      push_state: 'pending',
+    });
+    expect(
+      (await db.get<{ size: number; received_at: number }>(
+        'SELECT size, received_at FROM events WHERE id = ?',
+        [junk.id],
+      )) ?? {},
+    ).toEqual({ size: 256 + 64, received_at: T0 + 9 });
+    // A readable row keeps its content against any later copy.
+    const other = pulledRow(6, T0 + 8, { id: local.id, status: 'invalid' });
+    await store.insertEvents(g, [other]);
+    expect(await rawOne(local.id)).toMatchObject({
+      status: 'ok',
+      envelope: local.envelope,
+      ts: T0,
+      origin: 'local',
+      push_state: 'rejected',
+    });
+    // Within one call: junk inserted, then its real copy.
+    const fresh = pulledRow(7, null);
+    await store.insertEvents(g, [fresh, pulledRow(7, T0 + 1, { id: fresh.id })]);
+    expect(await rawOne(fresh.id)).toMatchObject({ status: 'ok', ts: T0 + 1, seq: 7 });
+    expect((await store.countByStatus(g)).byStatus.undecryptable).toBe(0);
+  });
+
   it('honours an explicit pushState', async () => {
     const row = localRow(T0, { pushState: 'rejected' });
     await store.insertEvents(g, [row]);

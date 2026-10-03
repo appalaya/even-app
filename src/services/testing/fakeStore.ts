@@ -3,7 +3,8 @@
  * - `insertEvents` is insert-or-ignore on (localId, id); an acked incoming duplicate sets `acked`, `seq` and
  *   `receivedAt` on the existing row (a `seq` is never lowered; a null incoming one keeps the stored one, as a null
  *   `receivedAt` does); an unacked duplicate changes nothing; the envelope, status, ts and origin of an existing row
- *   are never replaced. A `receivedAt` that is not a usable R is stored as null. Rows are
+ *   are never replaced, except that a pulled row that is not `undecryptable` replaces an `undecryptable` row's
+ *   envelope, status and ts. A `receivedAt` that is not a usable R is stored as null. Rows are
  *   validated like sqliteStore.ts's `checkNewEvent` (text ≤ 16 KiB, strict v1 for readable statuses, same id,
  *   `ok` has a `ts`), all or nothing, and the group row must exist.
  * - the outbox is `acked = 0 AND push_state = 'pending'`, ordered by `ts` (null last) then `id`.
@@ -122,7 +123,16 @@ function byTsThenId(a: EventRow, b: EventRow): number {
 
 export type FaultHook = (method: string, args: readonly unknown[]) => void;
 
+/** The schema version this fake acts as (sqliteStore's `SCHEMA_VERSION`); see `migrate`. */
+export const FAKE_SCHEMA_VERSION = 5;
+
 export class FakeStore implements Store {
+  /**
+   * The schema version the data stands at, for upgrade tests: a fake made at an older version holds data as that
+   * build left it, and `migrate` applies what the later migrations do to data (v5: every group's cursor back to 0, so
+   * the next sync pulls the whole log again).
+   */
+  schemaVersion = FAKE_SCHEMA_VERSION;
   private state: State = {
     groups: new Map(),
     events: new Map(),
@@ -202,6 +212,10 @@ export class FakeStore implements Store {
 
   async migrate(): Promise<void> {
     this.enter('migrate', []);
+    if (this.schemaVersion < 5) {
+      for (const group of this.state.groups.values()) group.cursor = 0;
+    }
+    this.schemaVersion = FAKE_SCHEMA_VERSION;
   }
 
   /** Top-level transactions run one at a time; `fn` gets a view whose `transaction` is a savepoint. */
@@ -375,6 +389,12 @@ export class FakeStore implements Store {
       existing.acked = true;
       existing.seq = seq;
       if (isReceivedAt(row.receivedAt)) existing.receivedAt = row.receivedAt;
+      if (existing.status === 'undecryptable' && row.status !== 'undecryptable') {
+        // A pulled envelope replaces an unreadable row of its id (sqliteStore.ts): content, ts, status.
+        existing.envelope = row.envelope;
+        existing.status = row.status;
+        existing.ts = row.ts;
+      }
     }
     return { inserted, acked };
   }
@@ -544,6 +564,8 @@ export class FakeStore implements Store {
   }
 }
 
-export function createFakeStore(): FakeStore {
-  return new FakeStore();
+export function createFakeStore(options: { schemaVersion?: number } = {}): FakeStore {
+  const store = new FakeStore();
+  if (options.schemaVersion !== undefined) store.schemaVersion = options.schemaVersion;
+  return store;
 }

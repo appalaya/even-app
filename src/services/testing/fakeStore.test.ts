@@ -184,6 +184,64 @@ describe('FakeStore honours the Store contract', () => {
   });
 });
 
+describe('FakeStore at an older schema version', () => {
+  it('migrate() applies v5 to its data: every cursor back to 0, once', async () => {
+    const store = createFakeStore({ schemaVersion: 4 });
+    const keys = groupKeys();
+    await store.upsertGroup(groupRow(keys, { cursor: 12 }));
+    await store.migrate();
+    expect((await store.getGroup(keys.localId))?.cursor).toBe(0);
+    await store.setCursor(keys.localId, 3);
+    await store.migrate();
+    expect((await store.getGroup(keys.localId))?.cursor).toBe(3);
+  });
+});
+
+describe.each(STORE_KINDS)(
+  'a pulled envelope replaces junk on the %s store (the fake matches the real one)',
+  (kind) => {
+    it('takes the envelope, status and ts of a readable acked copy; nothing else', async () => {
+      const store = await openTestStore(kind);
+      try {
+        const keys = groupKeys();
+        const L = keys.localId;
+        await store.upsertGroup(groupRow(keys));
+        const [a, b] = ['a', 'b'].map(idOf) as [string, string];
+        const real = row(keys, a, {
+          acked: true,
+          seq: 2,
+          origin: 'remote',
+          ts: 5,
+          receivedAt: 1_760_000_000_000,
+        });
+        await store.insertEvents(L, [
+          { ...real, ts: null, status: 'undecryptable', envelope: '{"junk":1}' },
+          row(keys, b),
+        ]);
+        await store.insertEvents(L, [{ ...real, acked: false, seq: null }]);
+        expect((await store.dump(L))[0]).toMatchObject({ status: 'undecryptable', ts: null });
+        await store.insertEvents(L, [
+          real,
+          row(keys, b, { acked: true, seq: 3, status: 'invalid', ts: 9 }),
+        ]);
+        const [first, second] = await store.dump(L);
+        expect(first).toMatchObject({
+          status: 'ok',
+          ts: 5,
+          envelope: real.envelope,
+          seq: 2,
+          acked: true,
+        });
+        expect(first?.receivedAt).toBe(1_760_000_000_000);
+        expect(second).toMatchObject({ status: 'ok', ts: 1, acked: true, seq: 3, origin: 'local' });
+        expect((await store.usage(L)).events).toBe(2);
+      } finally {
+        await store.close();
+      }
+    });
+  },
+);
+
 describe.each(STORE_KINDS)(
   'received_at on the %s store (the fake matches the real one)',
   (kind) => {

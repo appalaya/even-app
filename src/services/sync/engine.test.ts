@@ -876,6 +876,82 @@ describe.each(STORE_KINDS)('engine on the %s store', (kind) => {
     });
   });
 
+  describe('the server\'s read allowance (design.md "Migrations", v5)', () => {
+    it('re-pulling several large groups waits out each 429 for every group on that server, and finishes', async () => {
+      const h = await setup();
+      const groups = [h.keys, groupKeys(), groupKeys()];
+      const transport = h.server.transport();
+      for (const [i, keys] of groups.entries()) {
+        if (i > 0) {
+          h.secrets.add(keys.secret);
+          await h.store.upsertGroup(groupRow(keys, { createdAt: h.clock.now() + i }));
+        }
+        const ev = new Events(h.clock.now());
+        for (let batch = 0; batch < 24; batch++) {
+          const envelopes = Array.from({ length: 25 }, () => sealFor(keys, ev.expense('Item')));
+          await transport.push(keys.groupId, keys.token, envelopes);
+        }
+      }
+      // The public server's rule, scaled down: a read costs one unit per started 100 rows, 8 units a minute per
+      // address, and a read past that is a 429 with Retry-After: 60.
+      const allowance = 8;
+      let window = -1;
+      let used = 0;
+      const requests: { at: number; op: string; limited: boolean }[] = [];
+      h.server.onRequest = (request) => {
+        const at = h.clock.now();
+        if (request.op !== 'pull') {
+          requests.push({ at, op: request.op, limited: false });
+          return;
+        }
+        const current = Math.floor(at / 60_000);
+        if (current !== window) {
+          window = current;
+          used = 0;
+        }
+        const left = h.server
+          .stored(request.groupId ?? '')
+          .filter((e) => e.seq > (request.since ?? 0)).length;
+        const rows = Math.min(request.limit ?? 0, h.server.info.limits.max_page, left);
+        const units = Math.max(1, Math.ceil(rows / 100));
+        const limited = used + units > allowance;
+        requests.push({ at, op: request.op, limited });
+        if (limited) {
+          throw new SyncError('rate_limited', 'fake: read allowance', {
+            status: 429,
+            retryAfterMs: 60_000,
+          });
+        }
+        used += units;
+      };
+      const start = h.clock.now();
+
+      await h.engine.syncAll(foreground);
+      const done = async () => {
+        for (const keys of groups) {
+          const row = await h.store.getGroup(keys.localId);
+          if (row?.cursor !== 600) return false;
+        }
+        return true;
+      };
+      for (let minute = 0; minute < 10 && !(await done()); minute++) await h.clock.advance(60_000);
+
+      expect(await done()).toBe(true);
+      for (const keys of groups) {
+        expect((await h.store.countByStatus(keys.localId)).byStatus.ok).toBe(600);
+      }
+      // A few minutes, not a spin: after a 429 no request reaches the server, for any group, until its Retry-After
+      // has run (the other groups' cycles end at once and retry then).
+      const limited = requests.flatMap((r, i) => (r.limited ? [i] : []));
+      expect(limited.length).toBeGreaterThan(0);
+      for (const i of limited) {
+        const t = requests[i]?.at ?? 0;
+        expect(requests.slice(i + 1).filter((r) => r.at < t + 60_000)).toEqual([]);
+      }
+      expect(h.clock.now() - start).toBeLessThan(6 * 60_000);
+    });
+  });
+
   describe('a hostile server (review M2)', () => {
     const bounds: Partial<SyncTuning> = {
       pullEntriesPerCycle: 60,

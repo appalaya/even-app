@@ -1042,8 +1042,14 @@ CREATE INDEX events_own_received ON events (received_at, ts)
   `received_at` is not decrypted: the server knows it already, and every
   member learns it (even-server `THREAT-MODEL.md`).
   `pending_deletes.auth_token` is the only credential.
-- `status = 'undecryptable'` rows (AEAD failure under the correct key) are
-  capped at 1,000 per group; beyond that the oldest are dropped, and settings
+- `status = 'undecryptable'` rows (AEAD failure under the correct key, or
+  junk) are the one exception to "a stored row's content is never replaced": a
+  pulled envelope of the same id that is not `undecryptable` replaces the
+  row's envelope, status, `ts` and size (its origin and push state stay). An
+  envelope that opens under the group key was written by a key holder, so
+  nothing a server forges can take a row this way. This is how the junk the
+  builds before v5 stored gives way to the real envelope ("Migrations").
+  `undecryptable` rows are capped at 1,000 per group; beyond that the oldest are dropped, and settings
   offers "clear unreadable entries". `unsupported_envelope` rows (unknown
   `v`, cannot be opened) are capped the same way, at 1,000 per group, oldest
   dropped first: only a server or a newer client can write them, and a
@@ -1075,9 +1081,23 @@ version bump; shipped migrations are never edited.
   time; no envelope is rewritten. It is a size of ciphertext, not decrypted
   content.
 - v5: adds `events.received_at` (pre-launch review H2) and the partial index
-  `events_own_received`. Every stored row starts with none: the next push or
-  pull of the row supplies it, and until then the event keeps its claimed
-  `ts` ("Ordering"). No envelope is rewritten.
+  `events_own_received`, and sets every group's `cursor` to 0, in the same
+  transaction. Every stored row starts with no R: the next push or pull of
+  the row supplies it, and until then the event keeps its claimed `ts`
+  ("Ordering"). The cursor reset is the recovery from the builds before it
+  (TestFlight 137, Play 1037 and earlier). Once the server half went live, every
+  pulled envelope carried `received_at`, and those builds stripped only `seq`,
+  so `envelopeShape` refused the extra key: they stored the envelope as
+  `undecryptable` (its text the envelope plus the server's field, cut to 4 KiB)
+  and moved the cursor past it. The server still holds every event. So the
+  first sync after the upgrade pulls each group's whole log again from 0:
+  every row gets its R, a readable envelope replaces the junk row of its id
+  (`insertEvents`, under "Local storage"), and one the cap pruned comes back as
+  a new row. Nothing else moves: the epoch stays, acknowledged rows are not
+  pushed again, and unsent writes stay in the outbox and go up as usual. A
+  phone with several large groups takes a few minutes through the server's
+  read allowance, pausing on its 429s ("Error handling"). No envelope is
+  rewritten in the migration itself.
 
 When the store cannot open (a database written by a newer build, a failed
 migration), the app shows the StartupError board instead of Groups: "Even
@@ -1155,7 +1175,8 @@ under Rotation.
    `parseEvent` (fail → `invalid`, unknown `sv`/`type` → `unsupported_body`);
    else `ok`, cache `ts`. Insert with `acked = 1`,
    `origin = 'remote'` and R, ignore if present; on conflict set `acked = 1`,
-   `seq` and R. Commit each page **and** the cursor update in one SQLite
+   `seq` and R (and a stored `undecryptable` row takes the envelope's content,
+   under "Local storage"). Commit each page **and** the cursor update in one SQLite
    transaction. Each opened body goes into the decode cache (below), and an
    envelope the cache already holds is not opened again.
 3. **Recompute**: invalidate the group's memoised state; observers re-render.
@@ -1222,7 +1243,7 @@ Groups sync sequentially; a failure in one does not block others.
 
 | Server error | App behaviour |
 |---|---|
-| network / 5xx / 429 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one, honoured up to a day (a longer one counts as a day). Within a cycle, a 5xx retries the same outbox head after 0.5 s → 1 s → 2 s; every third consecutive 5xx halves the batch size (floor 1, kept until the app restarts or the group moves); the cycle gives up after six consecutive 5xx while pushing (three while pulling) and backs off. Sync state shows "Not synced since …". |
+| network / 5xx / 429 | Silent; exponential backoff per group (30 s → 2 m → 10 m, reset on success), or `Retry-After` when the server sends one, honoured up to a day (a longer one counts as a day). A 429 the cycle does not wait out stops every request to that server, for every group there, until its `Retry-After` (the limits are per address): a cycle that starts meanwhile ends `rate_limited` without a request and retries then, so re-pulling several large groups (v5, "Migrations") waits the allowance out instead of spending a request per group on another 429. Within a cycle, a 5xx retries the same outbox head after 0.5 s → 1 s → 2 s; every third consecutive 5xx halves the batch size (floor 1, kept until the app restarts or the group moves); the cycle gives up after six consecutive 5xx while pushing (three while pulling) and backs off. Sync state shows "Not synced since …". |
 | `503 over_budget` | Pushes to that server pause until its `Retry-After` (30 s without one, a day at most) while pulls go on ("reads still work"); the cycle reports `failed` with that retry time and the group is not backed off. |
 | `unauthorized` | Cannot happen for a correctly joined group. Treated as a bug: log locally, back off, show "Can't reach this group's server" with the URL. |
 | `not_found` / `method_not_allowed` on a documented route, or a `200` that is not the documented shape | The transport reports `not_an_even_server`. Show "That URL isn't an Even server. Check the address." |

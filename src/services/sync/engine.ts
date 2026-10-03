@@ -15,7 +15,10 @@
  * - 5xx: the same outbox head is retried in the cycle after a short sleep; every third consecutive 5xx halves
  *   the group's batch size (floor 1, kept for the process); the cycle gives up after six.
  * - `Retry-After` (429, and 5xx carrying one) is waited out in the cycle when short, else it becomes the retry
- *   time, which every trigger honours, manual taps included. `503 over_budget` pauses pushes to that server
+ *   time, which every trigger honours, manual taps included. A 429 the cycle does not wait out stops every request to
+ *   that server, for every group, until its `Retry-After` (the limit is per address): a cycle meanwhile ends
+ *   `rate_limited` without a request and retries then, so a phone re-pulling several large groups through the read
+ *   allowance (design.md "Migrations", v5) pauses rather than spins. `503 over_budget` pauses pushes to that server
  *   until then while pulls continue ("reads still work").
  * - Outbox rows that are not sendable envelopes (junk, or larger than `max_event_bytes`) are quarantined
  *   locally without a request; a `415` for an envelope whose `v ≠ 1` quarantines it, other `415`s stop.
@@ -506,6 +509,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
   const backoff = new Map<string, Backoff>();
   const batchLimit = new Map<string, number>();
   const pushPausedUntil = new Map<string, number>();
+  /** Per server: its 429 asked for no request until then (a per-address limit binds every group there). */
+  const rateLimitedUntil = new Map<string, number>();
   /** Groups whose server switch is running: new cycles are skipped until the move's own full push. */
   const moving = new Set<string>();
   /** `localId|serverUrl` of debts whose DELETE is in flight, so two callers never send it twice. */
@@ -558,6 +563,21 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     cycle.epochResets = 1;
   }
 
+  /** After a 429 not waited out: no request to the server until its `Retry-After` (or the first backoff step). */
+  function pauseServer(serverUrl: string, error: SyncError): void {
+    const until = now() + (error.retryAfterMs ?? tuning.backoffScheduleMs[0] ?? 0);
+    rateLimitedUntil.set(serverUrl, Math.max(until, rateLimitedUntil.get(serverUrl) ?? 0));
+  }
+
+  /** The `rate_limited` a request to `serverUrl` would only earn again, while its `Retry-After` runs; else null. */
+  function serverPaused(serverUrl: string): SyncError | null {
+    const until = rateLimitedUntil.get(serverUrl);
+    if (until === undefined || now() >= until) return null;
+    return new SyncError('rate_limited', 'waiting out the server’s Retry-After', {
+      retryAfterMs: until - now(),
+    });
+  }
+
   async function refreshInfo(cycle: Cycle): Promise<void> {
     cycle.info = await infoCache.refresh(cycle.serverUrl, cycle.transport);
   }
@@ -580,6 +600,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     for (;;) {
       const rows = await store.outbox(cycle.localId, batchSize(cycle));
       if (rows.length === 0) return { kind: 'done' };
+      const paused = serverPaused(cycle.serverUrl);
+      if (paused !== null) return { kind: 'stop', error: paused };
       if (rows.some((row) => lastAcked.has(row.id))) {
         throw new SyncError('local_error', 'acked rows are still in the outbox');
       }
@@ -634,6 +656,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
               cycle.inlineWaits += 1;
               continue;
             }
+            pauseServer(cycle.serverUrl, error);
             return { kind: 'stop', error };
           case 'server_error':
             break;
@@ -683,6 +706,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     for (;;) {
       const since = cycle.cursor;
       const limit = Math.max(1, Math.min(cycle.info.limits.max_page, CLIENT_MAX_PAGE));
+      const paused = serverPaused(cycle.serverUrl);
+      if (paused !== null) return { kind: 'stop', error: paused };
       let page: PullResponse;
       try {
         page = await cycle.transport.pull(cycle.groupId, cycle.token, since, limit);
@@ -702,6 +727,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
           cycle.inlineWaits += 1;
           continue;
         }
+        if (error.code === 'rate_limited') pauseServer(cycle.serverUrl, error);
         if (error.code !== 'server_error' && error.code !== 'invalid_request') {
           return { kind: 'stop', error };
         }
@@ -788,6 +814,8 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngineHandle {
     const local = deriveLocal(secret);
     if (local.localId !== localId) throw new SyncError('no_secret', 'secret derives another group');
     const server = deriveServer(secret, serverUrl);
+    const paused = serverPaused(serverUrl);
+    if (paused !== null) throw paused;
     const transport = transportFor(serverUrl);
     const info = await infoCache.get(serverUrl, transport);
     if (!info.protocol.includes(PROTOCOL.version)) {

@@ -2,7 +2,7 @@
  * Model-based check: random sequences of inserts (local and pulled, with duplicates), acks, rejections and
  * resets, applied to the store and to a plain in-memory model of design.md's rules. After every step the
  * outbox must equal the model's `acked = 0 AND push_state = 'pending'` rows in log order, and acked/seq/
- * push_state must match row by row.
+ * push_state must match row by row. A pulled row that is readable replaces an `undecryptable` row of its id.
  */
 import * as fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
@@ -134,6 +134,8 @@ describe('outbox model', () => {
                     current.seq = seq;
                     expected.acked += 1;
                   }
+                  // An undecryptable row (here: no ts) takes the content of a pulled row that is not.
+                  if (current.ts === null && row.ts !== null) current.ts = row.ts;
                 }
               }
               expect(await store.insertEvents(g, rows)).toEqual(expected);
