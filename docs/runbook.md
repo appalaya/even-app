@@ -318,16 +318,19 @@ too, so any takedown waits for the reset. Don't purge large groups on a busy day
 
 ### 3.5 "Just a moment…" (a Cloudflare challenge)
 
-If `/v1/info` shows Cloudflare's "Just a moment…" page instead of JSON, a security setting on the zone is
-challenging traffic. `curl -sI https://sync.even.appalaya.com/v1/info | grep -i cf-mitigated` prints
-`cf-mitigated: challenge` when that is the case. Phones can't solve a challenge. They treat it as a server error and
-stop syncing ("Not synced since …"), and the contact form's `/api/` fails the same way.
+**Decided on 2 October 2026: Bot Fight Mode stays on for `appalaya.com`.** It challenges non-browser clients from
+some VPN, hosting and carrier addresses with Cloudflare's "Just a moment…" page. Phones can't solve a challenge; the
+app treats it as a transient server error, keeps every entry on the phone, shows "Not synced since …" and retries.
+Nothing is lost and nothing crashes. A user on such a network syncs again on another network, or points the group
+at a server they run. The contact form's `/api/` fails the same way on such a network.
 
-**What to do:** in the `appalaya.com` zone, look under **Security** for whatever issues the challenge: "I'm Under
-Attack" mode or the security level, Bot Fight Mode, or a WAF custom rule or rate limiting rule whose action is a
-challenge. Turn it off for `sync.even.appalaya.com` and `even.appalaya.com/api/*`. Any rule on those hosts must
-block, not challenge. The web README, "Zone settings", also asks for Bot Fight Mode's JavaScript detections to stay
-off.
+`curl -sI https://sync.even.appalaya.com/v1/info | grep -i cf-mitigated` prints `cf-mitigated: challenge` from a
+challenged network. The deploy workflow no longer requests the live server from GitHub's runner for this reason:
+after a deploy, check `curl -s https://sync.even.appalaya.com/v1/info` by hand from a trusted network.
+
+**If a user reports "Not synced" on every network they try:** ask which networks (home Wi-Fi, mobile data, VPN).
+If only a VPN or an office network fails, that is the challenge; the answer is another network or their own server.
+Do not add a WAF rule that challenges: any rule on `sync.even.appalaya.com` must block, not challenge.
 
 ### 3.6 500s while D1 is fine
 
