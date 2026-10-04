@@ -1,7 +1,7 @@
 # web — even.appalaya.com
 
 The static landing site: the universal-link and App Links association files, the invite page at `/i`, the
-product page, the contact page, and the privacy, terms and abuse pages. Plain HTML and CSS, one small inline script
+product page, the contact page, the Android closed-testing page, and the privacy, terms and abuse pages. Plain HTML and CSS, one small inline script
 on every page (the `from=app` rule, see [Pages the app opens](#pages-the-app-opens-fromapp)), one more on `/i`, two
 script files on `/contact`, no build step and no framework. Nothing is loaded from outside
 this site except Cloudflare Turnstile's bot check, on the contact page only. Deployed to Cloudflare by GitHub
@@ -13,6 +13,7 @@ Actions, as a Worker with static assets plus a small Worker script that answers 
 | `/` | `index.html` | Product page |
 | `/i` | `i.html` | Invite page. Reads the invite from the URL fragment, never sends it. Strict CSP. |
 | `/contact` | `contact.html`, `contact.js`, `contact-lib.js` | Report a group, get help, send feedback. The only form, the only script files, and the only page that loads Turnstile. See [Contact page](#contact-page). |
+| `/android` | `android.html` | How to join Android's closed test, linked from `/` and `/i` in place of the Google Play badge until Android reaches production. See [Store badges](#store-badges). |
 | `/privacy`, `/terms`, `/abuse` | `privacy.html`, `terms.html`, `abuse.html` | The privacy page is [`even-server/THREAT-MODEL.md`](https://github.com/appalaya/even-server/blob/main/THREAT-MODEL.md) in plain words; keep them in step. |
 | any unknown path | `404.html` | Served with status 404 (`not_found_handling: "404-page"` in `wrangler.jsonc`). |
 | `/api/contact`, `/api/contact/config` | `worker/` | The contact form's API, the only code that runs on Cloudflare. See [Contact form](#contact-form). |
@@ -57,7 +58,7 @@ nothing in its script that can send, store or inject (`fetch`, `sendBeacon`, `in
 group name is inserted with `textContent` only.
 
 `check.mjs` also fails on any external URL in any page other than the two store links, the repository and threat-model
-links, appalaya.com, and the Stripe tip link (Turnstile's script is in no page's markup: `contact.js` adds it, the one script file allowed to); on any mail address or `mailto:` in any published file; on inline
+links, appalaya.com, the Stripe tip link, and `/android`'s tester group and Play testing page (Turnstile's script is in no page's markup: `contact.js` adds it, the one script file allowed to); on any mail address or `mailto:` in any published file; on inline
 code in any other page besides the shared `from=app` script, and on a page without that script or with a copy that
 differs (see [Pages the app opens](#pages-the-app-opens-fromapp)); on a `<form>`, a `<script src>` or a script file anywhere but the contact page (see
 [Contact page](#contact-page)); on a `_headers` file missing a required header, with the `/i`, `/badges/*` or
@@ -466,13 +467,13 @@ flag nothing on a page leads there:
 |---|---|---|
 | Header lockup (mark and "Even") | A link to `/` | The same mark and word in a `<span class="lockup">`, same pixels, no link |
 | Footer "© 2026 Appalaya Inc." | A link to appalaya.com | Plain text, `<span class="org">`, same colour and place (`site.css`, as ReportInBrowser draws it) |
-| Links to this site (`/privacy`, `/terms`, `/abuse`, `/contact`, `/i`, `/`) | As written | The same path with `?from=app`, so the flag survives navigation |
+| Links to this site (`/privacy`, `/terms`, `/abuse`, `/contact`, `/android`, `/i`, `/`) | As written | The same path with `?from=app`, so the flag survives navigation |
 | Links to the App Store, Google Play and `github.com/appalaya/…` | As written | Unchanged |
-| Any other link out (today only the company line above; the tip link goes with its card) | As written | Plain text |
-| `/`: the tip card | Shown | Removed from the page; the store badges, "Run your own server" and everything else stay |
+| Any other link out (the company line above, and `/android`'s "Ask to join the group"; the tip link goes with its card) | As written | Plain text |
+| `/`: the tip card | Shown | Removed from the page; the store row, "Run your own server" and everything else stay |
 
 From the app's pages a reviewer can reach Privacy, Terms, Abuse and Contact, each with the flag, and never the home
-page; `/` and `/i` honour the flag too, should a link ever lead there (404's "Go to the home page" and `/i`'s "What is
+page; `/`, `/i` and `/android` honour the flag too, should a link ever lead there (404's "Go to the home page" and `/i`'s "What is
 Even?" go to `/?from=app`, which shows no tip card).
 
 **How.** Every page ends with the same inline `<script id="from-app">`, byte for byte. It reads `location.search`
@@ -480,7 +481,7 @@ only (never the fragment, which holds the invite on `/i` and the report on `/con
 the page by moving its existing nodes and setting `href`s: no `innerHTML`, nothing but `<span>`s created. It sits at the
 end of `<body>` (on `/i`, just before the invite script) and runs synchronously as the parser reaches it. One SHA-256 hash in `_headers` allows it on every page:
 the site-wide `/*` policy is `default-src 'self'; script-src 'sha256-<from=app>'; …`, and the `/i`, `/i/*` and
-`/contact` policies add the same hash. To change it, edit all seven copies the same way (a one-line script or
+`/contact` policies add the same hash. To change it, edit all eight copies the same way (a one-line script or
 search-and-replace across `web/*.html`), then:
 
 ```bash
@@ -508,6 +509,13 @@ terms that point here included). The source-code link is GitHub's and goes as it
 
 `badges/app-store.svg` and `badges/google-play.svg` are the official artwork, byte for byte, used on `/` and `/i`
 with the alt text "Download on the App Store" and "Get it on Google Play".
+
+**While Android is in closed testing** only the App Store badge is shown. Google's badge may only link to the Play
+listing, which people outside the test can't open, so `/` and `/i` show a "Join the Android beta" soft button to
+`/android` in its place (boards LandingAndroidBeta and AndroidBeta; design.md, "Landing page"): the same 48 px
+height, 12 px after the badge, wrapping under it where the row runs out. `badges/google-play.svg` stays in place, and
+the badge, with its link to `https://play.google.com/store/apps/details?id=com.appalaya.even`, comes back when
+Android reaches production.
 
 - **Apple**: the black "Download on the App Store" badge, US English, from Apple's badge service
   (`https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us`, the source behind the

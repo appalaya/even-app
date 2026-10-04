@@ -20,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 
 import { HELP_PAGE, reportUrl } from '../src/features/report/contact';
 import { LINKS } from '../src/features/settings/about';
+import { readFragment } from './contact-lib.js';
 
 const WEB = dirname(fileURLToPath(import.meta.url));
 const SITE = 'https://even.appalaya.com';
@@ -38,6 +39,7 @@ const PAGES = [
   { file: 'terms.html', path: '/terms' },
   { file: 'abuse.html', path: '/abuse' },
   { file: 'contact.html', path: '/contact' },
+  { file: 'android.html', path: '/android' },
   { file: '404.html', path: '/no-such-page' },
   { file: 'i.html', path: '/i' },
 ];
@@ -147,7 +149,7 @@ describe.each(PAGES)('$file', ({ file, path }) => {
     for (const link of after) {
       if (isHere(link)) {
         expect(link.url.searchParams.get('from')).toBe('app');
-        expect(link.href).toBe(`${link.url.pathname}?from=app`);
+        expect(link.href).toBe(`${link.url.pathname}?from=app${link.url.hash}`);
       } else {
         expect(link.url.href).toMatch(KEPT);
       }
@@ -190,27 +192,70 @@ describe('index.html with ?from=app', () => {
     expect(links(page).some((l) => TIP.test(l.url.href))).toBe(false);
   });
 
-  it('keeps both store badges and the server repository', () => {
+  it('keeps the App Store badge, the Android beta button and the server repository', () => {
     const stores = [...page.document.querySelectorAll('.stores a.store')];
     expect(stores.map((a) => a.querySelector('img')?.getAttribute('alt'))).toEqual([
       'Download on the App Store',
-      'Get it on Google Play',
     ]);
     expect(stores.map((a) => a.getAttribute('href'))).toEqual([
       'https://apps.apple.com/app/id6816425117',
-      'https://play.google.com/store/apps/details?id=com.appalaya.even',
     ]);
+    expect(links(page).find((l) => l.text === 'Join the Android beta')?.href).toBe(
+      '/android?from=app',
+    );
     expect(links(page).find((l) => l.text === 'Run your own server')?.href).toBe(
       'https://github.com/appalaya/even-server',
     );
   });
 
-  it('keeps the flag on its footer links', () => {
+  it('keeps the flag on the Android beta button and its footer links', () => {
     expect(
       links(page)
         .filter((l) => l.url.origin === SITE)
         .map((l) => l.href),
-    ).toEqual(['/privacy?from=app', '/terms?from=app', '/abuse?from=app', '/contact?from=app']);
+    ).toEqual([
+      '/android?from=app',
+      '/privacy?from=app',
+      '/terms?from=app',
+      '/abuse?from=app',
+      '/contact?from=app',
+    ]);
+  });
+});
+
+describe('android.html, Android in closed testing', () => {
+  const plain = load('android.html', `${SITE}/android`);
+  const flagged = load('android.html', `${SITE}/android?from=app`);
+
+  it('links to the tester group, the testing page, and the contact page with Get help chosen', () => {
+    expect(links(plain).map((l) => [l.text, l.href])).toEqual([
+      ['Even', '/'],
+      ['Ask to join the group', 'https://groups.google.com/a/appalaya.com/g/even-android-beta'],
+      ['Open the testing page', 'https://play.google.com/apps/testing/com.appalaya.even'],
+      ['Get help', '/contact#purpose=help'],
+      ['Privacy', '/privacy'],
+      ['Terms', '/terms'],
+      ['Abuse', '/abuse'],
+      ['Contact', '/contact'],
+      [COMPANY, 'https://appalaya.com'],
+    ]);
+    const help = links(plain).find((l) => l.text === 'Get help');
+    expect(readFragment(help?.url.hash)).toEqual({ purpose: 'help', target: null });
+  });
+
+  it('with ?from=app, keeps the testing page and Get help, and shows the group button as plain text', () => {
+    // The app never opens /android; under the flag the group, like any link out but the stores and GitHub, is text.
+    expect(links(flagged).map((l) => l.href)).toEqual([
+      'https://play.google.com/apps/testing/com.appalaya.even',
+      '/contact?from=app#purpose=help',
+      '/privacy?from=app',
+      '/terms?from=app',
+      '/abuse?from=app',
+      '/contact?from=app',
+    ]);
+    const group = flagged.document.querySelector('.steps li:first-child .button-soft');
+    expect(group?.tagName).toBe('SPAN');
+    expect(text(group)).toBe('Ask to join the group');
   });
 });
 

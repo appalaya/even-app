@@ -37,12 +37,12 @@
 
 /i
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-L5LaSAx8jyWaoVvGHLWoErO3aRGSRlRr4qLzkAkPMsY='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
 
 /i/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-COgAVxRYOGLbm6FZMhAN/5+1+Al3DDlhAYyIrA7N0l4='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-d2Xcbk00U8jKWy1D75bxOWpdRfZlRz3/Bv/nYkZkqGg=' 'sha256-1X0/dHfwA5WefBZMIzXKquqs+iSMMYnoPMKVuuuxx5o='; style-src 'sha256-L5LaSAx8jyWaoVvGHLWoErO3aRGSRlRr4qLzkAkPMsY='; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'
   X-Robots-Tag: noindex
 
 /badges/*

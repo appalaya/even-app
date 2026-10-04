@@ -482,6 +482,10 @@ ref, so a main run and a tag run don't wait for each other. Both conditions belo
    both platforms, and steps 1 to 3 still apply.
 5. **Review.** Closed testing releases are reviewed, and the first can take several days. Testers on the
    `family-and-friends` list get the build through the track's opt-in link once Play approves it.
+6. **Testers join through the Google Group** `even-android-beta@appalaya.com`, listed as the testers of the
+   `family-and-friends` track (the address is a console field). Anyone can ask to join; requests are approved
+   by hand. The site's `/android` page (`web/android.html`) walks through it, and the landing and invite pages
+   link there instead of to the Play listing until production.
 
 ---
 

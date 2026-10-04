@@ -1886,9 +1886,10 @@ script serves `/api/*` (the contact form); every other path is a static asset.
 - `/i`: reads `location.hash`, shows "You've been invited to *Banff 2026*"
   (inserted with `textContent`), an "Open in Even" button that fires the bare
   `even://join` scheme with no payload (Android: an `intent://` URL naming the
-  package), store badges, and the code in a copy box with the sentence
-  "Installed already? Open Even and tap Join with code." The fragment is never
-  sent anywhere.
+  package), store badges (while Android is in closed testing, the App Store
+  badge and a button to `/android`; below), and the code in a copy box with
+  the sentence "Installed already? Open Even and tap Join with code." The
+  fragment is never sent anywhere.
 - Served with `Content-Security-Policy: default-src 'none'; script-src 'sha256-…' 'sha256-…'; style-src 'sha256-…'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'`.
   The script hashes cover its own inline `<script>` block and the `from=app`
   script every page shares (under In-app browser, in Stack); its own uses `addEventListener`,
@@ -1926,6 +1927,28 @@ script serves `/api/*` (the contact form); every other path is a static asset.
 - Store badges are the official Apple and Google artwork, self-hosted under
   `/badges/`; the footer carries "© 2026 Appalaya Inc." linking to appalaya.com
   (plain text, in the same place and colour, under `?from=app`).
+- Android in closed testing (boards LandingAndroidBeta and AndroidBeta, each
+  with its dark twin; canvas version 43). Google's badge may only link to the
+  Play listing, which people outside the test can't open, so no page shows it.
+  In `/`'s hero the App Store badge stays first, unchanged, and a "Join the
+  Android beta" soft button to `/android` takes the Play badge's place: the
+  badge's 48 px height, 12 px after it, one row at 402 px and on desktop,
+  wrapping under the badge at 360 px. `/i` makes the same swap under "Don't
+  have Even yet?" (no board; it mirrors the hero). `/android` has the site's
+  header and footer, the heading "Even for Android is in closed testing", one
+  sentence, and three numbered steps as in How it works, one column at
+  every width (`.steps-one`): "Join the tester group", whose "Ask to join the
+  group" opens the Google Group even-android-beta on the appalaya.com
+  Workspace (`groups.google.com/a/appalaya.com/g/even-android-beta`; the board
+  drew the `groups.google.com/g/` form), where requests are approved by hand;
+  "Opt in on Google Play", whose "Open the testing page" opens
+  `play.google.com/apps/testing/com.appalaya.even`; and "Install from Google
+  Play". "Trouble joining? Get help." opens `/contact#purpose=help`. The group
+  is the closed-testing track's tester list (`docs/store-listing.md`). The app
+  never opens `/android`; under `?from=app` the group link would be plain text,
+  like any link out but the stores and GitHub. When Android reaches production
+  the Play badge (`badges/google-play.svg`, kept) returns in the button's place
+  on both pages.
 
 ## Navigation
 

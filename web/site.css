@@ -95,6 +95,12 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .stores { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 0; }
 .store { display: block; border-radius: 8px; }
 .store img { display: block; width: auto; height: 48px; }
+/*
+ * While Android is in closed testing (boards LandingAndroidBeta), a soft button to /android takes the Google Play
+ * badge's place: Google's badge may only link to the store listing, which people outside the test can't open. The
+ * same height as the badge, in the same row; where the row runs out (360 px) it wraps under the badge.
+ */
+.stores .button-soft { margin: 0; white-space: nowrap; }
 
 /* Home: three claims */
 .claims {
@@ -329,6 +335,15 @@ select.select { padding: 0 44px 0 16px; appearance: none; -webkit-appearance: no
   cursor: pointer;
 }
 
+/* Android closed testing (the AndroidBeta boards): the How it works steps, kept to one column at every width. */
+.beta { padding: 40px 0 8px; }
+.beta h1 { margin: 0; font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: -0.4px; }
+.beta .intro { margin: 10px 0 0; font-size: 16px; line-height: 24px; color: var(--text-2); }
+.steps.steps-one { margin-top: 28px; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.steps-one h2 { margin: 4px 0 0; font-size: 17px; line-height: 22px; font-weight: 600; }
+.steps-one .button-soft { grid-column: 2; justify-self: start; margin-top: 16px; }
+.beta .help { margin: 32px 0 0; font-size: 16px; line-height: 24px; color: var(--text-2); }
+
 /* Footer */
 .foot {
   margin: 72px 0 0;
@@ -355,6 +370,7 @@ select.select { padding: 0 44px 0 16px; appearance: none; -webkit-appearance: no
   .steps { grid-template-columns: 1fr 1fr; column-gap: 32px; row-gap: 28px; }
   .doc { padding-top: 56px; }
   .contact { padding-top: 56px; }
+  .beta { padding-top: 56px; }
   .topic-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .send { width: auto; }
 }

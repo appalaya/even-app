@@ -4,9 +4,10 @@
  *
  *   node web/scripts/check.mjs
  *
- * - No page links or loads anything outside this site, except the two store links and the server repository. No mail
- *   address anywhere. No inline event handlers or style attributes (the CSPs allow neither), no frames or <base>,
- *   and no form except the contact page's one.
+ * - No page links or loads anything outside this site, except the two store links, the server repository, and the
+ *   Android closed test's Google Group and testing page (android.html). No mail address anywhere. No inline event
+ *   handlers or style attributes (the CSPs allow neither), no frames or <base>, and no form except the contact
+ *   page's one.
  * - Every page carries the same inline <script id="from-app"> (README.md, "Pages the app opens"), which can send,
  *   store or inject nothing, never reads the URL's fragment, and creates only <span>s.
  * - Only the invite page has other inline code: exactly one more <script> and one <style>, whose hashes match the /i
@@ -46,6 +47,9 @@ const PACKAGE = 'com.appalaya.even';
 const ALLOWED_EXTERNAL = [
   /^https:\/\/apps\.apple\.com\/app\/id(?:PLACEHOLDER|\d+)$/,
   /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.appalaya\.even$/,
+  // While Android is in closed testing (android.html): the testers' Google Group, and Play's opt-in page.
+  /^https:\/\/groups\.google\.com\/a\/appalaya\.com\/g\/even-android-beta$/,
+  /^https:\/\/play\.google\.com\/apps\/testing\/com\.appalaya\.even$/,
   /^https:\/\/github\.com\/appalaya\/even-server$/,
   /^https:\/\/github\.com\/appalaya\/even-server\/blob\/main\/THREAT-MODEL\.md$/,
   /^https:\/\/github\.com\/appalaya\/even-app$/,

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F6F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0E100F" media="(prefers-color-scheme: dark)">
+<title>Android beta · Even</title>
+<meta name="description" content="Even for Android is in closed testing. Joining takes three steps.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/site.css">
+<!--
+  Even for Android in Google Play closed testing (boards AndroidBeta, AndroidBetaDark; design.md, "Landing page").
+  The landing page and the invite page link here in place of the Google Play badge until Android reaches production.
+-->
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <a class="lockup" href="/">
+    <svg class="mark" width="28" height="28" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8"><path d="M20 50H84"/><path d="M64 50A22 22 0 1 0 56.14 66.85"/><path d="M66 63H86"/></g></svg>
+    Even
+  </a>
+</header>
+
+<main class="beta">
+  <h1>Even for Android is in closed testing</h1>
+  <p class="intro">Until its Google Play listing is finished, the app is open to testers only. Joining takes three steps.</p>
+
+  <ol class="steps steps-one">
+    <li>
+      <h2>Join the tester group</h2>
+      <p>Use the same Google account as Google Play on your phone. Requests are approved by hand, usually within a day.</p>
+      <a class="button-soft" href="https://groups.google.com/a/appalaya.com/g/even-android-beta" rel="noreferrer">Ask to join the group</a>
+    </li>
+    <li>
+      <h2>Opt in on Google Play</h2>
+      <p>Once approved, open the testing page and tap Become a tester.</p>
+      <a class="button-soft" href="https://play.google.com/apps/testing/com.appalaya.even" rel="noreferrer">Open the testing page</a>
+    </li>
+    <li>
+      <h2>Install from Google Play</h2>
+      <p>The testing page links to Even on Google Play. Updates arrive as they do for any app.</p>
+    </li>
+  </ol>
+
+  <p class="help">Trouble joining? <a href="/contact#purpose=help">Get help</a>.</p>
+</main>
+
+<footer class="foot">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/abuse">Abuse</a>
+  <a href="/contact">Contact</a>
+  <a class="org" href="https://appalaya.com" rel="noreferrer">&copy; 2026 Appalaya Inc.</a>
+</footer>
+
+</div>
+<script id="from-app">
+// ?from=app: the Even app opened this page (web/README.md, "Pages the app opens"). Then nothing here leads to the
+// home page's tip card: the header lockup, and links to anywhere but the app stores and GitHub, become plain text;
+// the tip card goes; links to this site's pages keep the flag. The same bytes on every page, allowed by one hash.
+(() => {
+  'use strict';
+  if (new URLSearchParams(location.search).get('from') !== 'app') return;
+  const KEEP = /^https:\/\/(?:apps\.apple\.com|play\.google\.com|github\.com\/appalaya)\//;
+  for (const tip of document.querySelectorAll('.tip')) tip.remove();
+  for (const a of document.querySelectorAll('a[href]')) {
+    let url = null;
+    try {
+      url = new URL(a.href);
+    } catch {}
+    if (url !== null && url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+    const here = url !== null && url.origin === location.origin;
+    if (here && !a.classList.contains('lockup')) {
+      url.searchParams.set('from', 'app');
+      a.setAttribute('href', url.pathname + url.search + url.hash);
+    } else if (here || url === null || !KEEP.test(url.href)) {
+      const text = document.createElement('span');
+      if (a.className !== '') text.className = a.className;
+      text.append(...a.childNodes);
+      a.replaceWith(text);
+    }
+  }
+})();
+</script>
+</body>
+</html>

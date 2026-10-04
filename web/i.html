@@ -72,6 +72,12 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
 .stores { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 0; }
 .store { display: block; border-radius: 8px; }
 .store img { display: block; width: auto; height: 48px; }
+.button-soft {
+  display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 20px; border-radius: 24px;
+  background: var(--accent-soft); color: var(--accent); font-size: 16px; font-weight: 600; text-decoration: none;
+  white-space: nowrap;
+}
+.button-soft:hover { color: var(--accent-pressed); }
 .codebox { position: relative; margin: 12px 0 0; padding: 16px 16px 64px; border-radius: 18px; background: var(--fill); }
 .code {
   margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; line-height: 22px;
@@ -116,7 +122,7 @@ h2 { margin: 28px 4px 0; font-size: 20px; line-height: 25px; font-weight: 600; }
     <h2>Don&rsquo;t have Even yet?</h2>
     <div class="stores">
       <a class="store" href="https://apps.apple.com/app/id6816425117" rel="noreferrer"><img src="/badges/app-store.svg" alt="Download on the App Store" width="144" height="48"></a>
-      <a class="store" href="https://play.google.com/store/apps/details?id=com.appalaya.even" rel="noreferrer"><img src="/badges/google-play.svg" alt="Get it on Google Play" width="162" height="48"></a>
+      <a class="button-soft" href="/android">Join the Android beta</a>
     </div>
 
     <h2 id="code-label">Invite code</h2>
