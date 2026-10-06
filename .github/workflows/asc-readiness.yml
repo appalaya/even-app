@@ -25,3 +25,18 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: node .github/scripts/asc-readiness.mjs
+      - name: TestFlight feedback (crash logs go to a one-day artifact, not the log)
+        if: always()
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          FEEDBACK_DIR: ${{ runner.temp }}/asc-feedback
+        run: node .github/scripts/asc-feedback.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: asc-feedback
+          path: ${{ runner.temp }}/asc-feedback
+          retention-days: 1
+          if-no-files-found: ignore
