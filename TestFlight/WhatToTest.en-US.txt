@@ -9,5 +9,6 @@ TRY
 • Turn on the largest text size in Settings, and check the app still reads well.
 • Open Help and feedback in Settings; the page should not lead back to the home page.
 • Lock your phone, have someone add an expense to a shared group, and check the notification.
+• Share link from a group, and check the message holds the link.
 
 Report anything odd, and the time it happened.

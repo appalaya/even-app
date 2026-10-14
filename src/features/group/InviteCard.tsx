@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { useState } from 'react';
-import { Pressable, Share, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import {
   AppText,
@@ -12,18 +12,14 @@ import {
   type StackMember,
 } from '@/components';
 import { InviteQrSheet } from '@/features/invite/InviteQrSheet';
+import { inviteShareTitle } from '@/features/invite/share';
+import { shareInviteLink } from '@/features/invite/shareLink';
 import { layout, useTheme } from '@/theme';
 import type { InviteInfo } from '@/state';
 
-/** The share sheet's title for a group's invite (Share sheet board: "Even · Join Banff 2026"). */
-export function inviteShareTitle(groupName: string): string {
-  return `Even · Join ${groupName}`;
-}
-
-/** Hands the invite link to the OS share sheet. */
+/** Hands the invite link to the OS share sheet, titled "Even · Join <group>" (`inviteSharePayload`). */
 export function shareInvite(invite: InviteInfo, groupName: string): void {
-  const title = inviteShareTitle(groupName);
-  void Share.share({ url: invite.link, title }, { subject: title }).catch(() => undefined);
+  shareInviteLink(invite.link, inviteShareTitle(groupName));
 }
 
 /**

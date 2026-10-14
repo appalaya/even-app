@@ -58,3 +58,5 @@ becomes the "What's New" notes.
   trying to cause trouble, can no longer lock in a group's name, its archived
   state, or an expense's edits
 - A duplicate "group created" record can no longer switch a group's currency
+- On Android, Share link shares the invite link; before, the share sheet
+  carried only a title

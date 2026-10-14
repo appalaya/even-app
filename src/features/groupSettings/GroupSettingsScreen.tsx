@@ -16,7 +16,7 @@ import type { MemberState } from '@even/core';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Alert, Share, StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
 import { LIMITS } from '@even/core';
 
@@ -28,6 +28,7 @@ import { moveFrom } from '../group/moveEntries';
 import { MoveEntriesSheet } from '../group/MoveEntriesSheet';
 import { groupHrefs } from '../group/routes';
 import { InviteQrSheet } from '../invite/InviteQrSheet';
+import { shareInviteLink } from '../invite/shareLink';
 import { ReportGroupSheet } from '../report/ReportGroupSheet';
 
 import { AddMemberSheet } from './AddMemberSheet';
@@ -132,7 +133,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
 
   const shareLink = () => {
     if (invite === null) return;
-    void Share.share({ url: invite.link });
+    shareInviteLink(invite.link);
   };
 
   // The old server's retention, for "The old copy there expires after 365 days".
@@ -273,7 +274,7 @@ export function GroupSettingsScreen({ localId, dev }: GroupSettingsScreenProps) 
       setRegenerateOpen(false);
       router.replace({ pathname: '/group/[id]/settings', params: { id: result.localId } });
       // "You'll share the new link next": once the new group is on the server.
-      if (result.invite.ready) void Share.share({ url: result.invite.link });
+      if (result.invite.ready) shareInviteLink(result.invite.link);
     } catch (error) {
       fail(error);
     } finally {
