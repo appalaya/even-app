@@ -7,7 +7,9 @@
  *   after (and after every other device's R has arrived too).
  * - Re-arm: re-assigning every R the way a server move or wipe does (cleared, then new values in the claimed-ts order
  *   of the re-push) leaves the state as it was. The hold is what keeps a far write from re-arming: the clamp alone
- *   would give it the newest R on the new copy.
+ *   would give it the newest R on the new copy. That is a claim about far writes, so these histories keep every honest
+ *   write's claim at or under its R: a move does not keep the clamp (design.md "When every R changes"), and an honest
+ *   write that arrived before its claim counts at its claim on the new copy, which can reorder it.
  */
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
@@ -93,9 +95,6 @@ interface Write {
   seen: string[];
 }
 
-let envelopeCounter = 0;
-const newEnvelopeId = (): string => pad(`e${++envelopeCounter}`);
-
 function body(d: Device, ts: number, payload: EventPayload): Event {
   return { sv: 1, ts, at: ts, by: d.member, dev: d.dev, ...payload } as Event;
 }
@@ -107,10 +106,19 @@ class World {
   readonly writes: Write[] = [];
   private readonly byId = new Map<string, Write>();
   readonly expenses: string[] = [];
+  /** Envelope ids count per world, so a history and its ids (which break ties) depend only on the inputs. */
+  private envelopes = 0;
 
   constructor(
     readonly rnd: () => number,
     offsets: readonly number[],
+    /**
+     * The clock moves on at least 1 ms between two writes, as a phone's does between two taps. With clocks at or behind
+     * the server's, no honest write then claims more than its R (`nextTs`'s lastSeen + 1 stays at or under the clock).
+     * Without it, a burst in one instant claims now, now + 1, now + 2, and a push in that same instant stamps all three
+     * R = now, under two of the claims: the clamp.
+     */
+    private readonly ticks = false,
   ) {
     offsets.forEach((offset, i) => {
       this.devices.push({
@@ -130,15 +138,20 @@ class World {
     this.sync(first);
   }
 
+  newEnvelopeId(): string {
+    return pad(`e${++this.envelopes}`);
+  }
+
   pick<T>(xs: readonly T[]): T {
     return xs[Math.floor(this.rnd() * xs.length)] as T;
   }
 
   /** Writes through `nextTs` at the device's clock, checking it sorts after everything the device has seen. */
   write(d: Device, payload: EventPayload, target?: string): LogEntry {
+    if (this.ticks) this.now += 1;
     const log = [...d.log.values()];
     const ts = nextTs(this.now + d.offset, log, target);
-    const entry: LogEntry = { id: newEnvelopeId(), event: body(d, ts, payload) };
+    const entry: LogEntry = { id: this.newEnvelopeId(), event: body(d, ts, payload) };
     // Before its own R arrives: after everything in the author's log.
     for (const seen of log) expect(compareLog(entry, seen)).toBeGreaterThan(0);
     d.log.set(entry.id, entry);
@@ -302,7 +315,7 @@ function reassign(log: readonly LogEntry[], at: number, batch: number): LogEntry
 function farWrite(world: World, devs: readonly string[], payload: EventPayload, ts = TOP): void {
   const hostile = world.devices[world.devices.length - 1] as Device;
   const entry: LogEntry = {
-    id: newEnvelopeId(),
+    id: world.newEnvelopeId(),
     event: { ...body(hostile, ts, payload), dev: world.pick(devs) },
   };
   hostile.log.set(entry.id, entry);
@@ -310,10 +323,22 @@ function farWrite(world: World, devs: readonly string[], payload: EventPayload, 
   world.sync(hostile, 1);
 }
 
+/**
+ * What "the state stays as it was" rests on: no honest write (every one but the far ones, from `devs`) arrived before
+ * its claim. One that did counts at its arrival here and at its claim on the new copy, so it can move past another
+ * phone's write (the last test below).
+ */
+function expectNoHonestClamp(log: readonly LogEntry[], devs: readonly string[]): void {
+  for (const e of log) {
+    if (devs.includes(e.event.dev)) continue;
+    expect(e.receivedAt, `${e.id} arrived before its claim`).toBeGreaterThanOrEqual(e.event.ts);
+  }
+}
+
 describe('re-arm: a move or a wipe re-assigns every R, and the state stays as it was', () => {
   it("the review's attacks: far archive, rename, member and expense writes from two device ids", () => {
-    // Honest clocks at or behind the server's; the last member is hostile.
-    const world = new World(mulberry32(7), [0, -HOUR, -2 * HOUR]);
+    // Honest clocks at or behind the server's, ticking between writes; the last member is hostile.
+    const world = new World(mulberry32(7), [0, -HOUR, -2 * HOUR], true);
     world.run(25);
     const honest = world.devices[0] as Device;
     const first = world.addExpense(honest);
@@ -341,6 +366,7 @@ describe('re-arm: a move or a wipe re-assigns every R, and the state stays as it
     world.settle();
 
     const log = world.server.stored;
+    expectNoHonestClamp(log, devs);
     const before = reduce(log);
     for (const batch of [1, 25, 100]) {
       const moved = reassign(log, world.now + DAY, batch);
@@ -360,7 +386,7 @@ describe('re-arm: a move or a wipe re-assigns every R, and the state stays as it
         fc.integer({ min: 1, max: 3 }),
         fc.integer({ min: 1, max: 100 }),
         (seed, offsets, k, batch) => {
-          const world = new World(mulberry32(seed), offsets);
+          const world = new World(mulberry32(seed), offsets, true);
           const devs = Array.from({ length: k }, (_, i) => pad(`dev-far-${i}`));
           world.run(20);
           for (let i = 0; i < 6; i++) {
@@ -382,11 +408,51 @@ describe('re-arm: a move or a wipe re-assigns every R, and the state stays as it
             world.run(5);
           }
           const log = world.server.stored;
+          expectNoHonestClamp(log, devs);
           const before = canon(reduce(log));
           expect(canon(reduce(reassign(log, world.now + HOUR, batch)))).toStrictEqual(before);
         },
       ),
-      { numRuns: 120 },
+      // CI's counterexample on 6deca29, from before the clock ticked: phone 1's burst of three writes, two clamped.
+      { numRuns: 120, examples: [[-231788355, [0, 0], 1, 1]] },
     );
+  });
+
+  it('what a move does not keep: the clamp, so a write that arrived before its claim moves up to it', () => {
+    // That counterexample by hand: phone 1 writes three expenses in one instant, which `nextTs` claims at T, T + 1 and
+    // T + 2, and pushes them in one request stamped T; phone 0's rename claims T + 1 and arrives later. Here all three
+    // count at T, before the rename; on the new copy each counts at its claim, and the rename (T + 1, `e6` < `e8`)
+    // moves in between. Only the order changes here; two writes to one field so reordered would swap which one wins.
+    const T = T0 + 2019;
+    const stamped = (id: string, dev: number, ts: number, receivedAt: number, payload: EventPayload): LogEntry => ({
+      id: pad(id),
+      event: { sv: 1, ts, at: ts, by: pad(`member${dev}`), dev: pad(`dev${dev}`), ...payload } as Event,
+      receivedAt,
+    });
+    const add = (n: number): EventPayload => ({
+      type: 'expense.added',
+      expense: {
+        id: pad(`x${n}`),
+        title: `Item ${n}`,
+        amount: 3600,
+        currency: 'CAD',
+        paidBy: pad('member1'),
+        date: '2026-02-14',
+        category: 'food',
+        split: { [pad('member1')]: 3600 },
+      },
+    });
+    const log = [
+      stamped('e1', 0, T0, T0, { type: 'group.created', name: 'Banff 2026', currency: 'CAD' }),
+      stamped('e5', 1, T, T, add(1)),
+      stamped('e8', 1, T + 1, T, add(3)),
+      stamped('e9', 1, T + 2, T, add(4)),
+      stamped('e6', 0, T + 1, T + 1644, { type: 'group.renamed', name: 'Name 730' }),
+    ];
+    const order = (s: GroupState): string[] => s.activity.map((a) => a.eventId.replace(/_+$/u, ''));
+    expect(order(reduce(log))).toEqual(['e1', 'e5', 'e8', 'e9', 'e6']);
+    for (const batch of [1, 5]) {
+      expect(order(reduce(reassign(log, T + HOUR, batch)))).toEqual(['e1', 'e5', 'e6', 'e8', 'e9']);
+    }
   });
 });

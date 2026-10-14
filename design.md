@@ -930,8 +930,9 @@ range, a phone more than W ahead, or a target with no R at `tsMax − 1`.
 and an epoch reset (expiry, a wipe, any member's DELETE) clear it with `seq`,
 and the re-push, in claimed-ts order, brings the new copy's. The hold
 survives that: a far claim is still more than W past the new copy's latest R
-(core re-arm tests: the state is the same before and after, and without the
-hold it is not, since the far writes would get the newest R there). The clamp
+(core re-arm tests: as long as no honest write arrived before its claim, the
+state is the same before and after, and without the hold it is not, since the
+far writes would get the newest R there). The clamp
 does not survive it: on the new copy each event counts at its claim again, so
 a write that arrived well before its claim and was released since moves up to
 its claim; and until the re-push completes, events have no R and count at
