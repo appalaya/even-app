@@ -150,10 +150,12 @@ https://even.appalaya.com
 - **Sign-in required:** unticked. Even has no accounts.
 - **Contact Information:** first name, last name and phone of whoever answers App Review. Apple doesn't
   publish them. **Email:** `support@appalaya.com`. This is a console field, so the mailbox is allowed here.
-- **Notes** · limit 4000 · 2224
+- **Notes** · limit 4000 · about 2,600 with the demo paragraph
 
 ```text
 Even has no accounts and no sign-in. Nothing needs to be set up before review.
+
+Demo group, for testing on one device: paste this invite link into Join with code, or scan the QR image attached to our message: <demo invite link>. It opens a sample group with a few expenses, so joining, balances, splits and recording a payment can all be tried on one device. Pick any name when joining.
 
 On one device:
 1. Tap Create group. Enter a name, pick a currency, add one or two people under "People (optional)", enter your own name under "You in this group", and tap Create group.
@@ -179,6 +181,14 @@ The labels in the notes match the app: "Create group", "People (optional)", "You
 default), "Report this group" and "Regenerate invite link". The notes put a mailbox in a console field,
 which is allowed. The paragraph on reporting is there because reviewers ask apps with shared content how
 abuse is reported and how someone is removed (App Review Guideline 1.2).
+
+`<demo invite link>` is a console field: the link to a demo group the owner keeps on the public server, created in the
+app with sample names and expenses. It carries the group's key, so it never goes into the repository. Apple's first review
+(submitted 3 October 2026, answered 13 October, on an iPad Air 11-inch) asked under Guideline 2.1(a) for "a demo QR code
+or AR marker": the reviewer had one device, opened Join with code and had nothing to paste. The demo link and the QR image
+from the app's Show QR code sheet answer that, in the notes and in the reply. Idle groups expire after
+`EVEN_RETENTION_DAYS` (365) on the public server, so open the group once before a later submission, or make a new one and
+update the notes.
 
 **Version Release:** "Manually release this version", so 1.0 goes out when you choose.
 
